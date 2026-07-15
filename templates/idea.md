@@ -2,7 +2,7 @@
 # Схема запису ідеї. Джерело: PLAN.md, Фаза 1 + «Рекомендації рецензії» (прогалини схеми).
 # Усі значення нижче — плейсхолдери. Замінити при створенні реального запису.
 
-schema_version: 1              # версія цієї схеми frontmatter; підняти при зміні полів
+schema_version: 2              # версія цієї схеми frontmatter; підняти при зміні полів
 criteria_version: "v0.1"       # версія config/criteria-<track>.md, за якою винесено вердикт
 
 id: PI-0000                    # префікс треку (PI = passive-income, APP = app-ideas) + номер
@@ -25,9 +25,14 @@ mechanic_summary: "..."         # одне речення: канал + моне
 status: new                     # new | analyzing | rejected | approved_pending | active | parked | transferred
 rejection_code: null             # SOURCE_SUSPECT | LEGAL | CAPABILITY_GAP | CAPITAL | AUTONOMY | SATURATED | null
 rejection_detail: "..."          # людською мовою, чому саме цей код
+rejection_codes_extra: []        # супутні коди при подвійному провалі
 
 missing_capabilities:            # посилання на розділи catalogs/ai-capabilities.md; порожньо, якщо немає
   - "anthropic/desktop/..."
+
+ceiling_estimate: "..."          # очікувана стеля €/міс (критерій 6)
+launch_effort_hours: null        # оцінка годин на запуск (критерій 6)
+ceiling_flag: null                # null | review — review = винести власнику на ручну оцінку стелі
 
 review_condition: "..."          # людською мовою: за якої зміни переглянути цей запис
 review_count: 0                  # скільки разів ревізор уже повертав запис у new
