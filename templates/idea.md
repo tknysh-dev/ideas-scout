@@ -2,7 +2,7 @@
 # Схема запису ідеї. Джерело: PLAN.md, Фаза 1 + «Рекомендації рецензії» (прогалини схеми).
 # Усі значення нижче — плейсхолдери. Замінити при створенні реального запису.
 
-schema_version: 2              # версія цієї схеми frontmatter; підняти при зміні полів
+schema_version: 3              # версія цієї схеми frontmatter; підняти при зміні полів
 criteria_version: "v0.1"       # версія config/criteria-<track>.md, за якою винесено вердикт
 
 id: PI-0000                    # префікс треку (PI = passive-income, APP = app-ideas) + номер
@@ -10,6 +10,8 @@ parent_id: null                # null для механіки-батька; ID �
 title: "..."
 type: mechanic                 # mechanic | niche — дворівнева модель: механіка → ніші/варіації
 discovered: 2026-07-20         # дата першого виявлення (YYYY-MM-DD)
+signal_type: income_claim       # income_claim | automation_report — тип сигналу знахідки
+monetization_hypothesis: null   # для automation_report: хто платить + канал + порядок суми (критерій 0)
 
 sources:
   - url: "..."
@@ -23,7 +25,7 @@ claimed_revenue: "..."          # заявлений дохід одним ря�
 mechanic_summary: "..."         # одне речення: канал + монетизація + роль AI
 
 status: new                     # new | analyzing | rejected | approved_pending | active | parked | transferred
-rejection_code: null             # SOURCE_SUSPECT | LEGAL | CAPABILITY_GAP | CAPITAL | AUTONOMY | SATURATED | null
+rejection_code: null             # NO_MONETIZATION | SOURCE_SUSPECT | LEGAL | CAPABILITY_GAP | CAPITAL | AUTONOMY | SATURATED | null
 rejection_detail: "..."          # людською мовою, чому саме цей код
 rejection_codes_extra: []        # супутні коди при подвійному провалі
 

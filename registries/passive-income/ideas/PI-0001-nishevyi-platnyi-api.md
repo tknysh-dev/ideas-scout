@@ -1,5 +1,5 @@
 ---
-schema_version: 2
+schema_version: 3
 criteria_version: "v0.2"
 
 id: PI-0001
@@ -7,6 +7,8 @@ parent_id: null
 title: "Нішевий платний API"
 type: mechanic
 discovered: 2026-07-15
+signal_type: income_claim
+monetization_hypothesis: null
 
 sources:
   - url: "https://news.ycombinator.com/item?id=44144473"
