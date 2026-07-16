@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ideas-scout.passive-income-analyst</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/scripts/runner.sh</string>
+        <string>--track</string>
+        <string>passive-income</string>
+        <string>--agent</string>
+        <string>analyst</string>
+        <string>--provider</string>
+        <string>claude</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+
+    <!-- Вт/Чт/Сб 08:00 (PLAN.md, Фаза 6: аналітик наступного ранку після збирача) -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>6</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO__/logs/launchd/passive-income-analyst.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO__/logs/launchd/passive-income-analyst.launchd.log</string>
+</dict>
+</plist>

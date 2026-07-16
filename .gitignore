@@ -1,3 +1,12 @@
 registries/passive-income/ideas.md
 registries/app-ideas/ideas.md
 .DS_Store
+
+# Рантайм-артефакти інфраструктури виконання (Фаза 6) — не мають потрапляти в git.
+# logs/quarantine/*.diff — потенційно атакерський вміст (guard проти промпт-ін'єкції),
+# його не можна тягнути в історію; .gitkeep у кожній теці лишається трекованим.
+logs/locks/*
+!logs/locks/.gitkeep
+logs/launchd/*.log
+logs/quarantine/*
+!logs/quarantine/.gitkeep
