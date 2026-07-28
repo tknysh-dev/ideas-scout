@@ -26,9 +26,14 @@ sources:
     author_interest: tool_vendor
     independent_confirmations: 0
     quote: "I've been running PDFShift.io... for seven years now. It's profitable (around $12K MRR) and still growing."
+  - url: "https://news.ycombinator.com/item?id=35567822"
+    date: 2023-04-14
+    author_interest: tool_vendor
+    independent_confirmations: 0
+    quote: "it took us about 5-6 months from idea to $2k/month. It's still not our main source of income"
 
-mentions_count: 3
-claimed_revenue: "$200/міс – $12k MRR (діапазон по нішах цього прогону); патерн-рівень ≥8 звітів $200–$500k MRR у тому ж треді"
+mentions_count: 4
+claimed_revenue: "$200/міс – $12k MRR (діапазон по нішах); патерн-рівень ≥8 звітів $200–$500k MRR у тому ж треді"
 mechanic_summary: "Платний HTTP-API для інших розробників/додатків, монетизація через підписку/usage-based; роль AI варіює від нуля до ядра продукту."
 
 status: approved_pending
