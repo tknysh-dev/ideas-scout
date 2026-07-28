@@ -31,7 +31,8 @@
 7. `"X months later, here's the revenue"` — (HN Algolia)
 8. `"how I make $X a month with"` — (веб-пошук; Reddit — після OAuth)
 9. `"Ask HN: Anyone making a living from"` — точний патерн, що вже дав вертикальний зріз (PI-0001…PI-0004); повторювати періодично з іншими підметами («a paid API», «a side project», «a SaaS») (HN Algolia)
-10. `"still profitable after"` — сигнал довготривалості, а не одноразового спалаху (HN Algolia; веб-пошук)
+10. `"still profitable after"` — сигнал довготривалості, а не одноразового спалаху (HN Algolia; веб-пошук) — ❌ тест 2026-07-28: 1 хіт, і той про лотерею
+11. `"side project" "revenue"` / `"side project" "monthly revenue"` — (HN Algolia, краще через `search_by_date`) — ✅ тест 2026-07-28: 33 хіти, 5+ якісних кандидатів, найпродуктивніший патерн прогону
 
 ### automation_report — пости «що я автоматизував», без грошових цифр
 
