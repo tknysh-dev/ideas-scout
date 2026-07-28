@@ -10,3 +10,6 @@ logs/locks/*
 logs/launchd/*.log
 logs/quarantine/*
 !logs/quarantine/.gitkeep
+
+# Статуси прогонів — локальний стан машини, не переносяться між машинами
+logs/status/*.json
