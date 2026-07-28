@@ -19,14 +19,14 @@
     <key>WorkingDirectory</key>
     <string>__REPO__</string>
 
-    <!-- Вт/Чт/Сб 08:00 (PLAN.md, Фаза 6: аналітик наступного ранку після збирача) -->
+    <!-- Вт/Чт/Сб 05:00 — ранок після збирача, але ДО вікна заборони власника (07:00-20:00, config/availability.md) -->
     <key>StartCalendarInterval</key>
     <array>
         <dict>
             <key>Weekday</key>
             <integer>2</integer>
             <key>Hour</key>
-            <integer>8</integer>
+            <integer>5</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
@@ -34,7 +34,7 @@
             <key>Weekday</key>
             <integer>4</integer>
             <key>Hour</key>
-            <integer>8</integer>
+            <integer>5</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
@@ -42,11 +42,19 @@
             <key>Weekday</key>
             <integer>6</integer>
             <key>Hour</key>
-            <integer>8</integer>
+            <integer>5</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
     </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>IDEAS_SCOUT_WORK_DAYS</key>
+        <string>1,2,3,4,5</string>
+        <key>IDEAS_SCOUT_WORK_HOURS</key>
+        <string>07:00-20:00</string>
+    </dict>
 
     <key>RunAtLoad</key>
     <false/>

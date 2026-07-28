@@ -48,6 +48,14 @@
         </dict>
     </array>
 
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>IDEAS_SCOUT_WORK_DAYS</key>
+        <string>1,2,3,4,5</string>
+        <key>IDEAS_SCOUT_WORK_HOURS</key>
+        <string>07:00-20:00</string>
+    </dict>
+
     <key>RunAtLoad</key>
     <false/>
 
