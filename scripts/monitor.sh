@@ -125,7 +125,20 @@ TG_ERROR=""
 TG_TOKEN="$(security find-generic-password -s ideas-scout-telegram -w 2>/dev/null || true)"
 TG_CHAT_ID="$(security find-generic-password -s ideas-scout-telegram-chat -w 2>/dev/null || true)"
 
-if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+# security -w віддає запис як hex-дамп, якщо в ньому є непечатний байт — класика:
+# невидимий NBSP, скопійований разом зі значенням. Без цієї перевірки запит іде зі
+# сміттєвим chat_id, а Telegram відповідає невиразним 404.
+CREDS_ERROR=""
+if [ -n "$TG_CHAT_ID" ] && ! printf '%s' "$TG_CHAT_ID" | grep -Eq '^-?[0-9]+$'; then
+  CREDS_ERROR="chat_id у Keychain не є числом (ймовірно збережений з невидимим символом). Перезапиши: security add-generic-password -U -A -s ideas-scout-telegram-chat -a ideas-scout -w '<ЧИСЛО>'"
+elif [ -n "$TG_TOKEN" ] && ! printf '%s' "$TG_TOKEN" | grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
+  CREDS_ERROR="токен у Keychain не схожий на токен Telegram (ймовірно збережений з невидимим символом). Перезапиши: security add-generic-password -U -A -s ideas-scout-telegram -a ideas-scout -w '<ТОКЕН>'"
+fi
+
+if [ -n "$CREDS_ERROR" ]; then
+  echo "monitor.sh: $CREDS_ERROR" >&2
+  TG_ERROR="invalid telegram credentials in Keychain"
+elif [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
   echo "monitor.sh: немає Telegram-токена/chat_id у Keychain (ideas-scout-telegram / ideas-scout-telegram-chat) — дайджест не надіслано" >&2
   TG_ERROR="no telegram credentials in Keychain"
 else
