@@ -1,0 +1,96 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --paper: #f6f3ec;
+  --paper-raised: #fffdf8;
+  --ink: #211d16;
+  --ink-dim: #6b6252;
+  --line: #ddd5c2;
+  --line-strong: #c7bda3;
+  --accent: #a2431f;
+  --accent-ink: #fff8f0;
+
+  --status-new-fg: #1d5f8a;
+  --status-new-bg: #e2edf4;
+  --status-analyzing-fg: #92620b;
+  --status-analyzing-bg: #f3e9d2;
+  --status-rejected-fg: #9b2c2c;
+  --status-rejected-bg: #f3e0df;
+  --status-approved_pending-fg: #1f7a52;
+  --status-approved_pending-bg: #deefe3;
+  --status-active-fg: #14663f;
+  --status-active-bg: #d4ecdd;
+  --status-parked-fg: #5b4b8a;
+  --status-parked-bg: #e7e2f3;
+  --status-transferred-fg: #3a5a8c;
+  --status-transferred-bg: #e2e9f3;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1b1812;
+    --paper-raised: #24201a;
+    --ink: #ece6d8;
+    --ink-dim: #a89e89;
+    --line: #3a3428;
+    --line-strong: #4d4636;
+    --accent: #e0864f;
+    --accent-ink: #241304;
+
+    --status-new-fg: #7fb6dd;
+    --status-new-bg: #1e2c36;
+    --status-analyzing-fg: #e3b459;
+    --status-analyzing-bg: #362a14;
+    --status-rejected-fg: #e28d8d;
+    --status-rejected-bg: #3a2222;
+    --status-approved_pending-fg: #7fd0a8;
+    --status-approved_pending-bg: #17332485;
+    --status-active-fg: #7fe0ac;
+    --status-active-bg: #133823;
+    --status-parked-fg: #b6a3e8;
+    --status-parked-bg: #2a2340;
+    --status-transferred-fg: #9db6e8;
+    --status-transferred-bg: #1f2a3d;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --font-display: var(--font-display);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  background-image: radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+* {
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.font-display {
+  font-family: var(--font-display), Georgia, serif;
+}
+
+.font-mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
