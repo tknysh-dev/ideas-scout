@@ -80,9 +80,6 @@ for job in "${EXPECTED_JOBS[@]}"; do
   finished_at="$(get_field "$status_file" finished_at)"
   status="$(get_field "$status_file" status)"
   push="$(get_field "$status_file" push)"
-  stash_count="$(get_field "$status_file" stash_count)"
-  case "$stash_count" in ''|*[!0-9]*) stash_count=0 ;; esac
-  [ "$stash_count" -gt "$MAX_STASH" ] && MAX_STASH="$stash_count"
 
   age_note=""
   if [ -n "$finished_at" ]; then
@@ -99,6 +96,11 @@ for job in "${EXPECTED_JOBS[@]}"; do
 done
 
 DIGEST_LINES+=("")
+
+# Рахуємо stash-и наживо, а не з status.json: записане число застаріває одразу,
+# щойно власник розбере stash руками, і попередження висить до наступного прогону.
+MAX_STASH="$(git -C "$REPO_ROOT" stash list 2>/dev/null | wc -l | tr -d ' ')"
+case "$MAX_STASH" in ''|*[!0-9]*) MAX_STASH=0 ;; esac
 
 if [ "$MAX_STASH" -gt 0 ]; then
   DIGEST_LINES+=("⚠️ У репозиторії ${MAX_STASH} відкладених stash від прогонів (засташована чужа робота) — розберіть 'git stash list' вручну")
