@@ -13,3 +13,6 @@ logs/quarantine/*
 
 # Статуси прогонів — локальний стан машини, не переносяться між машинами
 logs/status/*.json
+
+# Reddit-кеш — сирі дампи передкачування (scripts/reddit-fetch.sh), не комітяться
+logs/runs/reddit-cache/

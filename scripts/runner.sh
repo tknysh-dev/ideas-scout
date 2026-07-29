@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # runner.sh — єдина точка запуску одного прогону одного агента на одному треку.
-# Використання: runner.sh --track passive-income|app-ideas --agent collector|analyst --provider claude|codex [--dry-run]
+# Використання: runner.sh --track passive-income|app-ideas --agent collector|analyst|revisor --provider claude|codex [--dry-run]
 #
 # Реалізує рекомендації рецензії PLAN.md і адверсарної рецензії інфраструктури:
 # - mkdir-локи (macOS не має flock(1)): per-job лок + репо-широкий git-лок навколо
@@ -38,7 +38,7 @@ DRY_RUN=0
 
 usage() {
   cat >&2 <<'EOF'
-Використання: runner.sh --track <passive-income|app-ideas> --agent <collector|analyst> --provider <claude|codex> [--dry-run]
+Використання: runner.sh --track <passive-income|app-ideas> --agent <collector|analyst|revisor> --provider <claude|codex> [--dry-run]
 EOF
 }
 
@@ -54,7 +54,7 @@ while [ $# -gt 0 ]; do
 done
 
 case "$TRACK" in passive-income|app-ideas) ;; *) echo "runner.sh: --track має бути passive-income або app-ideas (отримано: '$TRACK')" >&2; exit 2 ;; esac
-case "$AGENT" in collector|analyst) ;; *) echo "runner.sh: --agent має бути collector або analyst (отримано: '$AGENT')" >&2; exit 2 ;; esac
+case "$AGENT" in collector|analyst|revisor) ;; *) echo "runner.sh: --agent має бути collector, analyst або revisor (отримано: '$AGENT')" >&2; exit 2 ;; esac
 case "$PROVIDER" in claude|codex) ;; *) echo "runner.sh: --provider має бути claude або codex (отримано: '$PROVIDER')" >&2; exit 2 ;; esac
 
 # ---------------------------------------------------------------------------
@@ -398,6 +398,9 @@ git_lock_release
 # ---------------------------------------------------------------------------
 
 if [ "$DRY_RUN" = "1" ]; then
+  if [ "$AGENT" = "collector" ]; then
+    echo "--- DRY RUN: далі викликався б $REPO_ROOT/scripts/reddit-fetch.sh (передкачування Reddit-кешу для collector) ---"
+  fi
   echo "--- DRY RUN: далі йшов би виклик CLI провайдера '$PROVIDER' з промптом config/prompts/${AGENT}.md ---"
   echo "--- DRY RUN: далі йшов би git add/commit/push (або quarantine-гілка при помилці CLI) ---"
   write_status "dry_run" "skipped" "" "null" "[]" "$( [ "$OFFLINE" = 1 ] && echo true || echo false )"
@@ -416,6 +419,20 @@ if [ "$PROVIDER" = "codex" ] && [ "${IDEAS_SCOUT_ALLOW_CODEX:-0}" != "1" ]; then
   echo "runner.sh: --provider codex вимкнено: sandbox codex exec дає агенту shell — межа безпеки НЕ еквівалентна claude-варіанту (allowlist інструментів без Bash). Явний дозвіл: IDEAS_SCOUT_ALLOW_CODEX=1. Див. docs/operations.md." >&2
   write_status "error" "skipped" "codex вимкнено за замовчуванням (агент отримав би shell); IDEAS_SCOUT_ALLOW_CODEX=1 для явного дозволу"
   exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Reddit-місток (лише для collector): агент не має Bash, тож OAuth-фетч Reddit
+# робить сам runner.sh ДО виклику CLI. Нефатально — падіння фетчера не зриває
+# прогін, collector просто працює без Reddit-кешу цього разу.
+# ---------------------------------------------------------------------------
+
+if [ "$AGENT" = "collector" ]; then
+  if [ -x "$REPO_ROOT/scripts/reddit-fetch.sh" ]; then
+    "$REPO_ROOT/scripts/reddit-fetch.sh" || echo "runner.sh: попередження — reddit-fetch.sh завершився з помилкою, продовжую без Reddit-кешу" >&2
+  else
+    echo "runner.sh: попередження — scripts/reddit-fetch.sh не знайдено або не виконуваний, пропускаю Reddit-фетч" >&2
+  fi
 fi
 
 # ---------------------------------------------------------------------------

@@ -69,6 +69,21 @@ security add-generic-password -s ideas-scout-healthcheck -a ideas-scout -w 'http
 
 Заповни вручну — скільки часу на тиждень готовий інвестувати в запуск/підтримку нових механік і в які години сам активно працюєш із підписками Claude/Codex (щоб автопрогони не конкурували з тобою за ліміт).
 
+### 1.7. Reddit (опційно)
+
+Reddit — опційне джерело: без нього система просто працює далі на HN, DOU і веб-пошуку (`scripts/reddit-fetch.sh` сам вийде з кодом 0, нічого не зламавши). Якщо хочеш увімкнути:
+
+1. Створи script-застосунок на [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) — тип **script**, redirect uri можна вказати `http://localhost:8080` (не використовується, потрібен лише як формальність форми).
+2. Отримаєш client id (рядок під назвою застосунку) і client secret.
+3. Поклади обидва в Keychain:
+
+```
+security add-generic-password -U -A -s ideas-scout-reddit-id -a ideas-scout -w '<CLIENT_ID>'
+security add-generic-password -U -A -s ideas-scout-reddit-secret -a ideas-scout -w '<CLIENT_SECRET>'
+```
+
+Без цих двох записів `scripts/reddit-fetch.sh` виведе «Reddit-креденшели не налаштовані — пропускаю» і вийде з кодом 0 — collector просто відпрацює без Reddit-кешу.
+
 ---
 
 ## 2. Ручний прогін
@@ -125,7 +140,7 @@ Dry-run виконує **реальний** лок і **реальну** git-г�
 | Джоб | Розклад | Що робить |
 |---|---|---|
 | `com.ideas-scout.passive-income-collector` | Пн/Ср/Пт, 03:00 | `runner.sh --track passive-income --agent collector --provider claude` |
-| `com.ideas-scout.passive-income-analyst` | Вт/Чт/Сб, 08:00 | `runner.sh --track passive-income --agent analyst --provider claude` |
+| `com.ideas-scout.passive-income-analyst` | Вт/Чт/Сб, 05:00 | `runner.sh --track passive-income --agent analyst --provider claude` |
 | `com.ideas-scout.monitor` | Щодня, 09:30 | `monitor.sh` |
 
 Трек `app-ideas` свідомо відсутній у launchd — критерії оцінки для нього (`config/criteria-apps.md`) ще порожні (v0.0). Додати відповідні plist-и й рядок у `EXPECTED_JOBS` у `scripts/monitor.sh`, коли трек активується.
@@ -180,15 +195,21 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 
 Пише сам `monitor.sh` після щоденного прогону: чи вдалось надіслати дайджест у Telegram, чи спрацював healthcheck-пінг, скільки записів реєстру змінилось за 24 год.
 
+### 4.6. `logs/runs/reddit-cache/`
+
+Сирі дампи Reddit, які `scripts/reddit-fetch.sh` кладе перед кожним прогоном collector-а (`latest/*.json` + `_meta.md`). Локальний стан машини, у `.gitignore`, у git не потрапляє.
+
 ---
 
 ## 5. Розклад (підсумок)
 
 - Збирач (`passive-income`, `claude`): пн/ср/пт, 03:00.
-- Аналітик (`passive-income`, `claude`): вт/чт/сб, 08:00.
+- Аналітик (`passive-income`, `claude`): вт/чт/сб, 05:00.
+- Ревізор (`passive-income`, `claude`): ср/сб, 06:00.
 - Моніторинг: щодня, 09:30.
 - Трек `app-ideas` — вимкнено до заповнення `config/criteria-apps.md` (критерії v0.0 зараз порожні). Коли активується — додати plist-и за зразком наявних і рядки в `EXPECTED_JOBS` (`scripts/monitor.sh`).
-- Ревізор (Фаза 5 плану) — ще не реалізований, до цього списку не входить.
+
+Після `git pull`, що приносить новий/змінений `.plist` у `launchd/`, перевстанови джоби: `./scripts/install-launchd.sh` (він сам робить `bootout` + `bootstrap` для кожного файла, тож повторний запуск безпечний).
 
 ---
 
@@ -232,7 +253,5 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 
 ### Чого система поки НЕ вміє
 
-- **Агент-ревізор (крок 5) не реалізований** — тому `catalogs/ai-capabilities.md` не оновлюється сам (є лише базовий зріз від 2026-07-28), і відхилені за `CAPABILITY_GAP`/`CAPITAL` ідеї ніхто не оживляє при здешевленні моделей.
 - **Трек `app-ideas` вимкнений** — критерії для нього порожні (`criteria-apps.md` v0.0), джоба немає.
-- **Reddit недоступний** — потрібен OAuth-застосунок; поки збирач працює на HN, DOU і веб-пошуку.
 - **Codex як провайдер заблокований** — його пісочниця дає агенту shell, що ламає межу безпеки; вмикається лише явним `IDEAS_SCOUT_ALLOW_CODEX=1`.

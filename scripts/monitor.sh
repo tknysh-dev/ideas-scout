@@ -19,8 +19,17 @@ MONITOR_STATUS_FILE="$STATUS_DIR/monitor.json"
 
 # Джоби, які мають запускатись регулярно (Фаза 6, розклад). Трек app-ideas свідомо
 # відсутній — критерії v0.0 порожні (PLAN.md), додати сюди при активації треку.
-EXPECTED_JOBS=("passive-income-collector" "passive-income-analyst")
-STALE_AFTER_S=$((3 * 24 * 3600))  # 3 доби, як зазначено в PLAN.md
+EXPECTED_JOBS=("passive-income-collector" "passive-income-analyst" "passive-income-revisor")
+STALE_AFTER_S=$((3 * 24 * 3600))  # 3 доби, як зазначено в PLAN.md — поріг за замовчуванням
+
+# Ревізор ганяє лише 2×/тиждень (ср/сб), тому загальний 72-годинний поріг для нього
+# зайвий: інтервал між прогонами вже сам по собі >3 доби. Окремий, м'якший поріг.
+stale_after_for_job() {
+  case "$1" in
+    passive-income-revisor) echo $((5 * 24 * 3600)) ;;
+    *) echo "$STALE_AFTER_S" ;;
+  esac
+}
 
 json_reader() {
   # Перевага jq, якщо є (простіше й швидше); фолбек — python3 (надійніша
@@ -82,12 +91,13 @@ for job in "${EXPECTED_JOBS[@]}"; do
   push="$(get_field "$status_file" push)"
 
   age_note=""
+  job_stale_after_s="$(stale_after_for_job "$job")"
   if [ -n "$finished_at" ]; then
     finished_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$finished_at" +%s 2>/dev/null || echo 0)"
     if [ "$finished_epoch" -gt 0 ]; then
       age=$(( now_epoch - finished_epoch ))
-      if [ "$age" -gt "$STALE_AFTER_S" ]; then
-        age_note=" ⚠️ давно не запускався ($((age / 3600)) год тому, поріг 72 год)"
+      if [ "$age" -gt "$job_stale_after_s" ]; then
+        age_note=" ⚠️ давно не запускався ($((age / 3600)) год тому, поріг $((job_stale_after_s / 3600)) год)"
       fi
     fi
   fi
