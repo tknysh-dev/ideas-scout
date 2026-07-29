@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# monitor.sh — щоденний дайджест: підсумовує logs/status/*.json, рахує нові/змінені
-# записи реєстру за 24 год, попереджає про джоби, що не запускались довше очікуваного
+# monitor.sh — щоденний дайджест: підсумовує стан прогонів (таблиця runs у
+# Supabase, Фаза 4 міграції — раніше logs/status/*.json), рахує нові/змінені
+# ideas за 24 год, попереджає про джоби, що не запускались довше очікуваного
 # інтервалу, і надсилає все в Telegram. Секрети — лише з Keychain, ніколи з репо/env.
 #
 # Дедлайн-свисток (рекомендація рецензії): «відсутність дайджесту — сама по собі
@@ -13,11 +14,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
-mkdir -p "$REPO_ROOT/logs/status"
-STATUS_DIR="$REPO_ROOT/logs/status"
-MONITOR_STATUS_FILE="$STATUS_DIR/monitor.json"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/db.sh"
 
-# Джоби, які мають запускатись регулярно (Фаза 6, розклад).
+# Джоби, які мають запускатись регулярно (Фаза 6, розклад): "<track>-<agent>".
 EXPECTED_JOBS=("passive-income-collector" "passive-income-analyst" "passive-income-revisor" "app-ideas-collector" "app-ideas-analyst")
 STALE_AFTER_S=$((3 * 24 * 3600))  # 3 доби, як зазначено в PLAN.md — поріг за замовчуванням
 
@@ -33,44 +33,19 @@ stale_after_for_job() {
   esac
 }
 
-json_reader() {
-  # Перевага jq, якщо є (простіше й швидше); фолбек — python3 (надійніша
-  # гарантія наявності на macOS, ніж jq, якого стандартно немає в системі).
-  if command -v jq >/dev/null 2>&1; then
-    echo "jq"
-  elif command -v python3 >/dev/null 2>&1; then
-    echo "python3"
-  else
-    echo "none"
-  fi
-}
-
-READER="$(json_reader)"
-if [ "$READER" = "none" ]; then
-  echo "monitor.sh: ні jq, ні python3 не знайдено — не можу розібрати статус-файли" >&2
-  cat > "$MONITOR_STATUS_FILE" <<EOF
-{"checked_at": "$(date -u +%FT%TZ)", "status": "error", "error": "no jq or python3 available", "telegram_sent": false, "healthcheck_pinged": false}
-EOF
-  exit 0
-fi
-
-get_field() {
-  # get_field <файл.json> <поле> — повертає порожньо, якщо файла/поля нема.
-  local file="$1" field="$2"
-  [ -f "$file" ] || { echo ""; return; }
-  if [ "$READER" = "jq" ]; then
-    jq -r --arg f "$field" '.[$f] // ""' "$file" 2>/dev/null
-  else
-    python3 -c "
+get_run_field() {
+  # get_run_field <run-json-масив-з-get-last-run> <поле> — повертає порожньо,
+  # якщо запису/поля немає (get-last-run повертає масив з 0 або 1 елементом).
+  local run_json="$1" field="$2"
+  python3 -c "
 import json, sys
 try:
-    d = json.load(open(sys.argv[1]))
-    v = d.get(sys.argv[2], '')
+    rows = json.loads(sys.argv[1])
+    v = (rows[0] if rows else {}).get(sys.argv[2], '')
     print('' if v is None else v)
 except Exception:
     print('')
-" "$file" "$field" 2>/dev/null
-  fi
+" "$run_json" "$field" 2>/dev/null
 }
 
 now_epoch="$(date +%s)"
@@ -83,19 +58,37 @@ DIGEST_LINES+=("Джоби:")
 MAX_STASH=0
 
 for job in "${EXPECTED_JOBS[@]}"; do
-  status_file="$STATUS_DIR/${job}.json"
-  if [ ! -f "$status_file" ]; then
-    DIGEST_LINES+=("⚠️ ${job}: ще жодного разу не запускався")
+  # job тут — "<track>-<agent>" (напр. "passive-income-collector"); runs.job у
+  # БД — сам агент ("collector"), track — окрема колонка.
+  db_track="${job%-*}"
+  db_agent="${job##*-}"
+  run_json="$(./agents/scripts/db.sh get-last-run "$db_agent" "$db_track" 2>/dev/null || echo "[]")"
+  if [ -z "$run_json" ] || [ "$run_json" = "[]" ]; then
+    DIGEST_LINES+=("⚠️ ${job}: ще жодного разу не запускався (або БД недоступна)")
     continue
   fi
-  finished_at="$(get_field "$status_file" finished_at)"
-  status="$(get_field "$status_file" status)"
-  push="$(get_field "$status_file" push)"
+  finished_at="$(get_run_field "$run_json" finished_at)"
+  status="$(get_run_field "$run_json" status)"
+  push="$(python3 -c "
+import json,sys
+rows = json.loads(sys.argv[1])
+meta = (rows[0] if rows else {}).get('meta') or {}
+print(meta.get('push') or '')
+" "$run_json" 2>/dev/null)"
 
   age_note=""
   job_stale_after_s="$(stale_after_for_job "$job")"
   if [ -n "$finished_at" ]; then
-    finished_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$finished_at" +%s 2>/dev/null || echo 0)"
+    # PostgREST віддає ISO8601 з офсетом виду "+00:00" (не "Z", не "+0000"),
+    # BSD date(1) на macOS такого не парсить — python3 надійніший тут.
+    finished_epoch="$(python3 -c "
+import datetime, sys
+try:
+    print(int(datetime.datetime.fromisoformat(sys.argv[1]).timestamp()))
+except Exception:
+    print(0)
+" "$finished_at" 2>/dev/null || echo 0)"
+    case "$finished_epoch" in ''|*[!0-9]*) finished_epoch=0 ;; esac
     if [ "$finished_epoch" -gt 0 ]; then
       age=$(( now_epoch - finished_epoch ))
       if [ "$age" -gt "$job_stale_after_s" ]; then
@@ -119,12 +112,12 @@ if [ "$MAX_STASH" -gt 0 ]; then
   DIGEST_LINES+=("")
 fi
 
-CHANGED_COUNT=0
-if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  CHANGED_COUNT="$(git -C "$REPO_ROOT" log --since="24 hours ago" --name-only --pretty=format: -- 'registries/*/ideas/*.md' 2>/dev/null \
-    | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
-fi
-DIGEST_LINES+=("Записів реєстру додано/змінено за 24 год: ${CHANGED_COUNT}")
+SINCE_24H="$(python3 -c "
+import datetime
+print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ'))
+")"
+CHANGED_COUNT="$(./agents/scripts/db.sh count-ideas-changed-since "$SINCE_24H" 2>/dev/null || echo "?")"
+DIGEST_LINES+=("Ideas додано/змінено за 24 год: ${CHANGED_COUNT}")
 
 DIGEST_TEXT="$(printf '%s\n' "${DIGEST_LINES[@]}")"
 echo "$DIGEST_TEXT"
@@ -204,17 +197,25 @@ fi
 MONITOR_STATUS="ok"
 [ "$TELEGRAM_SENT" = "false" ] && MONITOR_STATUS="error"
 
-tmp="$(mktemp "${MONITOR_STATUS_FILE}.XXXXXX")"
-cat > "$tmp" <<EOF
-{
-  "checked_at": "$(date -u +%FT%TZ)",
-  "status": "${MONITOR_STATUS}",
-  "error": "${TG_ERROR}",
-  "telegram_sent": ${TELEGRAM_SENT},
-  "healthcheck_pinged": ${HEALTHCHECK_PINGED},
-  "changed_ideas_24h": ${CHANGED_COUNT}
-}
-EOF
-mv "$tmp" "$MONITOR_STATUS_FILE"
+# Фаза 4: власний статус monitor.sh теж іде в runs (job=monitor, без track),
+# не в logs/status/monitor.json. Реєструємо як миттєвий прогін (старт=фініш).
+MONITOR_RUN_ID="monitor-$(date -u +%Y%m%dT%H%M%SZ)"
+if ./agents/scripts/db.sh register-run-start "$MONITOR_RUN_ID" monitor >/dev/null 2>&1; then
+  META_JSON="$(python3 -c "
+import json,sys
+print(json.dumps({
+  'error': sys.argv[1] or None,
+  'telegram_sent': sys.argv[2] == 'true',
+  'healthcheck_pinged': sys.argv[3] == 'true',
+  'changed_ideas_24h': sys.argv[4],
+}))
+" "$TG_ERROR" "$TELEGRAM_SENT" "$HEALTHCHECK_PINGED" "$CHANGED_COUNT")"
+  ERRORS_JSON="[]"
+  [ -n "$TG_ERROR" ] && ERRORS_JSON="$(python3 -c 'import json,sys; print(json.dumps([sys.argv[1]]))' "$TG_ERROR")"
+  ./agents/scripts/db.sh register-run-finish "$MONITOR_RUN_ID" "$MONITOR_STATUS" "$ERRORS_JSON" "-" "-" "-" "$META_JSON" >/dev/null 2>&1 \
+    || echo "monitor.sh: попередження — не вдалось записати завершення в БД (runs)" >&2
+else
+  echo "monitor.sh: попередження — не вдалось зареєструвати прогін monitor у БД (runs)" >&2
+fi
 
 exit 0

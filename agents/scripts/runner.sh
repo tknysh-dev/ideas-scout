@@ -10,18 +10,30 @@
 #   на старті — прибирання залишків rebase/index.lock від попереднього вбитого прогону;
 # - вимога HEAD == main: detached HEAD чи чужа гілка → status=error без git-операцій;
 # - guard проти промпт-ін'єкції за ALLOWLIST: будь-який змінений шлях поза дозволеним
-#   переліком (registries/, logs/runs|status|decisions, agents/catalogs/, agents/criteria/* та ін.)
-#   відкочується, потрапляє в blocked_paths і дає status=blocked_paths;
+#   переліком (logs/decisions.md, logs/dedup-decisions.md, agents/catalogs/,
+#   agents/criteria/* та ін. — див. коментар Фази 4 нижче) відкочується, потрапляє
+#   в blocked_paths і дає status=blocked_paths;
 # - quarantine-гілка для часткових результатів упалого CLI (без push);
 # - захист робочих годин: у вікні IDEAS_SCOUT_WORK_HOURS (дефолт пн–пт 09:00–19:00)
 #   автопрогін пропускається зі status=skipped_work_hours — щоб launchd catch-up після
 #   сну не спалював підписку вдень;
 # - таймаут-поліфіл TERM→(грейс)→KILL (немає gtimeout на macOS).
 #
-# Навмисно НЕ дає агенту (claude -p) інструментів Bash/git: увесь git commit/push
+# Навмисно НЕ дає агенту (claude -p) загального Bash/git: увесь git commit/push
 # виконує сам runner.sh ПІСЛЯ завершення прогону — це і є межа проти промпт-ін'єкції.
 # --provider codex за замовчуванням ВИМКНЕНО (sandbox codex exec дає агенту shell,
 # що ламає цей інваріант) — вмикається лише явним IDEAS_SCOUT_ALLOW_CODEX=1.
+#
+# Фаза 4 (Supabase): ideas/sources/runs/events/inbox тепер живуть у базі, не у
+# registries/*.md чи logs/runs|status. Агент має якось туди писати — замість
+# загального Bash йому дозволено РІВНО ОДИН скрипт з фіксованим набором підкоманд:
+# `Bash(agents/scripts/db.sh:*)`. Це вужчий інваріант, ніж раніше (тоді — взагалі
+# без Bash), але еквівалентний по суті: db.sh не виконує довільних команд, лише
+# фіксовані CRUD-операції над відомими таблицями через PostgREST (get/upsert/insert/
+# update по імені операції, без прямого SQL і без curl на довільний URL). Промпт-
+# ін'єкція з веб-контенту не отримує шляху до git/curl/Keychain — рівно та сама
+# межа, що й раніше, лише перенесена з «немає Bash взагалі» на «Bash обмежено
+# одним allowlisted скриптом».
 
 set -uo pipefail
 # Свідомо без -e: частина кроків (виклик CLI, pull/push) МАЄ провалюватись без обриву
@@ -76,7 +88,10 @@ fi
 # секунду з «CLI не знайдено» і кодом 127, що ззовні виглядає як мовчазна поломка.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-mkdir -p "$REPO_ROOT/logs/status" "$REPO_ROOT/logs/locks" "$REPO_ROOT/logs/launchd" "$REPO_ROOT/logs/quarantine" "$REPO_ROOT/logs/runs"
+mkdir -p "$REPO_ROOT/logs/locks" "$REPO_ROOT/logs/launchd" "$REPO_ROOT/logs/quarantine"
+
+# shellcheck disable=SC1091
+source "$REPO_ROOT/agents/scripts/db.sh"
 
 MAIN_BRANCH="${IDEAS_SCOUT_MAIN_BRANCH:-main}"
 # Тріаж оцінює рівно один матеріал і власник чекає відповідь у чаті — 45 хв тут
@@ -93,7 +108,6 @@ STALE_AFTER_S=$(( RUN_TIMEOUT_S + 900 ))
 
 JOB_NAME="${TRACK}-${AGENT}"
 LOG_FILE="$REPO_ROOT/logs/launchd/${JOB_NAME}.log"
-STATUS_FILE="$REPO_ROOT/logs/status/${JOB_NAME}.json"
 
 # Увесь подальший stdout/stderr — і в консоль (для launchd StandardOut/ErrorPath — там же
 # опиняється дублікат), і в лог-файл джоба з датою.
@@ -135,6 +149,7 @@ trap cleanup EXIT INT TERM
 STARTED_AT="$(date -u +%FT%TZ)"
 STARTED_EPOCH="$(date +%s)"
 RUN_ID=""
+RUN_REGISTERED=0
 
 json_escape() {
   # мінімальне екранування для рядкових полів (лапки, зворотні слеші, переводи рядків)
@@ -142,37 +157,35 @@ json_escape() {
     || printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')"
 }
 
+json_array_of_strings() {
+  # json_array_of_strings a b c -> ["a","b","c"]; без аргументів -> []
+  python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"
+}
+
+# write_status: раніше писав logs/status/<job>.json; тепер реєстрація прогону —
+# у Supabase через db.sh (таблиця runs), Фаза 4 міграції. Викликається лише ПІСЛЯ
+# db_register_run_start (тобто після появи RUN_ID) — ранні виходи (лок зайнятий,
+# робочі години) не мають run_id і в БД не реєструються, лише логуються в stdout.
 write_status() {
   local status="$1" push="$2" error_tail="$3" cli_exit="${4:-null}" blocked_json="${5:-[]}" offline="${6:-false}"
-  local finished_at finished_epoch duration stash_count
-  finished_at="$(date -u +%FT%TZ)"
-  finished_epoch="$(date +%s)"
-  duration=$(( finished_epoch - STARTED_EPOCH ))
-  # Лічильник stash-ів — щоб накопичення відкладеної чужої роботи не лишалось
-  # непомітним; monitor.sh попереджає в дайджесті при >0.
+  local stash_count
   stash_count="$(git stash list 2>/dev/null | wc -l | tr -d ' ')"
   case "$stash_count" in ''|*[!0-9]*) stash_count=0 ;; esac
-  local tmp
-  tmp="$(mktemp "${STATUS_FILE}.XXXXXX")"
-  cat > "$tmp" <<EOF
-{
-  "run_id": $(json_escape "${RUN_ID:-}"),
-  "track": $(json_escape "$TRACK"),
-  "agent": $(json_escape "$AGENT"),
-  "provider": $(json_escape "$PROVIDER"),
-  "started_at": $(json_escape "$STARTED_AT"),
-  "finished_at": $(json_escape "$finished_at"),
-  "duration_s": $duration,
-  "status": $(json_escape "$status"),
-  "push": $(json_escape "$push"),
-  "cli_exit_code": $cli_exit,
-  "offline": $offline,
-  "stash_count": $stash_count,
-  "blocked_paths": $blocked_json,
-  "error_tail": $(json_escape "$error_tail")
-}
-EOF
-  mv "$tmp" "$STATUS_FILE"
+  if [ "$RUN_REGISTERED" != "1" ]; then
+    echo "runner.sh: status=$status (без RUN_ID — прогін завершився до реєстрації в БД, у runs не пишеться)"
+    return 0
+  fi
+  local meta errors
+  meta="$(python3 -c 'import json,sys; print(json.dumps({
+    "push": sys.argv[1], "cli_exit_code": (int(sys.argv[2]) if sys.argv[2] not in ("null","") else None),
+    "offline": sys.argv[3] == "true", "stash_count": int(sys.argv[4]), "blocked_paths": json.loads(sys.argv[5])
+  }))' "$push" "$cli_exit" "$offline" "$stash_count" "$blocked_json")"
+  errors="[]"
+  if [ -n "$error_tail" ]; then
+    errors="$(python3 -c 'import json,sys; print(json.dumps([sys.argv[1]]))' "$error_tail")"
+  fi
+  ./agents/scripts/db.sh register-run-finish "$RUN_ID" "$status" "$errors" "-" "-" "-" "$meta" \
+    || echo "runner.sh: попередження — не вдалось записати завершення прогону в БД (runs)" >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -305,6 +318,12 @@ fi
 RUN_ID="$(date +%Y%m%d-%H%M%S)-${PROVIDER}-${TRACK}-${AGENT}"
 echo "runner.sh: run_id=$RUN_ID"
 
+if ./agents/scripts/db.sh register-run-start "$RUN_ID" "$AGENT" "$TRACK" "$PROVIDER" >/dev/null; then
+  RUN_REGISTERED=1
+else
+  echo "runner.sh: попередження — не вдалось зареєструвати прогін у БД (runs); продовжую, статус наприкінці теж не запишеться" >&2
+fi
+
 # ---------------------------------------------------------------------------
 # Таймаут-поліфіл (немає gtimeout/timeout на цій macOS): фоновий watcher.
 # Спершу TERM (даємо процесу шанс коректно завершитись — git встигає прибрати
@@ -423,7 +442,7 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "--- DRY RUN: далі йшов би виклик CLI провайдера '$PROVIDER' з промптом agents/prompts/${AGENT}.md ---"
   echo "--- DRY RUN: далі йшов би git add/commit/push (або quarantine-гілка при помилці CLI) ---"
   write_status "dry_run" "skipped" "" "null" "[]" "$( [ "$OFFLINE" = 1 ] && echo true || echo false )"
-  echo "runner.sh: dry-run завершено, статус записано в $STATUS_FILE"
+  echo "runner.sh: dry-run завершено, статус записано в БД (runs, run_id=$RUN_ID)"
   exit 0
 fi
 
@@ -464,8 +483,11 @@ fi
 
 # ---------------------------------------------------------------------------
 # Промпт: agents/prompts/<agent>.md з підстановкою {{RUN_ID}} і {{TRACK}}
-# (для triage додатково {{INBOX_FILE}} і {{DRAFT_ID}} — їх передає telegram-bot.py
-# через середовище; це шлях до вже записаного вхідного матеріалу, не його вміст).
+# (для triage додатково {{INBOX_DIR}} і {{DRAFT_ID}} — їх передає telegram-bot.py
+# через середовище). Фаза 4: сам текст чернетки (raw_text) тепер живе в таблиці
+# inbox — агент читає його через `db.sh get-inbox <draft_id>`, не з файлу.
+# INBOX_DIR лишається як шлях до теки з ВКЛАДЕННЯМИ (скріншоти, збережений текст
+# сторінок) — їх, на відміну від тексту, нема сенсу класти в Postgres-колонку.
 # ---------------------------------------------------------------------------
 
 PROMPT_SRC="$REPO_ROOT/agents/prompts/${AGENT}.md"
@@ -475,19 +497,19 @@ if [ ! -f "$PROMPT_SRC" ]; then
   exit 0
 fi
 
-INBOX_FILE="${IDEAS_SCOUT_INBOX_FILE:-}"
+INBOX_DIR="${IDEAS_SCOUT_INBOX_DIR:-}"
 DRAFT_ID="${IDEAS_SCOUT_DRAFT_ID:-}"
 if [ "$AGENT" = "triage" ]; then
   # Шлях приходить ззовні й підставляється в промпт — приймаємо лише безпечну форму
-  # всередині inbox/, щоб цим не можна було націлити агента на будь-який файл машини.
-  case "$INBOX_FILE" in
-    inbox/*) [[ "$INBOX_FILE" == *".."* ]] && INBOX_FILE="" ;;
-    *) INBOX_FILE="" ;;
+  # всередині inbox/, щоб цим не можна було націлити агента на будь-яку теку машини.
+  case "$INBOX_DIR" in
+    inbox/*) [[ "$INBOX_DIR" == *".."* ]] && INBOX_DIR="" ;;
+    *) INBOX_DIR="" ;;
   esac
   case "$DRAFT_ID" in ''|*[!0-9-]*) DRAFT_ID="" ;; esac
-  if [ -z "$INBOX_FILE" ] || [ -z "$DRAFT_ID" ] || [ ! -f "$REPO_ROOT/$INBOX_FILE" ]; then
-    echo "runner.sh: --agent triage вимагає IDEAS_SCOUT_INBOX_FILE (шлях виду inbox/... який існує) і IDEAS_SCOUT_DRAFT_ID" >&2
-    write_status "error" "skipped" "triage без валідного IDEAS_SCOUT_INBOX_FILE/IDEAS_SCOUT_DRAFT_ID"
+  if [ -z "$INBOX_DIR" ] || [ -z "$DRAFT_ID" ] || [ ! -d "$REPO_ROOT/$INBOX_DIR" ]; then
+    echo "runner.sh: --agent triage вимагає IDEAS_SCOUT_INBOX_DIR (шлях виду inbox/... який існує) і IDEAS_SCOUT_DRAFT_ID" >&2
+    write_status "error" "skipped" "triage без валідного IDEAS_SCOUT_INBOX_DIR/IDEAS_SCOUT_DRAFT_ID"
     exit 0
   fi
 fi
@@ -495,7 +517,7 @@ fi
 PROMPT_TMP="$(mktemp "${TMPDIR:-/tmp}/ideas-scout-prompt.XXXXXX")"
 TMP_FILES+=("$PROMPT_TMP")
 sed -e "s/{{RUN_ID}}/${RUN_ID}/g" -e "s/{{TRACK}}/${TRACK}/g" \
-    -e "s|{{INBOX_FILE}}|${INBOX_FILE}|g" -e "s/{{DRAFT_ID}}/${DRAFT_ID}/g" \
+    -e "s|{{INBOX_DIR}}|${INBOX_DIR}|g" -e "s/{{DRAFT_ID}}/${DRAFT_ID}/g" \
     "$PROMPT_SRC" > "$PROMPT_TMP"
 
 # ---------------------------------------------------------------------------
@@ -520,7 +542,7 @@ invoke_claude() {
   # межу безпеки задає саме перелік дозволених інструментів (без Bash), а не
   # інтерактивні permission-діалоги, які в headless-режимі однаково не спрацюють.
   local -a cmd=(claude --permission-mode bypassPermissions
-    --allowedTools Read Write Edit Glob Grep WebFetch WebSearch
+    --allowedTools Read Write Edit Glob Grep WebFetch WebSearch "Bash(agents/scripts/db.sh:*)"
     --output-format text)
   if [ -n "${RUNNER_CLAUDE_MODEL:-}" ]; then
     cmd+=(--model "$RUNNER_CLAUDE_MODEL")
@@ -605,20 +627,28 @@ fi
 # будь-що) відкочується, потрапляє в blocked_paths і дає status=blocked_paths.
 # Розбір порцеляну через -z/NUL — шляхи з пробілами та не-ASCII (git-лапки)
 # не обходять детекцію.
+#
+# Фаза 4 (Supabase): ideas/sources/runs/events/inbox тепер пишуться в БД через
+# db.sh, не файлами — тому registries/*, logs/runs/*, logs/status/*, logs/triage/*.md
+# і вердикт-файли inbox прибрано з allowlist: якщо агент (чи промпт-ін'єкція)
+# усе ж спробує писати туди по-старому, це тепер саме та аномалія, яку має
+# ловити guard, а не тихо пропускати. inbox/ лишається дозволеним лише тому, що
+# туди пише БОТ (вкладення для тріажу) ДО старту прогону — не сам агент.
+# logs/triage/*.progress лишається — туди агент-тріаж пише живий прогрес для чату.
 # ---------------------------------------------------------------------------
 
 is_allowed_path() {
   case "$1" in
-    registries/*|agents/catalogs/*) return 0 ;;
-    logs/runs/*|logs/status/*|logs/decisions.md|logs/dedup-decisions.md) return 0 ;;
-    # Ручне подання з Telegram: inbox/ пише бот (не агент), logs/triage/ — агент-тріаж.
-    inbox/*|logs/triage/*) return 0 ;;
-    inbox|logs/triage) return 0 ;;
+    agents/catalogs/*) return 0 ;;
+    logs/decisions.md|logs/dedup-decisions.md) return 0 ;;
+    # Вкладення ручного подання з Telegram: пише бот ДО старту прогону, не агент.
+    inbox/*|inbox) return 0 ;;
+    logs/triage/*.progress) return 0 ;;
     agents/criteria/criteria*|agents/criteria/search-queries-*.md|agents/criteria/search-queries.md|agents/criteria/taxonomy.md|agents/criteria/availability.md) return 0 ;;
     # Рантайм цього ж прогону (gitignored; тут — belt-and-braces на випадок
     # checkout без оновленого .gitignore): не блокувати самих себе.
     logs/locks/*|logs/launchd/*|logs/quarantine/*) return 0 ;;
-    logs/runs|logs/status|logs/locks|logs/launchd|logs/quarantine) return 0 ;;
+    logs/locks|logs/launchd|logs/quarantine) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -676,15 +706,20 @@ if [ "${#BLOCKED_PATHS[@]}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Коміт: staging строго за allowlist (дзеркало is_allowed_path, мінус рантайм і
-# мінус статус-файли — статус цього джоба комітиться окремо після відомого
-# push-результату; чужі статус-файли комітять їхні власні джоби).
+# Коміт: staging строго за allowlist (дзеркало is_allowed_path, мінус рантайм).
+#
+# Фаза 4 (Supabase): ideas/sources/runs/events/inbox — ДАНІ, вони більше не
+# комітяться (registries/, logs/runs/, inbox/, logs/triage/ прибрано зі
+# staging) — прогони пишуть їх у БД через db.sh. У Git далі комітяться лише
+# код і "поведінкові" файли: каталог можливостей і критерії (правила, що їх
+# тюнить ревізор/власник), плюс два прозові журнали рішень без власної таблиці
+# в схемі (logs/decisions.md, logs/dedup-decisions.md).
 # ---------------------------------------------------------------------------
 
 stage_allowed_paths() {
   local p
-  for p in registries agents/catalogs logs/runs logs/decisions.md logs/dedup-decisions.md \
-           inbox logs/triage agents/criteria/taxonomy.md agents/criteria/availability.md; do
+  for p in agents/catalogs logs/decisions.md logs/dedup-decisions.md \
+           agents/criteria/taxonomy.md agents/criteria/availability.md; do
     [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
   done
   for p in agents/criteria/criteria*.md agents/criteria/search-queries*.md; do
@@ -748,18 +783,9 @@ else
   fi
 fi
 
+# Статус прогону (Фаза 4): пишеться прямо в Supabase (runs), а не в
+# git-комітований файл — жодного окремого статус-коміту більше не потрібно.
 write_status "$FINAL_STATUS" "$PUSH_STATUS" "$ERROR_TAIL" "$CLI_EXIT" "$BLOCKED_JSON" "$( [ "$OFFLINE" = 1 ] && echo true || echo false )"
-
-# Статус-файл комітимо окремим маленьким комітом — щоб не бути на шляху
-# основного коміту (він же й записує push-результат основного коміту вище);
-# best-effort: провал цього кроку не змінює вже записаний FINAL_STATUS.
-if [ "$OFFLINE" != "1" ] && [ "$FINAL_STATUS" != "error" ]; then
-  git add -- "$STATUS_FILE" 2>/dev/null
-  if [ -n "$(git diff --cached --name-only 2>/dev/null)" ]; then
-    git commit -q -m "Статус прогону ${RUN_ID}" 2>/dev/null || true
-    push_with_retry "$MAIN_BRANCH" >/dev/null 2>&1 || true
-  fi
-fi
 
 git_lock_release
 
