@@ -2,14 +2,8 @@ import Link from "next/link";
 import type { IdeaNode } from "@/lib/tree";
 import { CONFIDENCE_META, REJECTION_META } from "@/lib/status";
 import StatusBadge from "./StatusBadge";
+import { formatDate } from "@/lib/dates";
 
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString("uk-UA", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 // Однакова кількість треків на кожному брейкпоінті, скільки клітинок реально
 // видно (hidden sm:block і т.д. нижче) — інакше "auto"-колонки з довгим текстом

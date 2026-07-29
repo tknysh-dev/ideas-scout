@@ -3,19 +3,10 @@ import ConfigNotice from "@/components/ConfigNotice";
 import Prose from "@/components/Prose";
 import { fetchConfigFile, fetchLastCommit } from "@/lib/github";
 import { getGithubEnv } from "@/lib/config";
+import { formatDateTime } from "@/lib/dates";
 
 export const revalidate = 300;
 
-function formatDateTime(value: string | null) {
-  if (!value) return "невідомо";
-  return new Date(value).toLocaleString("uk-UA", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 export default async function ConfigFilePage({
   params,

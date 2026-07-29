@@ -2,17 +2,8 @@
 
 import { Fragment, useState } from "react";
 import type { RunRow } from "@/lib/types";
+import { formatDateTime } from "@/lib/dates";
 
-function formatDateTime(value: string | null) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("uk-UA", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 const STATUS_TONE: Record<string, string> = {
   ok: "text-[color:var(--status-active-fg)]",

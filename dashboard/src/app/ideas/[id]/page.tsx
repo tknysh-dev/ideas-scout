@@ -15,26 +15,9 @@ import {
   trackLabel,
 } from "@/lib/status";
 import type { EventRow, Idea, SourceRow } from "@/lib/types";
+import { formatDate, formatDateTime } from "@/lib/dates";
 
-function formatDate(value: string | null) {
-  if (!value) return "—";
-  return new Date(value).toLocaleDateString("uk-UA", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
 
-function formatDateTime(value: string | null) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("uk-UA", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 export default async function IdeaPage({
   params,

@@ -59,6 +59,20 @@ def log(msg):
     print(f"{datetime.now(timezone.utc).strftime('%FT%TZ')} {msg}", flush=True)
 
 
+def fmt_local(iso):
+    """UTC-мітка з БД → локальний час машини (те, що очікує власник)."""
+    if not iso:
+        return ""
+    try:
+        return (
+            datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M")
+        )
+    except ValueError:
+        return iso[:16]
+
+
 # ---------------------------------------------------------------------------
 # Секрети: лише Keychain, як у monitor.sh. Ніколи з репо чи env.
 # ---------------------------------------------------------------------------
@@ -708,7 +722,7 @@ def cmd_status():
         out.append(f"(не вдалось прочитати прогони з БД: {esc(str(e))})")
     rows = [
         f"• {esc(r.get('job'))}/{esc(r.get('track') or '—')}: {esc(r.get('status'))} "
-        f"({esc((r.get('finished_at') or '')[:16])})"
+        f"({esc(fmt_local(r.get('finished_at')))})"
         for r in runs
     ]
     if rows:

@@ -4,19 +4,11 @@ import EmptyState from "@/components/EmptyState";
 import { getServiceClient } from "@/lib/supabase/service";
 import { trackLabel } from "@/lib/status";
 import type { InboxRow } from "@/lib/types";
+import { formatDateTime } from "@/lib/dates";
 
 // Читаємо базу при кожному відкритті, інакше сторінка запікається на момент деплою.
 export const dynamic = "force-dynamic";
 
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("uk-UA", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 const TRIAGE_TONE: Record<string, string> = {
   rejected: "text-[color:var(--status-rejected-fg)]",
