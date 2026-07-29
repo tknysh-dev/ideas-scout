@@ -5,6 +5,9 @@ import { getServiceClient } from "@/lib/supabase/service";
 import { trackLabel } from "@/lib/status";
 import type { InboxRow } from "@/lib/types";
 
+// Читаємо базу при кожному відкритті, інакше сторінка запікається на момент деплою.
+export const dynamic = "force-dynamic";
+
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString("uk-UA", {
     year: "numeric",

@@ -4,6 +4,9 @@ import RunsTable from "@/components/RunsTable";
 import { getServiceClient } from "@/lib/supabase/service";
 import type { RunRow } from "@/lib/types";
 
+// Читаємо базу при кожному відкритті, інакше сторінка запікається на момент деплою.
+export const dynamic = "force-dynamic";
+
 export default async function RunsPage() {
   const supabase = getServiceClient();
 

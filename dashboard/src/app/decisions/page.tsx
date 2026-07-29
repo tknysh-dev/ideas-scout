@@ -7,6 +7,9 @@ import { getServiceClient } from "@/lib/supabase/service";
 import { trackLabel } from "@/lib/status";
 import type { Idea } from "@/lib/types";
 
+// Читаємо базу при кожному відкритті, інакше сторінка запікається на момент деплою.
+export const dynamic = "force-dynamic";
+
 export default async function DecisionsPage() {
   const supabase = getServiceClient();
 
