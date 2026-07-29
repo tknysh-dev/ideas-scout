@@ -16,3 +16,10 @@ logs/status/*.json
 
 # Reddit-кеш — сирі дампи передкачування (scripts/reddit-fetch.sh), не комітяться
 logs/runs/reddit-cache/
+
+# Рядки прогресу тріажу — живуть хвилини, лише щоб бот показав стан у чаті.
+# Сам вердикт (logs/triage/*.md) і вхідний матеріал (inbox/) комітяться.
+logs/triage/*.progress
+
+# Байт-код Python (scripts/telegram-bot.py)
+__pycache__/

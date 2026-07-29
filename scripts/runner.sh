@@ -54,7 +54,7 @@ while [ $# -gt 0 ]; do
 done
 
 case "$TRACK" in passive-income|app-ideas) ;; *) echo "runner.sh: --track має бути passive-income або app-ideas (отримано: '$TRACK')" >&2; exit 2 ;; esac
-case "$AGENT" in collector|analyst|revisor) ;; *) echo "runner.sh: --agent має бути collector, analyst або revisor (отримано: '$AGENT')" >&2; exit 2 ;; esac
+case "$AGENT" in collector|analyst|revisor|triage) ;; *) echo "runner.sh: --agent має бути collector, analyst, revisor або triage (отримано: '$AGENT')" >&2; exit 2 ;; esac
 case "$PROVIDER" in claude|codex) ;; *) echo "runner.sh: --provider має бути claude або codex (отримано: '$PROVIDER')" >&2; exit 2 ;; esac
 
 # ---------------------------------------------------------------------------
@@ -73,7 +73,13 @@ fi
 mkdir -p "$REPO_ROOT/logs/status" "$REPO_ROOT/logs/locks" "$REPO_ROOT/logs/launchd" "$REPO_ROOT/logs/quarantine" "$REPO_ROOT/logs/runs"
 
 MAIN_BRANCH="${IDEAS_SCOUT_MAIN_BRANCH:-main}"
-RUN_TIMEOUT_S="${RUNNER_TIMEOUT_S:-2700}"   # 45 хв за замовчуванням
+# Тріаж оцінює рівно один матеріал і власник чекає відповідь у чаті — 45 хв тут
+# означали б лише те, що зависання помітно через три чверті години.
+if [ "$AGENT" = "triage" ]; then
+  RUN_TIMEOUT_S="${RUNNER_TIMEOUT_S:-900}"  # 15 хв
+else
+  RUN_TIMEOUT_S="${RUNNER_TIMEOUT_S:-2700}" # 45 хв за замовчуванням
+fi
 TERM_GRACE_S=10
 # Застарілість лока прив'язана до фактичного таймауту прогону (+15 хв запасу),
 # а не до фіксованих 6 год — вбитий джоб не має блокувати чергу пів доби.
@@ -191,7 +197,9 @@ in_work_hours() {
   [ "$now_min" -ge "$sm" ] && [ "$now_min" -lt "$em" ]
 }
 
-if [ "$DRY_RUN" = "0" ] && [ "${IDEAS_SCOUT_IGNORE_WORK_HOURS:-0}" != "1" ] && in_work_hours; then
+# Тріаж завжди ініціює власник вручну з чату — це не launchd catch-up, і мовчазний
+# skip виглядав би для нього як зависання бота. Захист робочих годин його не стосується.
+if [ "$AGENT" != "triage" ] && [ "$DRY_RUN" = "0" ] && [ "${IDEAS_SCOUT_IGNORE_WORK_HOURS:-0}" != "1" ] && in_work_hours; then
   echo "runner.sh: зараз робоче вікно (${IDEAS_SCOUT_WORK_DAYS:-1,2,3,4,5} ${IDEAS_SCOUT_WORK_HOURS:-09:00-19:00}) — прогін пропущено, щоб не конкурувати за підписку (status=skipped_work_hours)"
   write_status "skipped_work_hours" "skipped" "робоче вікно: автопрогони заборонені (override: IDEAS_SCOUT_IGNORE_WORK_HOURS=1)"
   exit 0
@@ -369,10 +377,13 @@ if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
   # Виключено з pathspec: 1) scripts/, config/prompts/, launchd/, .gitignore —
   # захищені guard-ом шляхи, гігієна їх не чіпає; 2) logs/locks/, logs/launchd/,
   # logs/quarantine/ — живий рантайм ЦЬОГО прогону (лок, лог-файл, у який зараз
-  # пише tee) — інакше stash -u міг би змести їх з-під самого себе.
+  # пише tee) — інакше stash -u міг би змести їх з-під самого себе; 3) inbox/,
+  # logs/triage/ — матеріал, який власник щойно надіслав у Telegram: він пишеться
+  # ДО старту прогону тріажу, тож stash з'їв би вхід цього ж прогону.
   if git stash push -u -m "runner:${RUN_ID}" \
       -- . ':!scripts' ':!config/prompts' ':!launchd' ':!.gitignore' \
          ':!logs/locks' ':!logs/launchd' ':!logs/quarantine' \
+         ':!inbox' ':!logs/triage' \
       >/dev/null 2>&1; then
     STASHED=1
   else
@@ -447,6 +458,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # Промпт: config/prompts/<agent>.md з підстановкою {{RUN_ID}} і {{TRACK}}
+# (для triage додатково {{INBOX_FILE}} і {{DRAFT_ID}} — їх передає telegram-bot.py
+# через середовище; це шлях до вже записаного вхідного матеріалу, не його вміст).
 # ---------------------------------------------------------------------------
 
 PROMPT_SRC="$REPO_ROOT/config/prompts/${AGENT}.md"
@@ -456,9 +469,28 @@ if [ ! -f "$PROMPT_SRC" ]; then
   exit 0
 fi
 
+INBOX_FILE="${IDEAS_SCOUT_INBOX_FILE:-}"
+DRAFT_ID="${IDEAS_SCOUT_DRAFT_ID:-}"
+if [ "$AGENT" = "triage" ]; then
+  # Шлях приходить ззовні й підставляється в промпт — приймаємо лише безпечну форму
+  # всередині inbox/, щоб цим не можна було націлити агента на будь-який файл машини.
+  case "$INBOX_FILE" in
+    inbox/*) [[ "$INBOX_FILE" == *".."* ]] && INBOX_FILE="" ;;
+    *) INBOX_FILE="" ;;
+  esac
+  case "$DRAFT_ID" in ''|*[!0-9-]*) DRAFT_ID="" ;; esac
+  if [ -z "$INBOX_FILE" ] || [ -z "$DRAFT_ID" ] || [ ! -f "$REPO_ROOT/$INBOX_FILE" ]; then
+    echo "runner.sh: --agent triage вимагає IDEAS_SCOUT_INBOX_FILE (шлях виду inbox/... який існує) і IDEAS_SCOUT_DRAFT_ID" >&2
+    write_status "error" "skipped" "triage без валідного IDEAS_SCOUT_INBOX_FILE/IDEAS_SCOUT_DRAFT_ID"
+    exit 0
+  fi
+fi
+
 PROMPT_TMP="$(mktemp "${TMPDIR:-/tmp}/ideas-scout-prompt.XXXXXX")"
 TMP_FILES+=("$PROMPT_TMP")
-sed -e "s/{{RUN_ID}}/${RUN_ID}/g" -e "s/{{TRACK}}/${TRACK}/g" "$PROMPT_SRC" > "$PROMPT_TMP"
+sed -e "s/{{RUN_ID}}/${RUN_ID}/g" -e "s/{{TRACK}}/${TRACK}/g" \
+    -e "s|{{INBOX_FILE}}|${INBOX_FILE}|g" -e "s/{{DRAFT_ID}}/${DRAFT_ID}/g" \
+    "$PROMPT_SRC" > "$PROMPT_TMP"
 
 # ---------------------------------------------------------------------------
 # Виклик CLI headless — уся різниця між провайдерами ізольована в цих двох
@@ -573,6 +605,9 @@ is_allowed_path() {
   case "$1" in
     registries/*|catalogs/*) return 0 ;;
     logs/runs/*|logs/status/*|logs/decisions.md|logs/dedup-decisions.md) return 0 ;;
+    # Ручне подання з Telegram: inbox/ пише бот (не агент), logs/triage/ — агент-тріаж.
+    inbox/*|logs/triage/*) return 0 ;;
+    inbox|logs/triage) return 0 ;;
     config/criteria*|config/search-queries-*.md|config/taxonomy.md|config/availability.md) return 0 ;;
     # Рантайм цього ж прогону (gitignored; тут — belt-and-braces на випадок
     # checkout без оновленого .gitignore): не блокувати самих себе.
@@ -643,7 +678,7 @@ fi
 stage_allowed_paths() {
   local p
   for p in registries catalogs logs/runs logs/decisions.md logs/dedup-decisions.md \
-           config/taxonomy.md config/availability.md; do
+           inbox logs/triage config/taxonomy.md config/availability.md; do
     [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
   done
   for p in config/criteria*.md config/search-queries-*.md; do
