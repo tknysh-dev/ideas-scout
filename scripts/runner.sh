@@ -398,8 +398,10 @@ git_lock_release
 # ---------------------------------------------------------------------------
 
 if [ "$DRY_RUN" = "1" ]; then
-  if [ "$AGENT" = "collector" ]; then
-    echo "--- DRY RUN: далі викликався б $REPO_ROOT/scripts/reddit-fetch.sh (передкачування Reddit-кешу для collector) ---"
+  if [ "$AGENT" = "collector" ] && [ "$TRACK" = "passive-income" ]; then
+    echo "--- DRY RUN: далі викликався б $REPO_ROOT/scripts/reddit-fetch.sh (передкачування Reddit-кешу для collector, лише трек passive-income) ---"
+  elif [ "$AGENT" = "collector" ]; then
+    echo "--- DRY RUN: reddit-fetch.sh НЕ викликається для треку $TRACK (сабреддіти в скрипті специфічні для passive-income) ---"
   fi
   echo "--- DRY RUN: далі йшов би виклик CLI провайдера '$PROVIDER' з промптом config/prompts/${AGENT}.md ---"
   echo "--- DRY RUN: далі йшов би git add/commit/push (або quarantine-гілка при помилці CLI) ---"
@@ -422,17 +424,25 @@ if [ "$PROVIDER" = "codex" ] && [ "${IDEAS_SCOUT_ALLOW_CODEX:-0}" != "1" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Reddit-місток (лише для collector): агент не має Bash, тож OAuth-фетч Reddit
-# робить сам runner.sh ДО виклику CLI. Нефатально — падіння фетчера не зриває
-# прогін, collector просто працює без Reddit-кешу цього разу.
+# Reddit-місток (лише для collector, лише трек passive-income): агент не має
+# Bash, тож OAuth-фетч Reddit робить сам runner.sh ДО виклику CLI. Нефатально —
+# падіння фетчера не зриває прогін, collector просто працює без Reddit-кешу.
+#
+# reddit-fetch.sh має захардкоджений список сабреддітів про заробіток
+# (SUBREDDITS у самому скрипті) — вони не мають стосунку до app-ideas. Поки
+# для цього треку не заведено окремого набору сабреддітів, викликати фетчер
+# для нього означає передкачувати нерелевантний кеш, який промпт collector-а
+# все одно читає без фільтра за треком.
 # ---------------------------------------------------------------------------
 
-if [ "$AGENT" = "collector" ]; then
+if [ "$AGENT" = "collector" ] && [ "$TRACK" = "passive-income" ]; then
   if [ -x "$REPO_ROOT/scripts/reddit-fetch.sh" ]; then
     "$REPO_ROOT/scripts/reddit-fetch.sh" || echo "runner.sh: попередження — reddit-fetch.sh завершився з помилкою, продовжую без Reddit-кешу" >&2
   else
     echo "runner.sh: попередження — scripts/reddit-fetch.sh не знайдено або не виконуваний, пропускаю Reddit-фетч" >&2
   fi
+elif [ "$AGENT" = "collector" ]; then
+  echo "runner.sh: трек $TRACK — reddit-fetch.sh пропущено (сабреддіти в ньому специфічні для passive-income, для $TRACK окремого набору ще нема)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -563,7 +573,7 @@ is_allowed_path() {
   case "$1" in
     registries/*|catalogs/*) return 0 ;;
     logs/runs/*|logs/status/*|logs/decisions.md|logs/dedup-decisions.md) return 0 ;;
-    config/criteria*|config/search-queries.md|config/taxonomy.md|config/availability.md) return 0 ;;
+    config/criteria*|config/search-queries-*.md|config/taxonomy.md|config/availability.md) return 0 ;;
     # Рантайм цього ж прогону (gitignored; тут — belt-and-braces на випадок
     # checkout без оновленого .gitignore): не блокувати самих себе.
     logs/locks/*|logs/launchd/*|logs/quarantine/*) return 0 ;;
@@ -633,10 +643,10 @@ fi
 stage_allowed_paths() {
   local p
   for p in registries catalogs logs/runs logs/decisions.md logs/dedup-decisions.md \
-           config/search-queries.md config/taxonomy.md config/availability.md; do
+           config/taxonomy.md config/availability.md; do
     [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
   done
-  for p in config/criteria*.md; do
+  for p in config/criteria*.md config/search-queries-*.md; do
     [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
   done
 }

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ideas-scout.app-ideas-collector</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/scripts/runner.sh</string>
+        <string>--track</string>
+        <string>app-ideas</string>
+        <string>--agent</string>
+        <string>collector</string>
+        <string>--provider</string>
+        <string>claude</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+
+    <!-- Легкий розклад треку app-ideas: 1 прогін збирача/тиждень (нд 03:00), до вікна заборони власника (07:00-20:00) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>IDEAS_SCOUT_WORK_DAYS</key>
+        <string>1,2,3,4,5</string>
+        <key>IDEAS_SCOUT_WORK_HOURS</key>
+        <string>07:00-20:00</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO__/logs/launchd/app-ideas-collector.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO__/logs/launchd/app-ideas-collector.launchd.log</string>
+</dict>
+</plist>

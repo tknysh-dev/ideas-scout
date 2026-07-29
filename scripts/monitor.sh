@@ -17,16 +17,18 @@ mkdir -p "$REPO_ROOT/logs/status"
 STATUS_DIR="$REPO_ROOT/logs/status"
 MONITOR_STATUS_FILE="$STATUS_DIR/monitor.json"
 
-# Джоби, які мають запускатись регулярно (Фаза 6, розклад). Трек app-ideas свідомо
-# відсутній — критерії v0.0 порожні (PLAN.md), додати сюди при активації треку.
-EXPECTED_JOBS=("passive-income-collector" "passive-income-analyst" "passive-income-revisor")
+# Джоби, які мають запускатись регулярно (Фаза 6, розклад).
+EXPECTED_JOBS=("passive-income-collector" "passive-income-analyst" "passive-income-revisor" "app-ideas-collector" "app-ideas-analyst")
 STALE_AFTER_S=$((3 * 24 * 3600))  # 3 доби, як зазначено в PLAN.md — поріг за замовчуванням
 
 # Ревізор ганяє лише 2×/тиждень (ср/сб), тому загальний 72-годинний поріг для нього
 # зайвий: інтервал між прогонами вже сам по собі >3 доби. Окремий, м'якший поріг.
+# app-ideas — легкий тижневий розклад (1 прогін/тиждень на джоб), тому їхній
+# поріг ще м'якший — 8 діб, з запасом понад тижневий інтервал між прогонами.
 stale_after_for_job() {
   case "$1" in
     passive-income-revisor) echo $((5 * 24 * 3600)) ;;
+    app-ideas-collector|app-ideas-analyst) echo $((8 * 24 * 3600)) ;;
     *) echo "$STALE_AFTER_S" ;;
   esac
 }

@@ -197,7 +197,7 @@ Run date: YYYY-MM-DD
 
 ## Що НЕ робити
 
-- Не змінюй `config/criteria-*.md`, `config/search-queries.md`, `config/taxonomy.md`, `config/availability.md`, будь-що в `scripts/`, будь-що в `config/prompts/` — лише читай їх. (`scripts/runner.sh` після прогону однаково відкотить зміни поза allowlist і покладе їх у карантин — але межа задана тут, а не гардом.)
+- Не змінюй `config/criteria-*.md`, `config/search-queries-{{TRACK}}.md`, `config/taxonomy.md`, `config/availability.md`, будь-що в `scripts/`, будь-що в `config/prompts/` — лише читай їх. (`scripts/runner.sh` після прогону однаково відкотить зміни поза allowlist і покладе їх у карантин — але межа задана тут, а не гардом.)
 - Не видаляй жодних записів реєстру і жодних записів каталогу — застаріле позначається, а не стирається.
 - Не виноси вердиктів за критеріями, не міняй `rejection_code`, `rejection_detail`, `confidence`, `verdict_by`, `criteria_version` у записах — твоя єдина зміна статусу це `rejected`/`parked` → `new`.
 - Не переводь записи в `rejected`, `parked`, `approved_pending` чи будь-який інший статус — тільки в `new`.

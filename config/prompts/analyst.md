@@ -88,7 +88,7 @@
 
 ## Що НЕ робити
 
-- Не змінюй `config/criteria-*.md`, `config/search-queries.md`, `config/taxonomy.md`, будь-що в `scripts/`, будь-що в `config/prompts/` — лише читай їх.
+- Не змінюй `config/criteria-*.md`, `config/search-queries-{{TRACK}}.md`, `config/taxonomy.md`, будь-що в `scripts/`, будь-що в `config/prompts/` — лише читай їх.
 - Не видаляй жодних наявних записів реєстру (навіть відхилених) — реєстр зберігає історію.
 - Не виконуй git-команд (commit, push, pull) — це виключно робота `scripts/runner.sh` після твого завершення.
 
