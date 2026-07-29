@@ -13,7 +13,6 @@ registries/
   app-ideas/
     ideas/                  # те саме, трек «мобільні застосунки»
 catalogs/
-  earning-methods.md         # плаский каталог способів заробітку в інтернеті
   ai-capabilities.md          # актуальні можливості AI-провайдерів (веде агент-ревізор)
 config/
   criteria-passive-income.md # версіонований чек-лист оцінки для треку доходу
