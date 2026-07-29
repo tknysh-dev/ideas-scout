@@ -585,6 +585,14 @@ def run_triage(d):
 # Команди
 # ---------------------------------------------------------------------------
 
+COMMANDS = [
+    ("new", "закрити чернетку і почати нову"),
+    ("cancel", "викинути чернетку"),
+    ("status", "що зараз відбувається"),
+    ("last", "п'ять останніх карток"),
+    ("help", "як користуватись ботом"),
+]
+
 HELP = """<b>Як цим користуватись</b>
 
 Кидай сюди посилання, думку або скріншот. Нічого не стає ідеєю саме по собі — спершу
@@ -736,6 +744,11 @@ def nudge_if_idle():
 def main():
     os.makedirs(STATE_DIR, exist_ok=True)
     os.makedirs(os.path.join(REPO_ROOT, "logs", "triage"), exist_ok=True)
+
+    # Автопідказка при наборі «/». Реєструється при кожному старті, щоб список у
+    # Telegram не розходився з обробниками в on_command().
+    api("setMyCommands",
+        commands=[{"command": c, "description": desc} for c, desc in COMMANDS])
     d = draft()
     if d and d["state"] == "running":
         # Прогін не переживає перезапуск: процесу вже немає, матеріал лишився.
