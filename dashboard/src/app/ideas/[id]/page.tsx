@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import ConfigNotice from "@/components/ConfigNotice";
+import DecisionPanel from "@/components/DecisionPanel";
 import { Field, FieldGroup } from "@/components/FieldGroup";
+import Prose from "@/components/Prose";
 import StatusBadge from "@/components/StatusBadge";
 import { getServiceClient } from "@/lib/supabase/service";
 import {
@@ -205,13 +205,19 @@ export default async function IdeaPage({
         </FieldGroup>
       </div>
 
+      {record.status === "approved_pending" && (
+        <section className="mt-8">
+          <DecisionPanel ideaId={record.id} />
+        </section>
+      )}
+
       {record.body && (
         <section className="mt-8">
           <h2 className="mb-3 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
             Опис
           </h2>
-          <div className="prose prose-neutral max-w-none rounded-lg border border-line bg-paper-raised p-6 prose-headings:font-display prose-a:text-accent">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{record.body}</ReactMarkdown>
+          <div className="rounded-lg border border-line bg-paper-raised p-6">
+            <Prose content={record.body} />
           </div>
         </section>
       )}

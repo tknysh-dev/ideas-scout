@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Alegreya, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import Sidebar from "@/components/Sidebar";
+import { getServiceClient } from "@/lib/supabase/service";
 import "./globals.css";
 
 const display = Alegreya({
@@ -27,12 +28,24 @@ export const metadata: Metadata = {
   description: "Особистий дашборд власника системи ideas-scout",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+async function getPendingDecisionsCount(): Promise<number> {
+  const supabase = getServiceClient();
+  if (!supabase) return 0;
+  const { count } = await supabase
+    .from("ideas")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "approved_pending");
+  return count ?? 0;
+}
+
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const pendingDecisions = await getPendingDecisionsCount();
+
   return (
     <html lang="uk" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <body className="min-h-screen bg-paper text-ink antialiased">
         <div className="flex min-h-screen">
-          <Sidebar />
+          <Sidebar pendingDecisions={pendingDecisions} />
           <main className="min-w-0 flex-1">{children}</main>
         </div>
       </body>

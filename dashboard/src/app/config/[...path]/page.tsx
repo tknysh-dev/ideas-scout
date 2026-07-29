@@ -1,7 +1,6 @@
 import Link from "next/link";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import ConfigNotice from "@/components/ConfigNotice";
+import Prose from "@/components/Prose";
 import { fetchConfigFile, fetchLastCommit } from "@/lib/github";
 import { getGithubEnv } from "@/lib/config";
 
@@ -70,8 +69,8 @@ export default async function ConfigFilePage({
       {fetchError ? (
         <ConfigNotice title={`Помилка GitHub API: ${fetchError}`} vars={[]} />
       ) : isMarkdown ? (
-        <div className="prose prose-neutral max-w-none rounded-lg border border-line bg-paper-raised p-6 prose-headings:font-display prose-a:text-accent">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        <div className="rounded-lg border border-line bg-paper-raised p-6">
+          <Prose content={content} />
         </div>
       ) : (
         <pre className="overflow-x-auto rounded-lg border border-line bg-paper-raised p-6 text-sm text-ink">

@@ -6,12 +6,13 @@ import { getAuthBrowserClient } from "@/lib/supabase/browser";
 
 const LINKS = [
   { href: "/", label: "Дошка", hint: "Дерево знахідок" },
+  { href: "/decisions", label: "Рішення", hint: "Черга «Очікує рішення»" },
   { href: "/runs", label: "Прогони", hint: "Журнал джобів" },
   { href: "/inbox", label: "Вхідні", hint: "Ручні ідеї з Telegram" },
   { href: "/config", label: "Конфігурація", hint: "Промпти й критерії" },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ pendingDecisions = 0 }: { pendingDecisions?: number }) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -57,7 +58,14 @@ export default function Sidebar() {
                   active ? "bg-accent opacity-100" : "opacity-0"
                 }`}
               />
-              <span className="font-medium">{link.label}</span>
+              <span className="flex items-center gap-2 font-medium">
+                {link.label}
+                {link.href === "/decisions" && pendingDecisions > 0 && (
+                  <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent-ink">
+                    {pendingDecisions}
+                  </span>
+                )}
+              </span>
               <span className="block text-xs text-ink-dim/80 group-hover:text-ink-dim">
                 {link.hint}
               </span>
