@@ -110,3 +110,17 @@
 3. **Межа mechanic vs niche для SaaS:** Механіка «Indie SaaS» (PI-0006) дуже широка — від email-аліасів до трекерів калорій і IDE-плагінів. Це зручно для дедуплікації (не плодити окрему механіку на кожен SaaS), але ризик: на рівні механіки майже немає корисних висновків, крім «SaaS — це легально». Можливо, у майбутньому варто розбити PI-0006 на підмеханіки (consumer SaaS vs developer tools vs mobile apps).
 
 **Обґрунтування:** Провенанс: provider anthropic / model claude-opus-4-6, run_id `20260728-185055-claude-passive-income-analyst`. Criteria version: v0.3.
+
+---
+
+### 2026-07-29 — Ревізор (20260729-124410-claude-passive-income-revisor)
+
+**Рішення:** Перший прогін ревізора. Актуалізовано `catalogs/ai-capabilities.md` — закрито 3 з 8 прогалин базового зрізу від 2026-07-28:
+
+- **Ціни підписки Claude Code:** Pro $20/міс, Max 5× $100/міс, Max 20× $200/міс (claude.com/product/claude-code).
+- **Ліміти ChatGPT Plus по моделях GPT-5.6:** Sol 15–90, Terra 20–110, Luna 50–280 повідомлень за 5-годинне вікно (learn.chatgpt.com/docs/pricing).
+- **OpenAI image-generation API:** лінійка gpt-image-2/1.5/1/1-mini, від $0.006 до $0.211 за зображення 1024×1024 залежно від якості; доступно через API, файнтюн не підтримується (developers.openai.com/api/docs/guides/image-generation).
+
+Статуси записів реєстру не змінювались — жоден тригер не спрацював. PI-0004 (dreamlook) — найближчий кандидат через перетин `missing_capabilities` з image-generation API, але тригер не спрацював за змістом (API не покриває файнтюн) і за інтервалом (14/30 днів).
+
+**Обґрунтування:** Провенанс: provider anthropic / model claude-opus-4-6, run_id `20260729-124410-claude-passive-income-revisor`.
