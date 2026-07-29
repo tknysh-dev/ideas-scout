@@ -70,6 +70,12 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 2
 fi
 
+# launchd дає джобам мінімальний PATH (/usr/bin:/bin:/usr/sbin:/sbin), і той самий
+# PATH успадковує telegram-bot.py разом з усім, що він запускає. claude при цьому
+# ставиться в ~/.local/bin (або homebrew) — без цього рядка прогін обривається за
+# секунду з «CLI не знайдено» і кодом 127, що ззовні виглядає як мовчазна поломка.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 mkdir -p "$REPO_ROOT/logs/status" "$REPO_ROOT/logs/locks" "$REPO_ROOT/logs/launchd" "$REPO_ROOT/logs/quarantine" "$REPO_ROOT/logs/runs"
 
 MAIN_BRANCH="${IDEAS_SCOUT_MAIN_BRANCH:-main}"

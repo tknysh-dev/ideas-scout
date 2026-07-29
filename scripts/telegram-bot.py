@@ -508,6 +508,29 @@ def progress_watcher(d, stop, started):
         stop.wait(20)
 
 
+RUN_FAILURE_HINTS = {
+    "skipped": "Прогін пропущено — лок зайнятий іншим прогоном. Спробуй ще раз за кілька хвилин.",
+    "skipped_work_hours": "Прогін пропущено захистом робочих годин (для тріажу так не має бути — перевір runner.sh).",
+    "error": "Прогін завершився помилкою.",
+    "blocked_paths": "Агент спробував записати щось поза дозволеними теками — зміни відкочено. Подивись logs/quarantine/.",
+    "dry_run": "runner.sh відпрацював у режимі dry-run — реальної оцінки не було.",
+    "": "runner.sh не дійшов навіть до запису статусу — швидше за все впав на старті (перевір logs/launchd/).",
+}
+
+
+def read_run_status(track):
+    """Чому прогін не дав вердикту. runner.sh виходить з кодом 0 і на ранніх обривах
+    (лок зайнятий, HEAD не на main, немає claude в PATH, немає промпту) — сам по собі
+    код повернення про причину не каже нічого, вона лежить у статус-файлі."""
+    path = os.path.join(REPO_ROOT, "logs", "status", f"{track}-triage.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            s = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return "", ""
+    return s.get("status", ""), (s.get("error_tail") or "").strip()
+
+
 def read_verdict(draft_id):
     path = os.path.join(REPO_ROOT, "logs", "triage", f"{draft_id}.md")
     try:
@@ -549,8 +572,11 @@ def run_triage(d):
             cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=1800,
         )
         rc = proc.returncode
+        tail = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()[-25:]
+        log(f"run_triage rc={rc}\n" + "\n".join(tail))
     except subprocess.TimeoutExpired:
         rc = -1
+        log("run_triage: таймаут очікування runner.sh")
     except OSError as e:
         log(f"run_triage: {e}")
         rc = -2
@@ -572,8 +598,16 @@ def run_triage(d):
         if d.get("first_msg_id"):
             react(d["first_msg_id"], "👎" if v.get("status", "").startswith("rejected") else "👍")
     else:
-        edit(d["panel_msg_id"],
-             panel_text(d) + f"\n\n❌ Оцінка не завершилась (код {rc}). Матеріал збережено — натисни, щоб повторити.",
+        status, err = read_run_status(d["track"])
+        why = RUN_FAILURE_HINTS.get(status)
+        if not why:
+            why = ("Прогін відпрацював, але агент не записав вердикт"
+                   if status == "ok" else f"runner.sh: {status or f'код {rc}'}")
+        note = f"\n\n❌ {esc(why)}"
+        if err:
+            note += f"\n<code>{esc(err[:400])}</code>"
+        note += "\nМатеріал збережено — натисни, щоб повторити."
+        edit(d["panel_msg_id"], panel_text(d) + note,
              [[{"text": "Повторити", "callback_data": "eval"}]])
 
     cur = draft()
