@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install-launchd.sh — рендерить шаблони launchd/*.plist (підставляє __REPO__)
+# install-launchd.sh — рендерить шаблони agents/launchd/*.plist (підставляє __REPO__)
 # і встановлює їх у ~/Library/LaunchAgents через launchctl bootstrap.
 #
 # Використання: install-launchd.sh [--uninstall]
@@ -14,8 +14,8 @@ set -uo pipefail
 echo "install-launchd.sh: це має виконуватись на M1 (постійний воркер) — переконайся, що ти саме там."
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-LAUNCHD_SRC_DIR="$REPO_ROOT/launchd"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LAUNCHD_SRC_DIR="$REPO_ROOT/agents/launchd"
 LAUNCHD_DEST_DIR="$HOME/Library/LaunchAgents"
 
 UNINSTALL=0

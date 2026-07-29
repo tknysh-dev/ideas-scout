@@ -12,7 +12,7 @@
 
 ### 1.1. Машина і окремий користувач для агента
 
-Уся система має жити на M1 (постійний воркер, за планом). Не запускай launchd-джоби на випадковій машині — `scripts/install-launchd.sh` навіть попереджає про це текстом при старті.
+Уся система має жити на M1 (постійний воркер, за планом). Не запускай launchd-джоби на випадковій машині — `agents/scripts/install-launchd.sh` навіть попереджає про це текстом при старті.
 
 Система працює під **окремим користувачем macOS** (виконано 2026-07-16: створено Standard-юзера для агента; профілі інших користувачів закриті через `chmod 700 /Users/<профіль>`). Що це дає і що з цього випливає:
 
@@ -63,15 +63,15 @@ security add-generic-password -s ideas-scout-healthcheck -a ideas-scout -w 'http
 
 ### 1.5. Промпти агентів
 
-`config/prompts/collector.md` і `config/prompts/analyst.md` мають існувати й бути закомічені в git **до** першого запуску `runner.sh` — без них прогін одразу завершується статусом `error` (`промпт не знайдено`). Якщо їх ще нема — це окрема робота (Фаза 3/4 плану), не інфраструктурна.
+`agents/prompts/collector.md` і `agents/prompts/analyst.md` мають існувати й бути закомічені в git **до** першого запуску `runner.sh` — без них прогін одразу завершується статусом `error` (`промпт не знайдено`). Якщо їх ще нема — це окрема робота (Фаза 3/4 плану), не інфраструктурна.
 
-### 1.6. config/availability.md
+### 1.6. agents/criteria/availability.md
 
 Заповни вручну — скільки часу на тиждень готовий інвестувати в запуск/підтримку нових механік і в які години сам активно працюєш із підписками Claude/Codex (щоб автопрогони не конкурували з тобою за ліміт).
 
 ### 1.7. Reddit (опційно)
 
-Reddit — опційне джерело: без нього система просто працює далі на HN, DOU і веб-пошуку (`scripts/reddit-fetch.sh` сам вийде з кодом 0, нічого не зламавши). Якщо хочеш увімкнути:
+Reddit — опційне джерело: без нього система просто працює далі на HN, DOU і веб-пошуку (`agents/scripts/reddit-fetch.sh` сам вийде з кодом 0, нічого не зламавши). Якщо хочеш увімкнути:
 
 1. Створи script-застосунок на [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) — тип **script**, redirect uri можна вказати `http://localhost:8080` (не використовується, потрібен лише як формальність форми).
 2. Отримаєш client id (рядок під назвою застосунку) і client secret.
@@ -82,7 +82,7 @@ security add-generic-password -U -A -s ideas-scout-reddit-id -a ideas-scout -w '
 security add-generic-password -U -A -s ideas-scout-reddit-secret -a ideas-scout -w '<CLIENT_SECRET>'
 ```
 
-Без цих двох записів `scripts/reddit-fetch.sh` виведе «Reddit-креденшели не налаштовані — пропускаю» і вийде з кодом 0 — collector просто відпрацює без Reddit-кешу.
+Без цих двох записів `agents/scripts/reddit-fetch.sh` виведе «Reddit-креденшели не налаштовані — пропускаю» і вийде з кодом 0 — collector просто відпрацює без Reddit-кешу.
 
 ---
 
@@ -93,7 +93,7 @@ security add-generic-password -U -A -s ideas-scout-reddit-secret -a ideas-scout 
 Dry-run виконує **реальний** лок і **реальну** git-гігієну (stash брудного дерева, спроба `pull --rebase`), але замість виклику CLI й коміту/пушу — лише виводить, що́ було б виконано. Це безпечно ганяти скільки завгодно.
 
 ```
-./scripts/runner.sh --track passive-income --agent collector --provider claude --dry-run
+./agents/scripts/runner.sh --track passive-income --agent collector --provider claude --dry-run
 ```
 
 Перевір вивід і `logs/status/passive-income-collector.json` (там буде `"status": "dry_run"`).
@@ -101,12 +101,12 @@ Dry-run виконує **реальний** лок і **реальну** git-г�
 ### 2.2. Бойовий прогін
 
 ```
-./scripts/runner.sh --track passive-income --agent collector --provider claude
+./agents/scripts/runner.sh --track passive-income --agent collector --provider claude
 ```
 
 Аналогічно для аналітика (`--agent analyst`).
 
-**Захист робочих годин:** реальний (не dry-run) прогін у робочому вікні (за замовчуванням пн–пт 09:00–19:00) автоматично пропускається зі статусом `skipped_work_hours` — щоб launchd, доганяючи пропущений розклад після сну машини, не спалював ліміт підписки саме тоді, коли ти сам працюєш. Налаштування через змінні середовища: `IDEAS_SCOUT_WORK_DAYS` (дефолт `1,2,3,4,5`, 1=понеділок), `IDEAS_SCOUT_WORK_HOURS` (дефолт `09:00-19:00`; значення `none` вимикає захист повністю). Для разового ручного запуску вдень — `IDEAS_SCOUT_IGNORE_WORK_HOURS=1 ./scripts/runner.sh ...`.
+**Захист робочих годин:** реальний (не dry-run) прогін у робочому вікні (за замовчуванням пн–пт 09:00–19:00) автоматично пропускається зі статусом `skipped_work_hours` — щоб launchd, доганяючи пропущений розклад після сну машини, не спалював ліміт підписки саме тоді, коли ти сам працюєш. Налаштування через змінні середовища: `IDEAS_SCOUT_WORK_DAYS` (дефолт `1,2,3,4,5`, 1=понеділок), `IDEAS_SCOUT_WORK_HOURS` (дефолт `09:00-19:00`; значення `none` вимикає захист повністю). Для разового ручного запуску вдень — `IDEAS_SCOUT_IGNORE_WORK_HOURS=1 ./agents/scripts/runner.sh ...`.
 
 **Про codex — вимкнено за замовчуванням.** `--provider codex` одразу завершується зі `status=error`: `codex exec` навіть у пісочниці (`--sandbox workspace-write`) дає агенту повноцінний shell, а весь захист від промпт-ін'єкції в цій системі тримається на інваріанті «агент без shell» (агент не повинен мати шляху до git, curl чи Keychain). Якщо свідомо приймаєш цей ризик — запусти з явним `IDEAS_SCOUT_ALLOW_CODEX=1`. Додатково: прапорці виклику `codex exec` у `invoke_codex()` **не перевірені живим прогоном** (інсталяція codex була зламана на машині, де це писалось) — перед першим таким прогоном виконай `codex --help` і `codex exec --help` на M1 і звір. За замовчуванням тримайся `--provider claude`.
 
@@ -116,7 +116,7 @@ Dry-run виконує **реальний** лок і **реальну** git-г�
 2. Прибирання після можливого краху попереднього прогону: незавершений `rebase` абортується, покинутий `.git/index.lock` (без живого git-процесу) видаляється. Якщо HEAD не на `main` (наприклад, застряглий quarantine-checkout) — прогін зупиняється зі `status: error` і чекає твого ручного втручання, нічого не чіпаючи.
 3. Git-гігієна: брудне робоче дерево на старті сташується (з міткою `runner:<run_id>`) — **не видаляється**. Кількість накопичених stash-ів пишеться в статус (`stash_count`), і щоденний дайджест попереджає, якщо їх > 0 — розбирай `git stash list` вручну, нічого автоматично не зникає.
 4. Виклик CLI без Bash/git-доступу — агент може лише читати й писати файли реєстру/логів, не може сам закомітити чи запушити щось, не бачить жодних токенів/секретів середовища.
-5. Guard проти промпт-ін'єкції за **allowlist**: комітиться лише те, що агент має право міняти (`registries/`, `logs/runs|status|decisions`, `catalogs/`, `config/criteria*`, `config/search-queries.md`, `config/taxonomy.md`, `config/availability.md`). **Будь-який інший** змінений чи новий шлях — `scripts/`, `config/prompts/`, `launchd/`, `.gitignore`, `docs/`, корінь репо, `.github/`, нові файли в `.git/hooks` — автоматично відкочується, потрапляє в `blocked_paths` і дає `status: blocked_paths`; диф зберігається окремо для твого перегляду (див. розділ 4 нижче).
+5. Guard проти промпт-ін'єкції за **allowlist**: комітиться лише те, що агент має право міняти (`registries/`, `logs/runs|status|decisions`, `agents/catalogs/`, `agents/criteria/criteria*`, `agents/criteria/search-queries.md`, `agents/criteria/taxonomy.md`, `agents/criteria/availability.md`). **Будь-який інший** змінений чи новий шлях — `agents/scripts/`, `agents/prompts/`, `agents/launchd/`, `.gitignore`, `docs/`, корінь репо, `.github/`, нові файли в `.git/hooks` — автоматично відкочується, потрапляє в `blocked_paths` і дає `status: blocked_paths`; диф зберігається окремо для твого перегляду (див. розділ 4 нижче).
 6. Коміт одним батчем + push із 3 спробами (`pull --rebase` → `push`; невдалий rebase щоразу абортується, щоб не лишати репо в підвішеному стані). Якщо CLI впав з помилкою — часткові результати комітяться в окрему гілку `quarantine/<run_id>`, **не пушаться**, основна гілка лишається чистою.
 
 ---
@@ -126,11 +126,11 @@ Dry-run виконує **реальний** лок і **реальну** git-г�
 ### 3.1. Поставити
 
 ```
-./scripts/install-launchd.sh
+./agents/scripts/install-launchd.sh
 ```
 
 Скрипт сам попереджає, що це має відбуватись на M1. Він:
-- рендерить `launchd/*.plist` (підставляє реальний шлях репозиторію замість `__REPO__`);
+- рендерить `agents/launchd/*.plist` (підставляє реальний шлях репозиторію замість `__REPO__`);
 - кладе результат у `~/Library/LaunchAgents/`;
 - перевіряє кожен файл через `plutil -lint` перед завантаженням;
 - виконує `launchctl bootstrap gui/$UID <plist>`.
@@ -143,7 +143,7 @@ Dry-run виконує **реальний** лок і **реальну** git-г�
 | `com.ideas-scout.passive-income-analyst` | Вт/Чт/Сб, 05:00 | `runner.sh --track passive-income --agent analyst --provider claude` |
 | `com.ideas-scout.monitor` | Щодня, 09:30 | `monitor.sh` |
 
-Трек `app-ideas` свідомо відсутній у launchd — критерії оцінки для нього (`config/criteria-apps.md`) ще порожні (v0.0). Додати відповідні plist-и й рядок у `EXPECTED_JOBS` у `scripts/monitor.sh`, коли трек активується.
+Трек `app-ideas` свідомо відсутній у launchd — критерії оцінки для нього (`agents/criteria/criteria-apps.md`) ще порожні (v0.0). Додати відповідні plist-и й рядок у `EXPECTED_JOBS` у `agents/scripts/monitor.sh`, коли трек активується.
 
 ### 3.2. Перевірити, що встановлено
 
@@ -154,7 +154,7 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 ### 3.3. Зняти
 
 ```
-./scripts/install-launchd.sh --uninstall
+./agents/scripts/install-launchd.sh --uninstall
 ```
 
 Виконує `launchctl bootout` для кожного джоба й видаляє plist-и з `~/Library/LaunchAgents/`.
@@ -197,7 +197,7 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 
 ### 4.6. `logs/runs/reddit-cache/`
 
-Сирі дампи Reddit, які `scripts/reddit-fetch.sh` кладе перед кожним прогоном collector-а (`latest/*.json` + `_meta.md`). Локальний стан машини, у `.gitignore`, у git не потрапляє.
+Сирі дампи Reddit, які `agents/scripts/reddit-fetch.sh` кладе перед кожним прогоном collector-а (`latest/*.json` + `_meta.md`). Локальний стан машини, у `.gitignore`, у git не потрапляє.
 
 ---
 
@@ -207,15 +207,15 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 - Аналітик (`passive-income`, `claude`): вт/чт/сб, 05:00.
 - Ревізор (`passive-income`, `claude`): ср/сб, 06:00.
 - Моніторинг: щодня, 09:30.
-- Трек `app-ideas` — вимкнено до заповнення `config/criteria-apps.md` (критерії v0.0 зараз порожні). Коли активується — додати plist-и за зразком наявних і рядки в `EXPECTED_JOBS` (`scripts/monitor.sh`).
+- Трек `app-ideas` — вимкнено до заповнення `agents/criteria/criteria-apps.md` (критерії v0.0 зараз порожні). Коли активується — додати plist-и за зразком наявних і рядки в `EXPECTED_JOBS` (`agents/scripts/monitor.sh`).
 
-Після `git pull`, що приносить новий/змінений `.plist` у `launchd/`, перевстанови джоби: `./scripts/install-launchd.sh` (він сам робить `bootout` + `bootstrap` для кожного файла, тож повторний запуск безпечний).
+Після `git pull`, що приносить новий/змінений `.plist` у `agents/launchd/`, перевстанови джоби: `./agents/scripts/install-launchd.sh` (він сам робить `bootout` + `bootstrap` для кожного файла, тож повторний запуск безпечний).
 
 ---
 
 ## 6. Секрети — де і чого немає
 
-Токен Telegram-бота, chat_id і healthcheck-URL живуть **лише в Keychain** (`security add-generic-password`). У репозиторії, у `launchd/*.plist`, у змінних середовища launchd-джобів і в жодному лог-файлі цих значень немає й бути не повинно. `monitor.sh` передає токен і healthcheck-URL у curl через config на stdin (`-K -`), а не через аргументи командного рядка — аргументи будь-якого процесу видно всім локальним процесам у `ps aux`, stdin — ні. `runner.sh` і `monitor.sh` навмисно не передають агенту (`claude -p`) жодних інструментів для запуску довільних команд — тож навіть теоретична компрометація промпту зовнішнім контентом не дає агенту шляху до Keychain чи до `gh`/git-токенів (саме тому `--provider codex`, чия пісочниця дає shell, вимкнено за замовчуванням).
+Токен Telegram-бота, chat_id і healthcheck-URL живуть **лише в Keychain** (`security add-generic-password`). У репозиторії, у `agents/launchd/*.plist`, у змінних середовища launchd-джобів і в жодному лог-файлі цих значень немає й бути не повинно. `monitor.sh` передає токен і healthcheck-URL у curl через config на stdin (`-K -`), а не через аргументи командного рядка — аргументи будь-якого процесу видно всім локальним процесам у `ps aux`, stdin — ні. `runner.sh` і `monitor.sh` навмисно не передають агенту (`claude -p`) жодних інструментів для запуску довільних команд — тож навіть теоретична компрометація промпту зовнішнім контентом не дає агенту шляху до Keychain чи до `gh`/git-токенів (саме тому `--provider codex`, чия пісочниця дає shell, вимкнено за замовчуванням).
 
 ---
 
@@ -235,7 +235,7 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 1. Раз на день глянути дайджест (лише на предмет попереджень — деталі не потрібні).
 2. Раз на тиждень відкрити свіжий індекс і подивитись, що накопичилось:
    ```
-   ./scripts/generate-index.sh passive-income && open registries/passive-income/ideas.md
+   ./agents/scripts/generate-index.sh passive-income && open registries/passive-income/ideas.md
    ```
 3. Ухвалити рішення по записах зі статусом `approved_pending` і по тих, де стоїть `ceiling_flag: review` — це ідеї, які система свідомо не стала відхиляти сама, бо рішення «чи варта гра свічок» лишається за тобою. Кожне таке рішення поступово перетворюється на правило в критеріях.
 
@@ -248,7 +248,7 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 | `status=error` | Виклик моделі впав або вичерпав таймаут. Часткові результати лежать у гілці `quarantine/<run_id>` і не запушені | `tail -40 logs/launchd/<джоб>.log` |
 | `push=failed` | Робота збережена локально, але не доїхала в GitHub: проблема з SSH-ключем або мережею. Коміти накопичуються на M1 | `ssh -T git@github.com`, потім `git -C ~/Projects/ideas-scout push` |
 | «давно не запускався» (поріг 72 год) | Джоб не спрацював: машина спала в момент розкладу або джоб знято | Перевірити `pmset -g sched` і `launchctl list` |
-| `skipped_work_hours` регулярно | Розклад джоба конфліктує з твоїм вікном заборони (`config/availability.md`) | Рознести їх: змінити годину в plist або вікно в змінних |
+| `skipped_work_hours` регулярно | Розклад джоба конфліктує з твоїм вікном заборони (`agents/criteria/availability.md`) | Рознести їх: змінити годину в plist або вікно в змінних |
 | «Записів додано за 24 год: 0» кілька разів поспіль | Збирач нічого не знаходить: джерело деградувало (типово — блокування) або патерни вичерпались | Прочитати секцію «Стан джерел» у свіжому `logs/runs/*.md` |
 
 ### Чого система поки НЕ вміє
@@ -266,7 +266,7 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 
 ### 8.1. Що це технічно
 
-`scripts/telegram-bot.py` — демон на long-polling (`getUpdates`): він сам ходить у
+`agents/scripts/telegram-bot.py` — демон на long-polling (`getUpdates`): він сам ходить у
 `api.telegram.org`, тож ні публічної адреси, ні webhook, ні тунелю не потрібно. Токен і
 `chat_id` бере з того самого Keychain, що й `monitor.sh` (розділ 1.3) — окремої
 реєстрації бота не треба. Слухає **лише** свій `chat_id`, решту апдейтів ігнорує:
@@ -279,10 +279,10 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 
 ### 8.2. Запуск
 
-Плист `launchd/com.ideas-scout.telegram-bot.plist` ставиться разом з рештою:
+Плист `agents/launchd/com.ideas-scout.telegram-bot.plist` ставиться разом з рештою:
 
 ```
-./scripts/install-launchd.sh
+./agents/scripts/install-launchd.sh
 ```
 
 Це **не** розклад, а постійний процес: `RunAtLoad` + `KeepAlive`, тобто launchd підніме
@@ -290,7 +290,7 @@ launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
 Keychain власника з токеном був би недосяжний.
 
 Перевірка: `launchctl list | grep telegram-bot`, лог — `logs/launchd/telegram-bot.launchd.log`.
-Ручний запуск для налагодження: `python3 scripts/telegram-bot.py` (Ctrl-C зупиняє).
+Ручний запуск для налагодження: `python3 agents/scripts/telegram-bot.py` (Ctrl-C зупиняє).
 
 ### 8.3. Де що лежить
 

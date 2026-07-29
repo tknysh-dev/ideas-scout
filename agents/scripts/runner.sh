@@ -10,7 +10,7 @@
 #   на старті — прибирання залишків rebase/index.lock від попереднього вбитого прогону;
 # - вимога HEAD == main: detached HEAD чи чужа гілка → status=error без git-операцій;
 # - guard проти промпт-ін'єкції за ALLOWLIST: будь-який змінений шлях поза дозволеним
-#   переліком (registries/, logs/runs|status|decisions, catalogs/, config/criteria* та ін.)
+#   переліком (registries/, logs/runs|status|decisions, agents/catalogs/, agents/criteria/* та ін.)
 #   відкочується, потрапляє в blocked_paths і дає status=blocked_paths;
 # - quarantine-гілка для часткових результатів упалого CLI (без push);
 # - захист робочих годин: у вікні IDEAS_SCOUT_WORK_HOURS (дефолт пн–пт 09:00–19:00)
@@ -62,7 +62,7 @@ case "$PROVIDER" in claude|codex) ;; *) echo "runner.sh: --provider має бу�
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || { echo "runner.sh: не вдалось перейти в $REPO_ROOT" >&2; exit 2; }
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -380,14 +380,14 @@ fi
 STASHED=0
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
   echo "runner.sh: робоче дерево брудне на старті — stash (мітка runner:${RUN_ID})"
-  # Виключено з pathspec: 1) scripts/, config/prompts/, launchd/, .gitignore —
+  # Виключено з pathspec: 1) agents/scripts/, agents/prompts/, agents/launchd/, .gitignore —
   # захищені guard-ом шляхи, гігієна їх не чіпає; 2) logs/locks/, logs/launchd/,
   # logs/quarantine/ — живий рантайм ЦЬОГО прогону (лок, лог-файл, у який зараз
   # пише tee) — інакше stash -u міг би змести їх з-під самого себе; 3) inbox/,
   # logs/triage/ — матеріал, який власник щойно надіслав у Telegram: він пишеться
   # ДО старту прогону тріажу, тож stash з'їв би вхід цього ж прогону.
   if git stash push -u -m "runner:${RUN_ID}" \
-      -- . ':!scripts' ':!config/prompts' ':!launchd' ':!.gitignore' \
+      -- . ':!agents/scripts' ':!agents/prompts' ':!agents/launchd' ':!.gitignore' \
          ':!logs/locks' ':!logs/launchd' ':!logs/quarantine' \
          ':!inbox' ':!logs/triage' \
       >/dev/null 2>&1; then
@@ -416,11 +416,11 @@ git_lock_release
 
 if [ "$DRY_RUN" = "1" ]; then
   if [ "$AGENT" = "collector" ] && [ "$TRACK" = "passive-income" ]; then
-    echo "--- DRY RUN: далі викликався б $REPO_ROOT/scripts/reddit-fetch.sh (передкачування Reddit-кешу для collector, лише трек passive-income) ---"
+    echo "--- DRY RUN: далі викликався б $REPO_ROOT/agents/scripts/reddit-fetch.sh (передкачування Reddit-кешу для collector, лише трек passive-income) ---"
   elif [ "$AGENT" = "collector" ]; then
     echo "--- DRY RUN: reddit-fetch.sh НЕ викликається для треку $TRACK (сабреддіти в скрипті специфічні для passive-income) ---"
   fi
-  echo "--- DRY RUN: далі йшов би виклик CLI провайдера '$PROVIDER' з промптом config/prompts/${AGENT}.md ---"
+  echo "--- DRY RUN: далі йшов би виклик CLI провайдера '$PROVIDER' з промптом agents/prompts/${AGENT}.md ---"
   echo "--- DRY RUN: далі йшов би git add/commit/push (або quarantine-гілка при помилці CLI) ---"
   write_status "dry_run" "skipped" "" "null" "[]" "$( [ "$OFFLINE" = 1 ] && echo true || echo false )"
   echo "runner.sh: dry-run завершено, статус записано в $STATUS_FILE"
@@ -453,22 +453,22 @@ fi
 # ---------------------------------------------------------------------------
 
 if [ "$AGENT" = "collector" ] && [ "$TRACK" = "passive-income" ]; then
-  if [ -x "$REPO_ROOT/scripts/reddit-fetch.sh" ]; then
-    "$REPO_ROOT/scripts/reddit-fetch.sh" || echo "runner.sh: попередження — reddit-fetch.sh завершився з помилкою, продовжую без Reddit-кешу" >&2
+  if [ -x "$REPO_ROOT/agents/scripts/reddit-fetch.sh" ]; then
+    "$REPO_ROOT/agents/scripts/reddit-fetch.sh" || echo "runner.sh: попередження — reddit-fetch.sh завершився з помилкою, продовжую без Reddit-кешу" >&2
   else
-    echo "runner.sh: попередження — scripts/reddit-fetch.sh не знайдено або не виконуваний, пропускаю Reddit-фетч" >&2
+    echo "runner.sh: попередження — agents/scripts/reddit-fetch.sh не знайдено або не виконуваний, пропускаю Reddit-фетч" >&2
   fi
 elif [ "$AGENT" = "collector" ]; then
   echo "runner.sh: трек $TRACK — reddit-fetch.sh пропущено (сабреддіти в ньому специфічні для passive-income, для $TRACK окремого набору ще нема)"
 fi
 
 # ---------------------------------------------------------------------------
-# Промпт: config/prompts/<agent>.md з підстановкою {{RUN_ID}} і {{TRACK}}
+# Промпт: agents/prompts/<agent>.md з підстановкою {{RUN_ID}} і {{TRACK}}
 # (для triage додатково {{INBOX_FILE}} і {{DRAFT_ID}} — їх передає telegram-bot.py
 # через середовище; це шлях до вже записаного вхідного матеріалу, не його вміст).
 # ---------------------------------------------------------------------------
 
-PROMPT_SRC="$REPO_ROOT/config/prompts/${AGENT}.md"
+PROMPT_SRC="$REPO_ROOT/agents/prompts/${AGENT}.md"
 if [ ! -f "$PROMPT_SRC" ]; then
   echo "runner.sh: промпт не знайдено: $PROMPT_SRC" >&2
   write_status "error" "skipped" "промпт не знайдено: $PROMPT_SRC"
@@ -601,7 +601,7 @@ fi
 # ---------------------------------------------------------------------------
 # Guard проти промпт-ін'єкції — ALLOWLIST: комітиться (і взагалі приймається)
 # лише те, що агент має право міняти. БУДЬ-ЯКИЙ інший змінений/новий шлях
-# (scripts/, config/prompts/, launchd/, .gitignore, docs/, корінь, .github/ —
+# (agents/scripts/, agents/prompts/, agents/launchd/, .gitignore, docs/, корінь, .github/ —
 # будь-що) відкочується, потрапляє в blocked_paths і дає status=blocked_paths.
 # Розбір порцеляну через -z/NUL — шляхи з пробілами та не-ASCII (git-лапки)
 # не обходять детекцію.
@@ -609,12 +609,12 @@ fi
 
 is_allowed_path() {
   case "$1" in
-    registries/*|catalogs/*) return 0 ;;
+    registries/*|agents/catalogs/*) return 0 ;;
     logs/runs/*|logs/status/*|logs/decisions.md|logs/dedup-decisions.md) return 0 ;;
     # Ручне подання з Telegram: inbox/ пише бот (не агент), logs/triage/ — агент-тріаж.
     inbox/*|logs/triage/*) return 0 ;;
     inbox|logs/triage) return 0 ;;
-    config/criteria*|config/search-queries-*.md|config/taxonomy.md|config/availability.md) return 0 ;;
+    agents/criteria/criteria*|agents/criteria/search-queries-*.md|agents/criteria/search-queries.md|agents/criteria/taxonomy.md|agents/criteria/availability.md) return 0 ;;
     # Рантайм цього ж прогону (gitignored; тут — belt-and-braces на випадок
     # checkout без оновленого .gitignore): не блокувати самих себе.
     logs/locks/*|logs/launchd/*|logs/quarantine/*) return 0 ;;
@@ -683,11 +683,11 @@ fi
 
 stage_allowed_paths() {
   local p
-  for p in registries catalogs logs/runs logs/decisions.md logs/dedup-decisions.md \
-           inbox logs/triage config/taxonomy.md config/availability.md; do
+  for p in registries agents/catalogs logs/runs logs/decisions.md logs/dedup-decisions.md \
+           inbox logs/triage agents/criteria/taxonomy.md agents/criteria/availability.md; do
     [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
   done
-  for p in config/criteria*.md config/search-queries-*.md; do
+  for p in agents/criteria/criteria*.md agents/criteria/search-queries*.md; do
     [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
   done
 }

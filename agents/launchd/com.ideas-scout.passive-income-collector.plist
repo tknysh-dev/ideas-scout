@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>__REPO__/scripts/runner.sh</string>
+        <string>__REPO__/agents/scripts/runner.sh</string>
         <string>--track</string>
         <string>passive-income</string>
         <string>--agent</string>

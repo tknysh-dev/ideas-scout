@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>__REPO__/scripts/telegram-bot.py</string>
+        <string>__REPO__/agents/scripts/telegram-bot.py</string>
     </array>
 
     <key>WorkingDirectory</key>

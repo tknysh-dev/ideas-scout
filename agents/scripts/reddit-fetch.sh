@@ -6,12 +6,12 @@
 #
 # Секрети (client secret, access token) НІКОЛИ не потрапляють в argv (видно
 # в `ps aux` будь-якому локальному процесу) і в логи — передаються curl-у
-# через -K - (конфіг на stdin), як у scripts/monitor.sh.
+# через -K - (конфіг на stdin), як у agents/scripts/monitor.sh.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 CACHE_DIR="$REPO_ROOT/logs/runs/reddit-cache/latest"
 USER_AGENT="macos:ideas-scout:v0.1 (by /u/ideas-scout-agent)"

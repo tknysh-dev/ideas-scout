@@ -3,7 +3,7 @@
 # Усі значення нижче — плейсхолдери. Замінити при створенні реального запису.
 
 schema_version: 3              # версія цієї схеми frontmatter; підняти при зміні полів
-criteria_version: "v0.1"       # версія config/criteria-<track>.md, за якою винесено вердикт
+criteria_version: "v0.1"       # версія agents/criteria/criteria-<track>.md, за якою винесено вердикт
 
 id: PI-0000                    # префікс треку (PI = passive-income, APP = app-ideas) + номер
 parent_id: null                # null для механіки-батька; ID механіки для ніші-дитини
@@ -29,7 +29,7 @@ rejection_code: null             # NO_MONETIZATION | SOURCE_SUSPECT | LEGAL | CA
 rejection_detail: "..."          # людською мовою, чому саме цей код
 rejection_codes_extra: []        # супутні коди при подвійному провалі
 
-missing_capabilities:            # посилання на розділи catalogs/ai-capabilities.md; порожньо, якщо немає
+missing_capabilities:            # посилання на розділи agents/catalogs/ai-capabilities.md; порожньо, якщо немає
   - "anthropic/desktop/..."
 
 ceiling_estimate: "..."          # очікувана стеля €/міс (критерій 6)
@@ -68,7 +68,7 @@ verdict_by:                       # провенанс вердикту — хт
 
 ## Аналіз за критеріями
 
-<!-- Прохід по чек-листу config/criteria-<track>.md: пункт за пунктом, з висновком по кожному до першого фатального провалу. -->
+<!-- Прохід по чек-листу agents/criteria/criteria-<track>.md: пункт за пунктом, з висновком по кожному до першого фатального провалу. -->
 
 ## Історія рішень
 

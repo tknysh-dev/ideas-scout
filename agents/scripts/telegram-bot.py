@@ -30,7 +30,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATE_DIR = os.path.expanduser("~/Library/Application Support/ideas-scout")
 STATE_FILE = os.path.join(STATE_DIR, "telegram-state.json")
 DRAFT_DIR = os.path.join(STATE_DIR, "draft")
@@ -567,7 +567,7 @@ def run_triage(d):
         watcher.start()
 
         proc = subprocess.run(
-            [os.path.join(REPO_ROOT, "scripts", "runner.sh"),
+            [os.path.join(REPO_ROOT, "agents", "scripts", "runner.sh"),
              "--track", d["track"], "--agent", "triage", "--provider", "claude"],
             cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=1800,
         )

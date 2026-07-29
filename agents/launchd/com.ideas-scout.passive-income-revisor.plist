@@ -3,15 +3,15 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.ideas-scout.passive-income-analyst</string>
+    <string>com.ideas-scout.passive-income-revisor</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>__REPO__/scripts/runner.sh</string>
+        <string>__REPO__/agents/scripts/runner.sh</string>
         <string>--track</string>
         <string>passive-income</string>
         <string>--agent</string>
-        <string>analyst</string>
+        <string>revisor</string>
         <string>--provider</string>
         <string>claude</string>
     </array>
@@ -19,22 +19,16 @@
     <key>WorkingDirectory</key>
     <string>__REPO__</string>
 
-    <!-- Вт/Чт/Сб 05:00 — ранок після збирача, але ДО вікна заборони власника (07:00-20:00, config/availability.md) -->
+    <!-- Ср/Сб 06:00 — 2×/тиждень (PLAN.md Фаза 5), до вікна заборони власника (07:00-20:00);
+         у сб — через годину після аналітика (05:00), git-лок і так розведе їх, але година
+         запасу краща за тісний стик розкладів. -->
     <key>StartCalendarInterval</key>
     <array>
         <dict>
             <key>Weekday</key>
-            <integer>2</integer>
+            <integer>3</integer>
             <key>Hour</key>
-            <integer>5</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Weekday</key>
-            <integer>4</integer>
-            <key>Hour</key>
-            <integer>5</integer>
+            <integer>6</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
@@ -42,7 +36,7 @@
             <key>Weekday</key>
             <integer>6</integer>
             <key>Hour</key>
-            <integer>5</integer>
+            <integer>6</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
@@ -60,8 +54,8 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>__REPO__/logs/launchd/passive-income-analyst.launchd.log</string>
+    <string>__REPO__/logs/launchd/passive-income-revisor.launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>__REPO__/logs/launchd/passive-income-analyst.launchd.log</string>
+    <string>__REPO__/logs/launchd/passive-income-revisor.launchd.log</string>
 </dict>
 </plist>

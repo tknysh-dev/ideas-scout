@@ -7,7 +7,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
 # Мінімальний YAML-парсер frontmatter для наших цілей: без зовнішніх
@@ -42,7 +42,7 @@ build_index() {
   {
     echo "# Індекс: $track"
     echo ""
-    echo "Автогенеровано \`scripts/generate-index.sh\` $(date -u +%FT%TZ). Не редагувати вручну — файл у .gitignore, перегенеровується щоразу."
+    echo "Автогенеровано \`agents/scripts/generate-index.sh\` $(date -u +%FT%TZ). Не редагувати вручну — файл у .gitignore, перегенеровується щоразу."
     echo ""
     echo "| id | title | type | status | rejection_code | confidence |"
     echo "|---|---|---|---|---|---|"
