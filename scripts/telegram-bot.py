@@ -608,11 +608,21 @@ def run_triage(d):
             note += f"\n<code>{esc(err[:400])}</code>"
         note += "\nМатеріал збережено — натисни, щоб повторити."
         edit(d["panel_msg_id"], panel_text(d) + note,
-             [[{"text": "Повторити", "callback_data": "eval"}]])
+             [[{"text": "Повторити", "callback_data": "eval"},
+               {"text": "Викинути", "callback_data": "drop"}]])
 
     cur = draft()
-    if cur and cur["id"] == d["id"]:
+    if not cur or cur["id"] != d["id"]:
+        return
+    if v:
         drop_draft()
+    else:
+        # Кнопка «Повторити» має що запускати лише поки чернетка жива: інакше
+        # обіцянка «матеріал збережено» ламається об «чернетки вже немає».
+        # nudged — щоб питання «Оцінювати?» не затерло текст помилки в панелі.
+        cur["state"] = "open"
+        cur["nudged"] = True
+        save_state(STATE)
 
 
 # ---------------------------------------------------------------------------
