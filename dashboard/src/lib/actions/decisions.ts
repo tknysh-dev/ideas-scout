@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { auth } from "@/auth";
 import { getAuthEnv } from "@/lib/config";
-import { getAuthServerClient } from "@/lib/supabase/server";
 import { getServiceClient } from "@/lib/supabase/service";
 import type { RejectionCode } from "@/lib/types";
 
@@ -42,19 +42,17 @@ export interface DecideIdeaResult {
 // змінювати статуси ідей.
 async function assertOwner(): Promise<string | null> {
   const authEnv = getAuthEnv();
-  // Локальна розробка без NEXT_PUBLIC_SUPABASE_ANON_KEY: авторизацію не
-  // перевіряємо — так само, як існуючий proxy.ts (middleware) деградує в dev.
-  if (!authEnv) return null;
+  if (!authEnv) {
+    // У dev без OAuth-застосунку перевіряти нічого — так само деградує proxy.ts.
+    // У проді відсутність env означає «нікому не можна», а не «можна всім».
+    return process.env.NODE_ENV === "development"
+      ? null
+      : "Авторизацію не налаштовано.";
+  }
 
-  const supabase = await getAuthServerClient();
-  if (!supabase) return "Немає доступу до авторизації.";
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) return "Потрібен вхід у дашборд.";
-  if (authEnv.allowedEmail && user.email !== authEnv.allowedEmail) {
+  const session = await auth();
+  if (!session?.user) return "Потрібен вхід у дашборд.";
+  if (session.user.login !== authEnv.allowedLogin) {
     return "Цей акаунт не має доступу до рішень власника.";
   }
   return null;

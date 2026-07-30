@@ -27,7 +27,7 @@ agents/
     monitor.sh                  # щоденний дайджест у Telegram
     telegram-bot.py             # демон-приймальня ручних ідей (long-polling, той самий бот, що шле дайджест)
   launchd/                     # шаблони launchd-плістів (рендеряться install-launchd.sh)
-dashboard/                     # веб-дашборд, читає Supabase напряму
+dashboard/                     # веб-дашборд, читає Supabase напряму; вхід — GitHub OAuth (Auth.js)
 shared/                        # спільні контракти БД для agents/ і dashboard/
   schema.sql                    # DDL: ideas, sources, runs, events, inbox
   contracts.md                  # людський опис полів/статусів/кодів — що означає кожна колонка
@@ -46,4 +46,4 @@ PLAN.md                          # повний план системи
 
 1. Доступ до БД — лише через `agents/scripts/db.sh` (bash) або `agents/scripts/db.py` (python), обидва читають `~/.config/ideas-scout/env` (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`) і говорять з PostgREST. CLI-агентам (`claude -p` у `runner.sh`) дають доступ рівно до одного скрипта — `Bash(agents/scripts/db.sh:*)` — жодного іншого Bash/curl/git; це звужена, але еквівалентна за суттю версія попереднього інваріанту «агент без Bash узагалі» (детальніше — коментар у `runner.sh`).
 2. `runner.sh`/`monitor.sh` більше не комітять дані (`registries/`, `logs/runs/`, `logs/status/`, `inbox/`, вердикти `logs/triage/`) — лише код і поведінкові файли (`agents/catalogs/`, `agents/criteria/*`, `logs/decisions.md`, `logs/dedup-decisions.md`). Реєстрація прогону і статус — записи в таблиці `runs` через `db.sh register-run-start`/`register-run-finish`; ідемпотентність збирача — `db.sh check-url-processed`/`check-url-in-sources`.
-3. Секрети (Telegram-токен, API-ключі, `SUPABASE_SERVICE_KEY`) у репозиторії **заборонені** — зберігати поза середовищем прогону (Keychain / `~/.config/ideas-scout/env`), недосяжними для агента.
+3. Секрети (Telegram-токен, API-ключі, `SUPABASE_SERVICE_KEY`, `AUTH_SECRET`/`AUTH_GITHUB_SECRET` дашборда) у репозиторії **заборонені** — зберігати поза середовищем прогону (Keychain / `~/.config/ideas-scout/env`), недосяжними для агента.

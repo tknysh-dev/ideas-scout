@@ -8,12 +8,22 @@ export function getDataEnv() {
   return { url, key };
 }
 
+export const AUTH_VARS = [
+  "AUTH_SECRET",
+  "AUTH_GITHUB_ID",
+  "AUTH_GITHUB_SECRET",
+  "ALLOWED_GITHUB_LOGIN",
+] as const;
+
+// ALLOWED_GITHUB_LOGIN обов'язковий, а не опційний: без allow-list вхід через
+// GitHub OAuth відкритий будь-якому акаунту GitHub, тобто всьому інтернету.
 export function getAuthEnv() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const allowedEmail = process.env.ALLOWED_EMAIL;
-  if (!url || !anonKey) return null;
-  return { url, anonKey, allowedEmail: allowedEmail ?? null };
+  const secret = process.env.AUTH_SECRET;
+  const clientId = process.env.AUTH_GITHUB_ID;
+  const clientSecret = process.env.AUTH_GITHUB_SECRET;
+  const allowedLogin = process.env.ALLOWED_GITHUB_LOGIN;
+  if (!secret || !clientId || !clientSecret || !allowedLogin) return null;
+  return { secret, clientId, clientSecret, allowedLogin };
 }
 
 export function getGithubEnv() {

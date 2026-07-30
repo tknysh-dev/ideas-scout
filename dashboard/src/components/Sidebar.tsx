@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { getAuthBrowserClient } from "@/lib/supabase/browser";
+import { usePathname } from "next/navigation";
+import { logout } from "@/lib/actions/session";
 
 const LINKS = [
   { href: "/", label: "Дошка", hint: "Дерево знахідок" },
@@ -12,19 +12,16 @@ const LINKS = [
   { href: "/config", label: "Конфігурація", hint: "Промпти й критерії" },
 ];
 
-export default function Sidebar({ pendingDecisions = 0 }: { pendingDecisions?: number }) {
+export default function Sidebar({
+  pendingDecisions = 0,
+  authDisabled = false,
+}: {
+  pendingDecisions?: number;
+  authDisabled?: boolean;
+}) {
   const pathname = usePathname();
-  const router = useRouter();
 
   if (pathname === "/login") return null;
-
-  async function handleLogout() {
-    const supabase = getAuthBrowserClient();
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
-  }
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-paper-raised px-5 py-6">
@@ -74,12 +71,20 @@ export default function Sidebar({ pendingDecisions = 0 }: { pendingDecisions?: n
         })}
       </nav>
 
-      <button
-        onClick={handleLogout}
-        className="mt-4 rounded-md border border-line px-3 py-2 text-left text-xs font-medium text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
-      >
-        Вийти
-      </button>
+      {authDisabled ? (
+        <p className="mt-4 rounded-md border border-dashed border-line-strong px-3 py-2 text-xs text-ink-dim">
+          Авторизація вимкнена (dev)
+        </p>
+      ) : (
+        <form action={logout} className="mt-4">
+          <button
+            type="submit"
+            className="w-full rounded-md border border-line px-3 py-2 text-left text-xs font-medium text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
+          >
+            Вийти
+          </button>
+        </form>
+      )}
     </aside>
   );
 }

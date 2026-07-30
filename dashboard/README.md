@@ -3,7 +3,7 @@
 Особистий веб-дашборд власника системи `ideas-scout`. Next.js (App Router,
 TypeScript, Tailwind v4), деплой на Vercel. Дані читаються з Supabase виключно
 server-side (service key ніколи не потрапляє в клієнтський бандл). Вхід —
-Supabase Auth через magic link, обмежений одним email.
+GitHub OAuth через Auth.js, обмежений одним GitHub-акаунтом.
 
 Схема БД і словники статусів — `../shared/schema.sql` і `../shared/contracts.md`.
 
@@ -15,9 +15,42 @@ cp .env.example .env.local   # заповнити значення
 npm run dev
 ```
 
-Без `NEXT_PUBLIC_SUPABASE_ANON_KEY` авторизація в dev вимкнена (proxy пропускає
-всіх). Без `GITHUB_TOKEN` сторінка `/config` показує пояснення, які env
-відсутні, замість падіння.
+Без `GITHUB_TOKEN` сторінка `/config` показує пояснення, які env відсутні,
+замість падіння.
+
+## Авторизація
+
+Гейт живе у `src/proxy.ts` і закриває всі маршрути, крім `/login` та
+`/api/auth/*`. Сесія — JWT у httpOnly-cookie, без таблиць у базі; allow-list
+звіряється двічі: у `signIn`-колбеці (`src/auth.ts`) на видачі сесії і в
+`src/proxy.ts` на кожному запиті, щоб зміна `ALLOWED_GITHUB_LOGIN` гасила вже
+видані сесії одразу. Server action рішень власника перевіряє те саме окремо
+(`src/lib/actions/decisions.ts`) — це публічний POST-endpoint, і покладатись на
+proxy там не можна.
+
+Allow-list звіряється з GitHub **username**, а не email: email у профілі GitHub
+може бути приватним і приходити `null`.
+
+Поведінка без заповнених `AUTH_*`:
+
+| | dev | production |
+| --- | --- | --- |
+| Доступ | пускає всіх, у сайдбарі банер «Авторизація вимкнена (dev)» | закрито все, крім `/login` |
+| `/login` | — | перелічує, яких env бракує |
+
+Налаштування OAuth-застосунку: GitHub → Settings → Developer settings → OAuth
+Apps; callback URL — `https://<домен>/api/auth/callback/github` (для локальної
+перевірки входу потрібен окремий застосунок з `http://localhost:3000/...`).
+`AUTH_SECRET` генерується через `npx auth secret`.
+
+Два підводні камені, які вже коштували часу:
+
+- `proxy.ts` мусить лежати в `src/` — на одному рівні з `app/`. У корені
+  проєкту Next його не реєструє **без жодної помилки**: збірка проходить, у
+  виводі просто немає рядка `ƒ Proxy (Middleware)`, і гейт не виконується.
+- `trustHost: true` у `src/auth.ts` обов'язковий: інакше production-збірка
+  відкидає кожен запит до `/api/auth/*` як `UntrustedHost`, поки не заданий
+  `AUTH_URL`.
 
 ## Env-змінні
 
@@ -25,15 +58,17 @@ npm run dev
 | --- | --- |
 | `SUPABASE_URL` | URL проєкту Supabase — читання даних (server-only) |
 | `SUPABASE_SERVICE_KEY` | Service-role ключ Supabase — читання даних (server-only, ніколи не в клієнті) |
-| `NEXT_PUBLIC_SUPABASE_URL` | URL проєкту Supabase — для Supabase Auth (публічний) |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Анонімний ключ Supabase — для Supabase Auth (публічний) |
-| `ALLOWED_EMAIL` | Єдиний email, якому дозволено вхід |
+| `AUTH_SECRET` | Ключ шифрування сесійного JWT (`npx auth secret`) |
+| `AUTH_GITHUB_ID` | Client ID GitHub OAuth-застосунку |
+| `AUTH_GITHUB_SECRET` | Client secret GitHub OAuth-застосунку |
+| `ALLOWED_GITHUB_LOGIN` | Єдиний GitHub-username, якому дозволено вхід |
 | `GITHUB_TOKEN` | Токен з доступом read-only до приватного репозиторію `tknysh-dev/ideas-scout` — для сторінки `/config` |
 
 ## Структура
 
-- `proxy.ts` — гейт авторизації (Next.js 16: `middleware.ts` перейменовано на `proxy.ts`)
+- `src/proxy.ts` — гейт авторизації (Next.js 16: `middleware.ts` перейменовано на `proxy.ts`)
+- `src/auth.ts` — конфіг Auth.js: GitHub-провайдер, allow-list, сесія в JWT
 - `src/app/` — сторінки: дошка (`/`), картка ідеї (`/ideas/[id]`), прогони (`/runs`), вхідні (`/inbox`), конфігурація (`/config`)
-- `src/lib/supabase/` — service-клієнт (дані) і SSR/browser-клієнти (авторизація)
+- `src/lib/supabase/` — service-клієнт для читання даних
 - `src/lib/github.ts` — читання файлів репозиторію через GitHub API, кеш ~300с
 - `src/lib/status.ts` — людські назви й кольори словників статусів (джерело: `shared/contracts.md`)
