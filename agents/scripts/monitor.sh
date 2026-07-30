@@ -48,6 +48,24 @@ except Exception:
 " "$run_json" "$field" 2>/dev/null
 }
 
+# launchd будить джоб одразу після прокидання Mac, коли Wi-Fi ще не піднявся:
+# без цього монітор бачив порожню БД і слав дайджест із фальшивим «жодного
+# разу не запускався». Чекаємо на мережу, а не вгадуємо.
+wait_for_db() {
+  local attempt=1
+  while [ "$attempt" -le 20 ]; do
+    if _db_get "/runs?select=run_id&limit=1" >/dev/null 2>&1; then return 0; fi
+    sleep 15
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+if ! wait_for_db; then
+  echo "monitor.sh: БД недосяжна 5 хв поспіль — дайджест не надсилаю, щоб не дезінформувати" >&2
+  exit 1
+fi
+
 now_epoch="$(date +%s)"
 
 DIGEST_LINES=()
