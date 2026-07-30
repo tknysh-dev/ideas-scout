@@ -8,12 +8,17 @@ import { formatDate } from "@/lib/dates";
 // Однакова кількість треків на кожному брейкпоінті, скільки клітинок реально
 // видно (hidden sm:block і т.д. нижче) — інакше "auto"-колонки з довгим текстом
 // (claimed_revenue) розтягуються і зжимають назву (1fr, min-w-0) аж до 0px.
+// Вільну ширину ділять три колонки з довільним текстом — назва, код відмови і
+// заявлений дохід (2fr:1fr:1fr); нижня межа кожної дорівнює її колишній фіксованій
+// ширині, тому на вузьких екранах розкладка не змінилась. Решта — фіксовані:
+// їхній вміст короткий і передбачуваний, а «auto» від довгого claimed_revenue
+// зжимало б назву (min-w-0) аж до 0px.
 const GRID =
   "grid grid-cols-[minmax(0,5.5rem)_minmax(0,1fr)_minmax(0,6.5rem)] " +
-  "sm:grid-cols-[minmax(0,5.5rem)_minmax(0,1fr)_minmax(0,6.5rem)_minmax(0,9rem)] " +
-  "md:grid-cols-[minmax(0,5.5rem)_minmax(0,1fr)_minmax(0,6.5rem)_minmax(0,9rem)_minmax(0,6rem)] " +
-  "lg:grid-cols-[minmax(0,5.5rem)_minmax(0,1fr)_minmax(0,6.5rem)_minmax(0,9rem)_minmax(0,6rem)_minmax(0,8rem)] " +
-  "xl:grid-cols-[minmax(0,5.5rem)_minmax(0,1fr)_minmax(0,6.5rem)_minmax(0,9rem)_minmax(0,6rem)_minmax(0,8rem)_minmax(0,6rem)]";
+  "sm:grid-cols-[minmax(0,5.5rem)_minmax(0,2fr)_minmax(0,6.5rem)_minmax(9rem,1fr)] " +
+  "md:grid-cols-[minmax(0,5.5rem)_minmax(0,2fr)_minmax(0,6.5rem)_minmax(9rem,1fr)_minmax(0,6rem)] " +
+  "lg:grid-cols-[minmax(0,5.5rem)_minmax(0,2fr)_minmax(0,6.5rem)_minmax(9rem,1fr)_minmax(0,6rem)_minmax(8rem,1fr)] " +
+  "xl:grid-cols-[minmax(0,5.5rem)_minmax(0,2fr)_minmax(0,6.5rem)_minmax(9rem,1fr)_minmax(0,6rem)_minmax(8rem,1fr)_minmax(0,7rem)]";
 
 function IdeaRow({ node, depth }: { node: IdeaNode; depth: number }) {
   const rejectionLabel = node.rejection_code ? REJECTION_META[node.rejection_code] : "";

@@ -6,7 +6,6 @@ import TreeFilters from "@/components/TreeFilters";
 import { getServiceClient } from "@/lib/supabase/service";
 import { buildIdeaTree } from "@/lib/tree";
 import type { Idea } from "@/lib/types";
-import { trackLabel } from "@/lib/status";
 
 const DEFAULT_TRACKS = ["passive-income", "app-ideas"];
 
@@ -30,13 +29,20 @@ export default async function HomePage({
   }
 
   const { data: trackRows } = await supabase.from("ideas").select("track");
-  const tracks = Array.from(
-    new Set((trackRows ?? []).map((r) => r.track as string)),
-  ).sort();
-  const availableTracks = tracks.length > 0 ? tracks : DEFAULT_TRACKS;
+  const counts: Record<string, number> = {};
+  for (const row of trackRows ?? []) {
+    const key = row.track as string;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  // Треки — це вкладки, тому показуємо всі відомі, навіть порожні: інакше трек
+  // без жодної ідеї просто зникає з інтерфейсу і виглядає як зламаний.
+  const availableTracks = Array.from(new Set([...DEFAULT_TRACKS, ...Object.keys(counts)]));
 
   const track = params.track ?? availableTracks[0];
-  const status = params.status ?? "";
+  // Параметра немає — фільтр не задавали (показуємо все); порожній рядок — усі
+  // галочки зняті, тобто свідомо нічого. Це різні стани, і зводити їх не можна.
+  const statuses =
+    params.status === undefined ? null : params.status.split(",").filter(Boolean);
   const sort = params.sort === "asc" ? "asc" : "desc";
 
   const { data, error } = await supabase
@@ -55,29 +61,26 @@ export default async function HomePage({
   const ideas = (data ?? []) as Idea[];
   const nodes = buildIdeaTree(
     ideas,
-    (idea) => (status ? idea.status === status : true),
+    (idea) => statuses === null || statuses.includes(idea.status),
     sort,
   );
 
   return (
-    <div className="mx-auto max-w-5xl px-8 py-10">
+    <div className="px-8 py-10">
       <header className="mb-6">
-        <p className="font-mono text-xs uppercase tracking-widest text-ink-dim">
-          {trackLabel(track)}
-        </p>
         <h1 className="font-display text-3xl text-ink">Дерево знахідок</h1>
       </header>
 
       <Suspense>
-        <TreeFilters tracks={availableTracks} />
+        <TreeFilters tracks={availableTracks} counts={counts} />
       </Suspense>
 
-      <div className="mt-4">
+      <div className="mt-2">
         {nodes.length === 0 ? (
           <EmptyState
             title="У цьому треку поки немає знахідок"
             hint={
-              status
+              statuses !== null
                 ? "Спробуй прибрати фільтр за статусом — можливо, підходящих записів просто ще немає."
                 : "Щойно збирач або власник додасть ідею — вона з'явиться тут."
             }
