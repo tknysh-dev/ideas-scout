@@ -9,14 +9,26 @@ GitHub OAuth через Auth.js, обмежений одним GitHub-акаун
 
 ## Локальний запуск
 
+Найпростіше — скриптом з кореня репозиторію: `../dev.sh` (dev) і `../dev.sh prod`
+(прод-збірка локально). Він сам підтягує секрети з `~/.config/ideas-scout/env`
+і ставить залежності на першому запуску — деталі в кореневому README.
+
+Вручну, якщо потрібен саме npm:
+
 ```bash
 npm install
 cp .env.example .env.local   # заповнити значення
 npm run dev
 ```
 
-Без `GITHUB_TOKEN` сторінка `/config` показує пояснення, які env відсутні,
-замість падіння.
+Локальний дашборд читає **бойовий** Supabase — той самий, що й прод. Читання
+безпечне, але рішення власника на `/decisions` пишуться в ту саму базу.
+
+Сторінка `/config` має два джерела: робочу копію репозиторію (`CONFIG_SOURCE=local`,
+типово в dev) і GitHub API гілки `main` (`CONFIG_SOURCE=github`, типово в проді).
+Локальне джерело показує ще не закомічені правки критеріїв і промптів і не
+потребує `GITHUB_TOKEN`; без токена в режимі `github` сторінка показує пояснення,
+які env відсутні, замість падіння.
 
 ## Авторизація
 
@@ -27,6 +39,11 @@ npm run dev
 видані сесії одразу. Server action рішень власника перевіряє те саме окремо
 (`src/lib/actions/decisions.ts`) — це публічний POST-endpoint, і покладатись на
 proxy там не можна.
+
+Рішення власника доступні і для вже ухвалених статусів: панель на картці ідеї
+показується для `approved_pending`, `accepted` і `rejected`, тож вердикт
+можна переглянути, не чекаючи ревізора. Правила такої зміни (обов'язкова
+причина, слід у `events`, обнуління полів відмови) — у `../shared/contracts.md`.
 
 Allow-list звіряється з GitHub **username**, а не email: email у профілі GitHub
 може бути приватним і приходити `null`.
@@ -62,7 +79,9 @@ Apps; callback URL — `https://<домен>/api/auth/callback/github` (для �
 | `AUTH_GITHUB_ID` | Client ID GitHub OAuth-застосунку |
 | `AUTH_GITHUB_SECRET` | Client secret GitHub OAuth-застосунку |
 | `ALLOWED_GITHUB_LOGIN` | Єдиний GitHub-username, якому дозволено вхід |
-| `GITHUB_TOKEN` | Токен з доступом read-only до приватного репозиторію `tknysh-dev/ideas-scout` — для сторінки `/config` |
+| `GITHUB_TOKEN` | Токен з доступом read-only до приватного репозиторію `tknysh-dev/ideas-scout` — для сторінки `/config` у режимі `github` |
+| `CONFIG_SOURCE` | Джерело `/config`: `local` (робоча копія) або `github`. Типово: `local` у dev, `github` у проді |
+| `CONFIG_LOCAL_ROOT` | Корінь робочої копії для `CONFIG_SOURCE=local`. Типово — батьківська директорія `dashboard/` |
 
 ## Структура
 
@@ -70,5 +89,6 @@ Apps; callback URL — `https://<домен>/api/auth/callback/github` (для �
 - `src/auth.ts` — конфіг Auth.js: GitHub-провайдер, allow-list, сесія в JWT
 - `src/app/` — сторінки: дошка (`/`), картка ідеї (`/ideas/[id]`), прогони (`/runs`), вхідні (`/inbox`), конфігурація (`/config`)
 - `src/lib/supabase/` — service-клієнт для читання даних
+- `src/lib/config-files.ts` — джерело файлів для `/config`: робоча копія або GitHub
 - `src/lib/github.ts` — читання файлів репозиторію через GitHub API, кеш ~300с
 - `src/lib/status.ts` — людські назви й кольори словників статусів (джерело: `shared/contracts.md`)

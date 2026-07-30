@@ -1,12 +1,13 @@
 import Link from "next/link";
 import ConfigNotice from "@/components/ConfigNotice";
 import Prose from "@/components/Prose";
-import { fetchConfigFile, fetchLastCommit } from "@/lib/github";
-import { getGithubEnv } from "@/lib/config";
+import { configChangedLabel, readConfigFile } from "@/lib/config-files";
+import { getConfigSource, getGithubEnv } from "@/lib/config";
 import { formatDateTime } from "@/lib/dates";
 
-export const revalidate = 300;
-
+// Локальне джерело — файли на диску; кеш сторінки означав би, що правку видно
+// лише через 5 хвилин. Кеш запитів до GitHub API живе в самому lib/github.ts.
+export const dynamic = "force-dynamic";
 
 export default async function ConfigFilePage({
   params,
@@ -16,7 +17,7 @@ export default async function ConfigFilePage({
   const { path } = await params;
   const filePath = path.join("/");
 
-  if (!getGithubEnv()) {
+  if (getConfigSource() === "github" && !getGithubEnv()) {
     return (
       <div className="mx-auto max-w-4xl px-8 py-10">
         <ConfigNotice title="Немає доступу до GitHub" vars={["GITHUB_TOKEN"]} />
@@ -25,15 +26,12 @@ export default async function ConfigFilePage({
   }
 
   let content = "";
-  let commitDate: string | null = null;
+  let changed: string | null = null;
   let fetchError: string | null = null;
   try {
-    const [file, commit] = await Promise.all([
-      fetchConfigFile(filePath),
-      fetchLastCommit(filePath),
-    ]);
+    const file = await readConfigFile(filePath);
     content = file.content;
-    commitDate = commit.date;
+    changed = file.changed;
   } catch (err) {
     fetchError = err instanceof Error ? err.message : "Невідома помилка";
   }
@@ -53,12 +51,12 @@ export default async function ConfigFilePage({
       <header className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="font-display text-2xl text-ink">{filePath.split("/").pop()}</h1>
         <span className="font-mono text-xs text-ink-dim">
-          останній коміт: {formatDateTime(commitDate)}
+          {configChangedLabel()}: {formatDateTime(changed)}
         </span>
       </header>
 
       {fetchError ? (
-        <ConfigNotice title={`Помилка GitHub API: ${fetchError}`} vars={[]} />
+        <ConfigNotice title={`Не вдалося прочитати файл: ${fetchError}`} vars={[]} />
       ) : isMarkdown ? (
         <div className="rounded-lg border border-line bg-paper-raised p-6">
           <Prose content={content} />

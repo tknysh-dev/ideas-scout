@@ -26,6 +26,16 @@ export function getAuthEnv() {
   return { secret, clientId, clientSecret, allowedLogin };
 }
 
+export type ConfigSource = "local" | "github";
+
+// Звідки сторінка /config бере промпти й критерії. Локально — з робочої копії,
+// щоб правки було видно до пушу; у проді робочої копії немає, тільки GitHub API.
+export function getConfigSource(): ConfigSource {
+  const explicit = process.env.CONFIG_SOURCE;
+  if (explicit === "local" || explicit === "github") return explicit;
+  return process.env.NODE_ENV === "development" ? "local" : "github";
+}
+
 export function getGithubEnv() {
   const token = process.env.GITHUB_TOKEN;
   if (!token) return null;

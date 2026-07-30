@@ -1,10 +1,12 @@
 import Link from "next/link";
 import ConfigNotice from "@/components/ConfigNotice";
 import EmptyState from "@/components/EmptyState";
-import { fetchConfigTree } from "@/lib/github";
-import { getGithubEnv } from "@/lib/config";
+import { configSourceLabel, listConfigPaths } from "@/lib/config-files";
+import { getConfigSource, getGithubEnv } from "@/lib/config";
 
-export const revalidate = 300;
+// Локальне джерело — файли на диску; кеш сторінки означав би, що правку видно
+// лише через 5 хвилин. Кеш запитів до GitHub API живе в самому lib/github.ts.
+export const dynamic = "force-dynamic";
 
 function groupByDir(paths: string[]) {
   const groups = new Map<string, string[]>();
@@ -18,7 +20,7 @@ function groupByDir(paths: string[]) {
 }
 
 export default async function ConfigPage() {
-  if (!getGithubEnv()) {
+  if (getConfigSource() === "github" && !getGithubEnv()) {
     return (
       <div className="mx-auto max-w-4xl px-8 py-10">
         <ConfigNotice title="Немає доступу до GitHub" vars={["GITHUB_TOKEN"]} />
@@ -29,8 +31,7 @@ export default async function ConfigPage() {
   let paths: string[] = [];
   let fetchError: string | null = null;
   try {
-    const entries = await fetchConfigTree();
-    paths = entries.map((e) => e.path).sort();
+    paths = await listConfigPaths();
   } catch (err) {
     fetchError = err instanceof Error ? err.message : "Невідома помилка";
   }
@@ -39,7 +40,7 @@ export default async function ConfigPage() {
     <div className="mx-auto max-w-4xl px-8 py-10">
       <header className="mb-6">
         <p className="font-mono text-xs uppercase tracking-widest text-ink-dim">
-          tknysh-dev/ideas-scout · main
+          {configSourceLabel()}
         </p>
         <h1 className="font-display text-3xl text-ink">Конфігурація</h1>
         <p className="mt-1 max-w-2xl text-sm text-ink-dim">
@@ -48,7 +49,7 @@ export default async function ConfigPage() {
       </header>
 
       {fetchError ? (
-        <ConfigNotice title={`Помилка GitHub API: ${fetchError}`} vars={[]} />
+        <ConfigNotice title={`Не вдалося прочитати конфігурацію: ${fetchError}`} vars={[]} />
       ) : paths.length === 0 ? (
         <EmptyState title="У дозволених директоріях поки немає файлів" />
       ) : (
