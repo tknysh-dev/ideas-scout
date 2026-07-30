@@ -18,6 +18,8 @@ import {
 } from "@/lib/status";
 import { analyzeCriteria, splitCriteriaSection } from "@/lib/criteria";
 import type { EventRow, Idea, SourceRow } from "@/lib/types";
+import type { IdeaRef } from "@/lib/idea-refs";
+import { collectIdeaIds } from "@/lib/idea-refs";
 import { formatDate, formatDateTime } from "@/lib/dates";
 
 
@@ -62,6 +64,23 @@ export default async function IdeaPage({
 
   const { section: criteriaSection, rest: bodyRest } = splitCriteriaSection(record.body);
   const criteria = analyzeCriteria(record, criteriaSection);
+
+  const ideaRefs: Record<string, IdeaRef> = {};
+  const referenced = record.body ? collectIdeaIds(record.body, record.id) : [];
+  if (referenced.length > 0) {
+    const { data: refRows } = await supabase
+      .from("ideas")
+      .select("id,title,status,mechanic_summary")
+      .in("id", referenced);
+    for (const row of refRows ?? []) {
+      ideaRefs[row.id] = {
+        id: row.id,
+        title: row.title,
+        status: row.status,
+        summary: row.mechanic_summary,
+      };
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-8 py-10">
@@ -182,7 +201,7 @@ export default async function IdeaPage({
             Опис
           </h2>
           <div className="rounded-lg border border-line bg-paper-raised p-6">
-            <Prose content={bodyRest} />
+            <Prose content={bodyRest} ideaRefs={ideaRefs} />
           </div>
         </section>
       )}
