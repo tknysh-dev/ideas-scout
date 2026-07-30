@@ -23,6 +23,18 @@
   --status-accepted-bg: #d4ecdd;
   --status-transferred-fg: #3a5a8c;
   --status-transferred-bg: #e2e9f3;
+
+  /* Тип запису — власна пара кольорів поза шкалою статусів: механіка й ніша
+     стоять поруч зі статус-пігулкою і не мають з нею зливатись. */
+  --type-mechanic-fg: #6b4396;
+  --type-mechanic-bg: #ebe0f5;
+  --type-niche-fg: #1c6c66;
+  --type-niche-bg: #d8ebe8;
+
+  /* Кнопка «Прийняти»: приглушена шавлієва, а не сигнальна зелень статусу —
+     як велика заливка той самий колір читається значно різкіше, ніж у пігулці. */
+  --accept-btn-bg: #4e8465;
+  --accept-btn-fg: #f4f8f3;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -48,6 +60,14 @@
     --status-accepted-bg: #133823;
     --status-transferred-fg: #9db6e8;
     --status-transferred-bg: #1f2a3d;
+
+    --type-mechanic-fg: #c9a2ec;
+    --type-mechanic-bg: #2d2339;
+    --type-niche-fg: #7fd6cc;
+    --type-niche-bg: #13322e;
+
+    --accept-btn-bg: #3f6d53;
+    --accept-btn-fg: #e8f2ea;
   }
 }
 
@@ -71,6 +91,13 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
   background-image: radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0);
   background-size: 22px 22px;
+}
+
+/* Tailwind-скид знімає дефолтний курсор з кнопок — повертаємо його всюди,
+   а не по одній кнопці. */
+button:not(:disabled),
+[role="button"]:not(:disabled) {
+  cursor: pointer;
 }
 
 ::selection {

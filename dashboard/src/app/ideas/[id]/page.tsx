@@ -1,20 +1,22 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import ConfigNotice from "@/components/ConfigNotice";
+import CriteriaAnalysisSection from "@/components/CriteriaAnalysis";
 import DecisionPanel from "@/components/DecisionPanel";
 import { Field, FieldGroup } from "@/components/FieldGroup";
 import Prose from "@/components/Prose";
 import StatusBadge from "@/components/StatusBadge";
+import TypeBadge from "@/components/TypeBadge";
 import { getServiceClient } from "@/lib/supabase/service";
 import {
   AUTHOR_INTEREST_META,
   CONFIDENCE_META,
-  IDEA_TYPE_META,
   OWNER_DECIDABLE_STATUSES,
   REJECTION_META,
   SIGNAL_TYPE_META,
   trackLabel,
 } from "@/lib/status";
+import { analyzeCriteria, splitCriteriaSection } from "@/lib/criteria";
 import type { EventRow, Idea, SourceRow } from "@/lib/types";
 import { formatDate, formatDateTime } from "@/lib/dates";
 
@@ -39,13 +41,11 @@ export default async function IdeaPage({
     );
   }
 
-  const [{ data: idea }, { data: sources }, { data: events }, { data: children }] =
-    await Promise.all([
-      supabase.from("ideas").select("*").eq("id", id).maybeSingle(),
-      supabase.from("sources").select("*").eq("idea_id", id).order("id"),
-      supabase.from("events").select("*").eq("idea_id", id).order("happened_at"),
-      supabase.from("ideas").select("id,title,status").eq("parent_id", id),
-    ]);
+  const [{ data: idea }, { data: sources }, { data: events }] = await Promise.all([
+    supabase.from("ideas").select("*").eq("id", id).maybeSingle(),
+    supabase.from("sources").select("*").eq("idea_id", id).order("id"),
+    supabase.from("events").select("*").eq("idea_id", id).order("happened_at"),
+  ]);
 
   if (!idea) notFound();
 
@@ -59,6 +59,9 @@ export default async function IdeaPage({
       .maybeSingle();
     parent = parentData;
   }
+
+  const { section: criteriaSection, rest: bodyRest } = splitCriteriaSection(record.body);
+  const criteria = analyzeCriteria(record, criteriaSection);
 
   return (
     <div className="mx-auto max-w-4xl px-8 py-10">
@@ -79,40 +82,22 @@ export default async function IdeaPage({
       </div>
 
       <header className="mb-8">
-        <div className="mb-2 flex flex-wrap items-center gap-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
           <StatusBadge status={record.status} />
-          <span className="font-mono text-xs text-ink-dim">
-            {IDEA_TYPE_META[record.type]}
-          </span>
+          <TypeBadge type={record.type} />
         </div>
         <h1 className="font-display text-3xl text-ink">{record.title}</h1>
         {record.mechanic_summary && (
           <p className="mt-2 max-w-2xl text-ink-dim">{record.mechanic_summary}</p>
         )}
+        {OWNER_DECIDABLE_STATUSES.includes(record.status) && (
+          <div className="mt-4">
+            <DecisionPanel ideaId={record.id} currentStatus={record.status} bare />
+          </div>
+        )}
       </header>
 
-      {children && children.length > 0 && (
-        <div className="mb-8 rounded-lg border border-line bg-paper-raised p-5">
-          <h2 className="mb-3 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
-            Ніші цієї механіки
-          </h2>
-          <ul className="flex flex-wrap gap-2">
-            {children.map((child) => (
-              <li key={child.id}>
-                <Link
-                  href={`/ideas/${child.id}`}
-                  className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-sm text-ink hover:border-accent hover:text-accent"
-                >
-                  <span className="font-mono text-xs text-ink-dim">{child.id}</span>
-                  {child.title}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="grid gap-5 md:grid-cols-2">
+      <div className="grid gap-5">
         <FieldGroup title="Сигнал">
           <Field label="Виявлено">{formatDate(record.discovered)}</Field>
           <Field label="Тип сигналу">{SIGNAL_TYPE_META[record.signal_type]}</Field>
@@ -189,19 +174,15 @@ export default async function IdeaPage({
         </FieldGroup>
       </div>
 
-      {OWNER_DECIDABLE_STATUSES.includes(record.status) && (
-        <section className="mt-8">
-          <DecisionPanel ideaId={record.id} currentStatus={record.status} />
-        </section>
-      )}
+      {criteria && <CriteriaAnalysisSection analysis={criteria} />}
 
-      {record.body && (
+      {bodyRest && (
         <section className="mt-8">
           <h2 className="mb-3 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
             Опис
           </h2>
           <div className="rounded-lg border border-line bg-paper-raised p-6">
-            <Prose content={record.body} />
+            <Prose content={bodyRest} />
           </div>
         </section>
       )}

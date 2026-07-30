@@ -103,7 +103,17 @@ export function trackLabel(track: string): string {
   return TRACK_META[track] ?? track;
 }
 
-export const IDEA_TYPE_META: Record<string, string> = {
-  mechanic: "Механіка",
-  niche: "Ніша",
+export const IDEA_TYPE_META: Record<string, { label: string; hint: string }> = {
+  mechanic: {
+    label: "Механіка",
+    hint: "Патерн заробітку як категорія: сам по собі не запускається, рішення ухвалюються в його нішах",
+  },
+  niche: {
+    label: "Ніша",
+    hint: "Конкретна реалізація механіки — саме її оцінює чек-лист і по ній ухвалюється рішення",
+  },
 };
+
+export function ideaTypeMeta(type: string) {
+  return IDEA_TYPE_META[type] ?? { label: type, hint: "Тип поза словником shared/contracts.md" };
+}

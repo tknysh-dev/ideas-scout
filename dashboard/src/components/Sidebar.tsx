@@ -25,7 +25,7 @@ export default function Sidebar({
   if (pathname === "/login") return null;
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-paper-raised px-5 py-6">
+    <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-line bg-paper-raised px-5 py-6">
       <div className="mb-8">
         <p className="font-display text-[1.35rem] leading-none tracking-tight text-ink">
           Ideas
