@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/runs", label: "Прогони", hint: "Журнал джобів" },
   { href: "/inbox", label: "Вхідні", hint: "Ручні ідеї з Telegram" },
   { href: "/config", label: "Конфігурація", hint: "Промпти й критерії" },
+  { href: "/architecture", label: "Архітектура", hint: "Як це все працює" },
 ];
 
 export default function Sidebar({
