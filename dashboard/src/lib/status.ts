@@ -27,19 +27,14 @@ export const STATUS_META: Record<
     tone: "rejected",
   },
   approved_pending: {
-    label: "Очікує рішення",
+    label: "Очікує",
     hint: "Пройшла формальні фільтри, останнє слово — за власником",
     tone: "approved_pending",
   },
-  active: {
-    label: "Запущена",
-    hint: "Власник запустив механіку насправді",
-    tone: "active",
-  },
-  parked: {
-    label: "Відкладена",
-    hint: "Не відхилена остаточно, чекає на умову перегляду",
-    tone: "parked",
+  accepted: {
+    label: "Прийнята",
+    hint: "Власник визнав ідею годною — збирач шукатиме схожі механіки",
+    tone: "accepted",
   },
   transferred: {
     label: "Перенесена",
@@ -47,6 +42,29 @@ export const STATUS_META: Record<
     tone: "transferred",
   },
 };
+
+// Статус приходить із бази, а не з типів: поки міграція не накотилась (або якщо
+// агент запише щось поза словником), сторінка має показати значення як є, а не
+// впасти на undefined.
+export function statusMeta(status: IdeaStatus) {
+  return (
+    STATUS_META[status] ?? {
+      label: status,
+      hint: "Статус поза словником shared/contracts.md",
+      tone: "analyzing",
+    }
+  );
+}
+
+// Статуси, у яких кнопки рішення власника мають сенс: черга на рішення і вже
+// ухвалені рішення — їх власник може переглянути. `new`/`analyzing` належать
+// аналітику (втручання гонилось би з активним прогоном), `transferred` —
+// технічний стан переносу в інший трек.
+export const OWNER_DECIDABLE_STATUSES: readonly IdeaStatus[] = [
+  "approved_pending",
+  "accepted",
+  "rejected",
+];
 
 export const REJECTION_META: Record<RejectionCode, string> = {
   NO_MONETIZATION: "Немає гіпотези монетизації",

@@ -79,7 +79,7 @@ export default async function DecisionsPage() {
                 </div>
                 <StatusBadge status={idea.status} />
               </div>
-              <DecisionPanel ideaId={idea.id} compact />
+              <DecisionPanel ideaId={idea.id} currentStatus={idea.status} compact />
             </li>
           ))}
         </ul>

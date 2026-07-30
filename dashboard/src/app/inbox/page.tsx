@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 const TRIAGE_TONE: Record<string, string> = {
   rejected: "text-[color:var(--status-rejected-fg)]",
-  approved: "text-[color:var(--status-active-fg)]",
+  approved: "text-[color:var(--status-accepted-fg)]",
 };
 
 export default async function InboxPage() {

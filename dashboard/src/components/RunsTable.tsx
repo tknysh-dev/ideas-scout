@@ -6,7 +6,7 @@ import { formatDateTime } from "@/lib/dates";
 
 
 const STATUS_TONE: Record<string, string> = {
-  ok: "text-[color:var(--status-active-fg)]",
+  ok: "text-[color:var(--status-accepted-fg)]",
   error: "text-[color:var(--status-rejected-fg)]",
   dry_run: "text-[color:var(--status-analyzing-fg)]",
   skipped_work_hours: "text-ink-dim",

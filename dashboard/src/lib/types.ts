@@ -7,8 +7,7 @@ export type IdeaStatus =
   | "analyzing"
   | "rejected"
   | "approved_pending"
-  | "active"
-  | "parked"
+  | "accepted"
   | "transferred";
 export type RejectionCode =
   | "NO_MONETIZATION"

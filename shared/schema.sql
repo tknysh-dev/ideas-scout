@@ -6,6 +6,9 @@
 -- Enum-подібні поля навмисно НЕ Postgres enum-типи, а CHECK-констрейнти на text —
 -- легше додати нове значення (ALTER TABLE ... DROP/ADD CONSTRAINT) без блокування
 -- всієї бази на зміну типу, як буває з ALTER TYPE.
+--
+-- Це файл поточного стану, не історія: зміни вже розгорнутої бази лежать
+-- окремими скриптами в shared/migrations/ і накочуються вручну в Supabase.
 
 -- ============================================================================
 -- IDEAS — по одній ідеї/механіці/ніші на рядок. Замінює Markdown-файли
@@ -32,7 +35,7 @@ create table ideas (
   mechanic_summary text,                      -- одне речення: канал + монетизація + роль AI
 
   status text not null default 'new' check (
-    status in ('new', 'analyzing', 'rejected', 'approved_pending', 'active', 'parked', 'transferred')
+    status in ('new', 'analyzing', 'rejected', 'approved_pending', 'accepted', 'transferred')
   ),
   rejection_code text check (
     rejection_code in (
@@ -132,7 +135,7 @@ create table events (
   happened_at timestamptz not null default now(),
   run_id text references runs(run_id),   -- nullable: ручні втручання власника не завжди прив'язані до прогону
   actor text not null,                    -- 'collector' | 'analyst' | 'revisor' | 'triage' | 'owner' тощо (джоб або людина)
-  change text not null,                   -- що саме змінилось (напр. "status: parked -> approved_pending")
+  change text not null,                   -- що саме змінилось (напр. "status: approved_pending -> accepted")
   reason text                             -- обґрунтування
 );
 

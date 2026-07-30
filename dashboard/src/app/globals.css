@@ -17,12 +17,10 @@
   --status-analyzing-bg: #f3e9d2;
   --status-rejected-fg: #9b2c2c;
   --status-rejected-bg: #f3e0df;
-  --status-approved_pending-fg: #1f7a52;
-  --status-approved_pending-bg: #deefe3;
-  --status-active-fg: #14663f;
-  --status-active-bg: #d4ecdd;
-  --status-parked-fg: #5b4b8a;
-  --status-parked-bg: #e7e2f3;
+  --status-approved_pending-fg: #8a6500;
+  --status-approved_pending-bg: #fbeec2;
+  --status-accepted-fg: #14663f;
+  --status-accepted-bg: #d4ecdd;
   --status-transferred-fg: #3a5a8c;
   --status-transferred-bg: #e2e9f3;
 }
@@ -44,12 +42,10 @@
     --status-analyzing-bg: #362a14;
     --status-rejected-fg: #e28d8d;
     --status-rejected-bg: #3a2222;
-    --status-approved_pending-fg: #7fd0a8;
-    --status-approved_pending-bg: #17332485;
-    --status-active-fg: #7fe0ac;
-    --status-active-bg: #133823;
-    --status-parked-fg: #b6a3e8;
-    --status-parked-bg: #2a2340;
+    --status-approved_pending-fg: #f2cd66;
+    --status-approved_pending-bg: #3a2f10;
+    --status-accepted-fg: #7fe0ac;
+    --status-accepted-bg: #133823;
     --status-transferred-fg: #9db6e8;
     --status-transferred-bg: #1f2a3d;
   }

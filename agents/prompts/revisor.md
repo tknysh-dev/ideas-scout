@@ -92,8 +92,8 @@
 
 ## Крок 2. Тригери повторного перегляду реєстру
 
-Виконується **після** фіксації дельти. Пройди всі записи зі `status: rejected` або `status: parked`:
-`agents/scripts/db.sh get-ideas --status rejected --track {{TRACK}}` і `agents/scripts/db.sh get-ideas --status parked --track {{TRACK}}` (записи `new`, `analyzing`, `approved_pending`, `active`, `transferred` не чіпай — вони або вже в черзі, або в руках власника).
+Виконується **після** фіксації дельти. Пройди всі записи зі `status: rejected`:
+`agents/scripts/db.sh get-ideas --status rejected --track {{TRACK}}` (записи `new`, `analyzing`, `approved_pending`, `accepted`, `transferred` не чіпай — вони або вже в черзі, або в руках власника).
 
 ### Які збіги шукати
 
@@ -203,8 +203,8 @@ Run date: YYYY-MM-DD
 
 - Не змінюй `agents/criteria/criteria-*.md`, `agents/criteria/search-queries-{{TRACK}}.md`, `agents/criteria/taxonomy.md`, `agents/criteria/availability.md`, будь-що в `agents/scripts/`, будь-що в `agents/prompts/` — лише читай їх. (`agents/scripts/runner.sh` після прогону однаково відкотить зміни поза allowlist і покладе їх у карантин — але межа задана тут, а не гардом.)
 - Не видаляй жодних записів реєстру і жодних записів каталогу — застаріле позначається, а не стирається; `db.sh` не дає команди delete для ideas.
-- Не виноси вердиктів за критеріями, не міняй `rejection_code`, `rejection_detail`, `confidence`, `verdict_provider`/`verdict_model`/`verdict_run_id`, `criteria_version` у записах — твоя єдина зміна статусу це `rejected`/`parked` → `new`.
-- Не переводь записи в `rejected`, `parked`, `approved_pending` чи будь-який інший статус — тільки в `new`.
+- Не виноси вердиктів за критеріями, не міняй `rejection_code`, `rejection_detail`, `confidence`, `verdict_provider`/`verdict_model`/`verdict_run_id`, `criteria_version` у записах — твоя єдина зміна статусу це `rejected` → `new`.
+- Не переводь записи в `rejected`, `accepted`, `approved_pending` чи будь-який інший статус — тільки в `new`.
 - Не виконуй git-команд (commit, push, pull) — це виключно робота `agents/scripts/runner.sh` після твого завершення.
 - Файли, які ти маєш право створювати/редагувати через Write/Edit: `agents/catalogs/ai-capabilities.md`, `logs/decisions.md`. Записи реєстру (лише поля перегляду вище) і notes прогону — виключно через `agents/scripts/db.sh` (єдиний Bash, який тобі доступний).
 

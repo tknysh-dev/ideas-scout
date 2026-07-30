@@ -10,6 +10,7 @@ import {
   AUTHOR_INTEREST_META,
   CONFIDENCE_META,
   IDEA_TYPE_META,
+  OWNER_DECIDABLE_STATUSES,
   REJECTION_META,
   SIGNAL_TYPE_META,
   trackLabel,
@@ -188,9 +189,9 @@ export default async function IdeaPage({
         </FieldGroup>
       </div>
 
-      {record.status === "approved_pending" && (
+      {OWNER_DECIDABLE_STATUSES.includes(record.status) && (
         <section className="mt-8">
-          <DecisionPanel ideaId={record.id} />
+          <DecisionPanel ideaId={record.id} currentStatus={record.status} />
         </section>
       )}
 

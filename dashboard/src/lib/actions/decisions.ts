@@ -4,9 +4,10 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { getAuthEnv } from "@/lib/config";
 import { getServiceClient } from "@/lib/supabase/service";
-import type { RejectionCode } from "@/lib/types";
+import { OWNER_DECIDABLE_STATUSES, statusMeta } from "@/lib/status";
+import type { IdeaStatus, RejectionCode } from "@/lib/types";
 
-export type DecisionAction = "active" | "parked" | "rejected";
+export type DecisionAction = "accepted" | "rejected";
 
 const REJECTION_CODES: readonly RejectionCode[] = [
   "NO_MONETIZATION",
@@ -19,8 +20,7 @@ const REJECTION_CODES: readonly RejectionCode[] = [
 ];
 
 const CHANGE_LABEL: Record<DecisionAction, string> = {
-  active: "власник активував механіку",
-  parked: "власник відклав рішення",
+  accepted: "власник прийняв ідею як годну",
   rejected: "власник відхилив ідею",
 };
 
@@ -66,7 +66,7 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   const reason = input.reason.trim();
 
   if (!ideaId) return { error: "Не вказано ідею." };
-  if (!["active", "parked", "rejected"].includes(action)) {
+  if (!["accepted", "rejected"].includes(action)) {
     return { error: "Невідома дія." };
   }
   if (action === "rejected") {
@@ -81,20 +81,40 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
 
   const { data: idea, error: fetchError } = await supabase
     .from("ideas")
-    .select("id,status")
+    .select("id,status,rejection_code")
     .eq("id", ideaId)
     .maybeSingle();
 
   if (fetchError) return { error: `Помилка читання ідеї: ${fetchError.message}` };
   if (!idea) return { error: "Ідею не знайдено." };
-  if (idea.status !== "approved_pending") {
-    return { error: "Рішення доступне лише для ідей у статусі «Очікує рішення»." };
+
+  const current = idea.status as IdeaStatus;
+  if (!OWNER_DECIDABLE_STATUSES.includes(current)) {
+    return {
+      error: `Статус «${statusMeta(current).label}» веде аналітик — рішення власника тут недоступне.`,
+    };
+  }
+
+  // Перегляд уже ухваленого рішення — не те саме, що перше рішення по черзі:
+  // без пояснення в events історія картки перестає читатись.
+  const isRevision = current !== "approved_pending";
+  if (isRevision && !reason) {
+    return { error: "Зміна вже ухваленого рішення вимагає причини." };
+  }
+  if (current === action && !(action === "rejected" && idea.rejection_code !== rejectionCode)) {
+    return { error: `Ідея вже в статусі «${statusMeta(current).label}».` };
   }
 
   const updatePayload: Record<string, unknown> = { status: action };
   if (action === "rejected") {
     updatePayload.rejection_code = rejectionCode;
     updatePayload.rejection_detail = reason;
+  } else if (current === "rejected") {
+    // Код і деталі відмови описують вердикт, який власник щойно скасував —
+    // лишити їх означало б показувати «Юридична заборона» на прийнятій ідеї.
+    updatePayload.rejection_code = null;
+    updatePayload.rejection_detail = null;
+    updatePayload.rejection_codes_extra = [];
   }
 
   const { error: updateError } = await supabase
@@ -105,10 +125,11 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   if (updateError) return { error: `Помилка оновлення статусу: ${updateError.message}` };
 
   const changeSuffix = action === "rejected" ? ` (${rejectionCode})` : "";
+  const label = isRevision ? `${CHANGE_LABEL[action]}, переглянувши рішення` : CHANGE_LABEL[action];
   const { error: eventError } = await supabase.from("events").insert({
     idea_id: ideaId,
     actor: "owner:dashboard",
-    change: `status: approved_pending -> ${action}${changeSuffix} — ${CHANGE_LABEL[action]}`,
+    change: `status: ${current} -> ${action}${changeSuffix} — ${label}`,
     reason: reason || null,
   });
 
