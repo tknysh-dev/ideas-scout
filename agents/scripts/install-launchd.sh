@@ -28,6 +28,8 @@ esac
 
 UID_NUM="$(id -u)"
 DOMAIN="gui/${UID_NUM}"
+LEGACY_TELEGRAM_LABEL="com.ideas-scout.telegram-bot"
+LEGACY_TELEGRAM_DEST="$LAUNCHD_DEST_DIR/${LEGACY_TELEGRAM_LABEL}.plist"
 
 mkdir -p "$LAUNCHD_DEST_DIR"
 
@@ -56,6 +58,15 @@ if [ "$UNINSTALL" -eq 0 ] && [ ! -d "$REPO_ROOT/agents/worker/node_modules/@supa
     echo "install-launchd.sh: не вдалося встановити залежності job-worker" >&2
     exit 1
   fi
+fi
+
+# До webhook-міграції Telegram працював окремим long-polling launch agent. Його
+# шаблону вже немає в Git, тому звичайний цикл нижче сам стару інсталяцію не побачить.
+# При будь-якому повторному install/uninstall гарантовано знімаємо legacy-процес.
+if [ -f "$LEGACY_TELEGRAM_DEST" ] || launchctl print "${DOMAIN}/${LEGACY_TELEGRAM_LABEL}" >/dev/null 2>&1; then
+  echo "install-launchd.sh: прибираю legacy Telegram long-polling agent"
+  launchctl bootout "${DOMAIN}/${LEGACY_TELEGRAM_LABEL}" 2>/dev/null || true
+  rm -f "$LEGACY_TELEGRAM_DEST"
 fi
 
 for src in "${PLISTS[@]}"; do

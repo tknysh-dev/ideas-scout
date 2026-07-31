@@ -34,7 +34,8 @@ export const ARCH_FLOW = `flowchart TB
 
   subgraph mac["Mac M1 — автономні прогони"]
     launchd["launchd<br/>розклад прогонів"]
-    bot["telegram-bot.py<br/>приймальня чернеток"]
+    worker["job-worker<br/>Realtime-черга"]
+    bot["telegram-bot.py<br/>одна подія"]
     runner["runner.sh<br/>єдина точка запуску"]
     subgraph agents["Агенти — claude -p"]
       collector["Збирач"]
@@ -51,7 +52,10 @@ export const ARCH_FLOW = `flowchart TB
   owner(["Власник"])
 
   web --> collector
-  telegram -- "чернетка" --> bot
+  telegram -- "webhook" --> dashboard
+  dashboard -- "jobs" --> supabase
+  supabase -- "Realtime" --> worker
+  worker --> bot
   launchd --> runner
   bot --> runner
   runner --> collector
@@ -148,10 +152,16 @@ export const ARCH_NODES: Record<string, ArchNode> = {
     ref: "agents/scripts/runner.sh",
   },
   bot: {
-    title: "telegram-bot.py — демон приймальні",
+    title: "telegram-bot.py — обробник однієї події",
     summary:
-      "Довгоживучий python-процес на long-polling. Приймає від тебе матеріал, зберігає текст чернетки в таблицю `inbox`, а бінарні вкладення (скріншоти, збережені сторінки) кладе на диск у `inbox/<draft_id>-<track>/` — для них у базі немає колонки. Далі він смикає `runner.sh` з агентом тріажу і показує тобі живий прогрес розбору.",
+      "Це вже не довгоживучий polling-процес. Telegram webhook на Vercel кладе update у `jobs`, постійний M1-worker забирає його через Supabase Realtime й запускає Python-обробник рівно один раз. Обробник зберігає текст чернетки в таблицю `inbox`, бінарні вкладення кладе на диск, а після підтвердження смикає `runner.sh` з агентом тріажу й показує живий прогрес у чаті.",
     ref: "agents/scripts/telegram-bot.py",
+  },
+  worker: {
+    title: "job-worker — міст із хмари на M1",
+    summary:
+      "Постійний процес на M1 слухає Supabase Realtime, але джерелом правди лишається таблиця `jobs`: сон Mac або розрив WebSocket не губить команду. Worker атомарно забирає одну job із lease, дозволяє лише статичний список типів і запускає відповідний локальний скрипт без shell-інтерпретації. Через цей самий міст пізніше працюватиме кнопка «Глибоке дослідження».",
+    ref: "agents/worker/job-worker.mjs",
   },
   collector: {
     title: "Агент-збирач",

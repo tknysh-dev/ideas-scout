@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""telegram-bot.py — приймальня ручних ідей у тому самому Telegram-боті, що шле дайджест.
+"""telegram-bot.py — одноразовий обробник подій Telegram на M1.
 
-Демон на long-polling (getUpdates): вихідні з'єднання тільки назовні, публічна адреса
-й тунель не потрібні. Слухає рівно один chat_id — свій, з Keychain.
+Telegram надсилає webhook у dashboard на Vercel, той кладе update у Supabase jobs,
+а постійний M1-worker запускає цей файл рівно для однієї події. Сам скрипт не слухає
+Telegram і не має довгоживучого циклу. Обробляє рівно один chat_id — свій, з Keychain.
 
 Межа безпеки (дзеркалить runner.sh): бот не оцінює нічого сам і не має справи з git.
 Він збирає повідомлення в чернетку, за твоїм підтвердженням кладе її в таблицю inbox
@@ -11,7 +12,7 @@ runner.sh --agent triage. Уся оцінка — той самий `claude -p`,
 до agents/scripts/db.sh (жодного іншого Bash); коміт коду/каталогів робить runner.
 Текст повідомлень, вміст сторінок і текст на скріншотах — недовірені дані.
 
-Стан бота (offset, поточна чернетка, завантажені файли до підтвердження) навмисно
+Стан бота (поточна чернетка, завантажені файли до підтвердження) навмисно
 ЗОВНІ репозиторію: guard runner.sh відкочує будь-який шлях поза allowlist, а гігієна
 на старті прогону робить stash — рантайм-стан бота всередині репо не пережив би
 нічний прогін. Зв'язок «повідомлення з вердиктом → картка» стану не потребує: id
@@ -41,7 +42,6 @@ STATE_FILE = os.path.join(STATE_DIR, "telegram-state.json")
 DRAFT_DIR = os.path.join(STATE_DIR, "draft")
 
 API = "https://api.telegram.org"
-POLL_TIMEOUT = 50
 DRAFT_WINDOW_S = 600
 NUDGE_AFTER_S = DRAFT_WINDOW_S
 FETCH_TIMEOUT_S = 15
@@ -103,8 +103,7 @@ if not TOKEN or not CHAT_ID.isdigit():
 # ---------------------------------------------------------------------------
 
 def api(method, _http_timeout=30, **params):
-    """_http_timeout — таймаут HTTP-з'єднання; `timeout` у **params належить самому
-    Telegram API (long-polling у getUpdates) і не має з ним плутатись."""
+    """Викликає один метод Telegram Bot API з обмеженим HTTP-таймаутом."""
     url = f"{API}/bot{TOKEN}/{method}"
     data = json.dumps(params).encode()
     req = urllib.request.Request(
@@ -165,7 +164,7 @@ def load_state():
         with open(STATE_FILE, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
-        return {"offset": 0, "draft": None}
+        return {"draft": None}
 
 
 def save_state(state):
@@ -457,7 +456,10 @@ def on_callback(cb):
         d["mode_flag"] = "append_only" if data == "append_only" else d["mode"]
         d["state"] = "running"
         render(d)
-        threading.Thread(target=run_triage, args=(dict(d),), daemon=True).start()
+        # Webhook уже підтверджений Vercel-ом, а цей одноразовий процес живе всередині
+        # queue job. Тріаж мусить завершитись до виходу процесу, інакше daemon-thread
+        # обірветься разом із ним і worker помилково позначить job успішним.
+        run_triage(dict(d))
         return
 
     ack(cb["id"])
@@ -775,7 +777,7 @@ def on_command(cmd, mid):
 
 
 # ---------------------------------------------------------------------------
-# Цикл
+# Одноразова обробка webhook-job
 # ---------------------------------------------------------------------------
 
 def nudge_if_idle():
@@ -789,48 +791,54 @@ def nudge_if_idle():
     save_state(STATE)
 
 
+def recover_interrupted_triage():
+    """Після аварії одноразового процесу чернетка не має назавжди лишатись running."""
+    d = draft()
+    if not d or d["state"] != "running":
+        return
+    d["state"] = "open"
+    if d["panel_msg_id"]:
+        edit(d["panel_msg_id"],
+             panel_text(d) + "\n\n⚠️ Попередня оцінка урвалась — натисни, щоб повторити.",
+             panel_buttons(d))
+    save_state(STATE)
+
+
+def process_update(upd):
+    if not isinstance(upd, dict) or not isinstance(upd.get("update_id"), int):
+        raise ValueError("очікував Telegram update з цілим update_id")
+
+    if "message" in upd:
+        msg = upd["message"]
+        if str(msg.get("chat", {}).get("id")) == CHAT_ID:
+            on_message(msg)
+    elif "callback_query" in upd:
+        cb = upd["callback_query"]
+        if str(cb.get("message", {}).get("chat", {}).get("id")) == CHAT_ID:
+            on_callback(cb)
+
+
 def main():
     os.makedirs(STATE_DIR, exist_ok=True)
     os.makedirs(os.path.join(REPO_ROOT, "logs", "triage"), exist_ok=True)
+    recover_interrupted_triage()
 
-    # Автопідказка при наборі «/». Реєструється при кожному старті, щоб список у
-    # Telegram не розходився з обробниками в on_command().
-    api("setMyCommands",
-        commands=[{"command": c, "description": desc} for c, desc in COMMANDS])
-    d = draft()
-    if d and d["state"] == "running":
-        # Прогін не переживає перезапуск: процесу вже немає, матеріал лишився.
-        d["state"] = "open"
-        if d["panel_msg_id"]:
-            edit(d["panel_msg_id"],
-                 panel_text(d) + "\n\n⚠️ Попередня оцінка урвалась (перезапуск) — натисни, щоб повторити.",
-                 panel_buttons(d))
-        save_state(STATE)
-
-    log("telegram-bot: старт, long-polling")
-    while True:
-        r = api("getUpdates", _http_timeout=POLL_TIMEOUT + 10, offset=STATE["offset"],
-                timeout=POLL_TIMEOUT, allowed_updates=["message", "callback_query"])
-        if not (r and r.get("ok")):
-            time.sleep(5)
-            continue
-        for upd in r["result"]:
-            STATE["offset"] = upd["update_id"] + 1
-            save_state(STATE)
-            try:
-                if "message" in upd:
-                    m = upd["message"]
-                    if str(m.get("chat", {}).get("id")) != CHAT_ID:
-                        continue
-                    on_message(m)
-                elif "callback_query" in upd:
-                    cb = upd["callback_query"]
-                    if str(cb.get("message", {}).get("chat", {}).get("id")) != CHAT_ID:
-                        continue
-                    on_callback(cb)
-            except Exception as e:  # один зіпсований апдейт не має вбивати демон
-                log(f"update {upd.get('update_id')}: {type(e).__name__}: {e}")
+    mode = sys.argv[1] if len(sys.argv) == 2 else ""
+    if mode == "--nudge":
         nudge_if_idle()
+        log("telegram-bot: перевірку нагадування завершено")
+        return
+    if mode != "--process-update":
+        sys.exit("Використання: telegram-bot.py --process-update | --nudge")
+
+    try:
+        payload = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"job payload не є валідним JSON: {e}") from e
+    if not isinstance(payload, dict) or "update" not in payload:
+        raise ValueError("у job payload немає поля update")
+    process_update(payload["update"])
+    log(f"telegram-bot: update {payload['update']['update_id']} оброблено")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,9 @@ logs/triage/*.progress
 # Байт-код Python (agents/scripts/telegram-bot.py)
 __pycache__/
 
+# Встановлюються локально на кожній машині через install-launchd.sh.
+agents/worker/node_modules/
+
 # Робочий стан Claude Code: .claude/worktrees/ — тимчасові git-worktree окремих
 # сесій, тобто повна копія репозиторію всередині нього самого.
 .claude/

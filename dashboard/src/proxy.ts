@@ -6,7 +6,9 @@ import { getAuthEnv } from "@/lib/config";
 // одному рівні з `app/` — тобто в `src/`, а не в корені проєкту: у корені
 // Next його просто не реєструє (middleware-manifest.json лишається порожнім),
 // і гейт авторизації не виконується жодного разу.
-const PUBLIC_PATHS = ["/login", "/api/auth"];
+// Telegram не має GitHub-сесії, тому webhook публічний на рівні Auth.js. Сам route
+// окремо fail-closed перевіряє секретний заголовок Telegram до будь-якого запису.
+const PUBLIC_PATHS = ["/login", "/api/auth", "/api/telegram/webhook"];
 
 function isPublic(pathname: string) {
   return PUBLIC_PATHS.some(

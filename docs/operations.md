@@ -152,8 +152,9 @@ Node.js немає: `/opt/homebrew/bin/brew install node`.
 - перевіряє кожен файл через `plutil -lint` перед завантаженням;
 - виконує `launchctl bootstrap gui/$UID <plist>`.
 
-Розкладні джоби мають `RunAtLoad=false`. `job-worker` і Telegram-бот — постійні
-демони з `RunAtLoad=true` та `KeepAlive=true`. Якщо M1 спав у запланований час,
+Розкладні джоби мають `RunAtLoad=false`. Лише `job-worker` — постійний демон з
+`RunAtLoad=true` та `KeepAlive=true`; окремого Telegram polling-процесу більше немає.
+Якщо M1 спав у запланований час,
 launchd виконає розкладний джоб при пробудженні — але захист робочих годин
 (розділ 2.2) не дасть такому catch-up-прогону з'їсти підписку вдень.
 
@@ -247,7 +248,7 @@ launchctl print gui/$(id -u)/com.ideas-scout.job-worker
 
 ## 6. Секрети — де і чого немає
 
-Токен Telegram-бота, chat_id і healthcheck-URL живуть **лише в Keychain** (`security add-generic-password`). У репозиторії, у `agents/launchd/*.plist`, у змінних середовища launchd-джобів і в жодному лог-файлі цих значень немає й бути не повинно. `monitor.sh` передає токен і healthcheck-URL у curl через config на stdin (`-K -`), а не через аргументи командного рядка — аргументи будь-якого процесу видно всім локальним процесам у `ps aux`, stdin — ні. `runner.sh` і `monitor.sh` навмисно не передають агенту (`claude -p`) жодних інструментів для запуску довільних команд — тож навіть теоретична компрометація промпту зовнішнім контентом не дає агенту шляху до Keychain чи до `gh`/git-токенів (саме тому `--provider codex`, чия пісочниця дає shell, вимкнено за замовчуванням).
+Токен Telegram-бота, chat_id і healthcheck-URL живуть **лише в Keychain** (`security add-generic-password`). Секрет перевірки webhook живе як `TELEGRAM_WEBHOOK_SECRET` у Vercel Environment Variables і в `~/.config/ideas-scout/env` на M1; у Git його немає. У `agents/launchd/*.plist` і логах жодного з цих значень немає й бути не повинно. `monitor.sh` передає токен і healthcheck-URL у curl через config на stdin (`-K -`), а не через аргументи командного рядка — аргументи будь-якого процесу видно всім локальним процесам у `ps aux`, stdin — ні. `runner.sh` і `monitor.sh` навмисно не передають агенту (`claude -p`) жодних інструментів для запуску довільних команд — тож навіть теоретична компрометація промпту зовнішнім контентом не дає агенту шляху до Keychain чи до `gh`/git-токенів (саме тому `--provider codex`, чия пісочниця дає shell, вимкнено за замовчуванням).
 
 ---
 
@@ -298,37 +299,48 @@ launchctl print gui/$(id -u)/com.ideas-scout.job-worker
 
 ### 8.1. Що це технічно
 
-`agents/scripts/telegram-bot.py` — демон на long-polling (`getUpdates`): він сам ходить у
-`api.telegram.org`, тож ні публічної адреси, ні webhook, ні тунелю не потрібно. Токен і
-`chat_id` бере з того самого Keychain, що й `monitor.sh` (розділ 1.3) — окремої
-реєстрації бота не треба. Слухає **лише** свій `chat_id`, решту апдейтів ігнорує:
-інакше будь-хто, хто знайде бота, зміг би давати завдання агенту.
+Telegram надсилає update у `/api/telegram/webhook` дашборда на Vercel. Route звіряє
+секретний заголовок `X-Telegram-Bot-Api-Secret-Token`, перевіряє розмір і формат,
+після чого швидко створює `telegram_update` у таблиці `jobs`. `update_id` стає
+idempotency key, тому повторна доставка Telegram не запускає подію двічі.
+
+Постійний `job-worker` на M1 прокидається через Supabase Realtime, атомарно забирає
+job і запускає `agents/scripts/telegram-bot.py --process-update`. Update передається
+JSON-ом через stdin. Бот бере токен і `chat_id` з того самого Keychain, що й
+`monitor.sh`, і додатково обробляє **лише** свій `chat_id`: навіть справжня подія з
+чужого чату не може запустити тріаж. Для незавершеної чернетки webhook також ставить
+відкладену `telegram_nudge`; це job у Supabase, а не опитування Telegram.
 
 Сам бот нічого не оцінює й не має справи з git. Він збирає повідомлення в чернетку,
 за твоїм підтвердженням кладе її в `inbox/<draft_id>-<track>/` і викликає
 `runner.sh --track <track> --agent triage --provider claude`. Далі — звична межа
 безпеки: агент без Bash, коміт робить runner.
 
-### 8.2. Запуск
+### 8.2. Налаштування webhook
 
-Плист `agents/launchd/com.ideas-scout.telegram-bot.plist` ставиться разом з рештою:
+1. Згенеруй один секрет: `openssl rand -hex 32`.
+2. Додай його у Vercel як `TELEGRAM_WEBHOOK_SECRET` для Production і зроби redeploy.
+3. Додай **те саме** значення в `~/.config/ideas-scout/env` на M1:
+   `TELEGRAM_WEBHOOK_SECRET=<значення>`.
+4. На M1 після `git pull` повторно виконай `./agents/scripts/install-launchd.sh`.
+   Installer сам зупинить і видалить старий `com.ideas-scout.telegram-bot` long-polling
+   agent, якщо той був установлений; постійним лишиться `job-worker`.
+5. Зареєструй адресу вже задеплоєного дашборда в Telegram:
 
 ```
-./agents/scripts/install-launchd.sh
+./agents/scripts/configure-telegram-webhook.py https://<твій-домен-vercel>
 ```
 
-Це **не** розклад, а постійний процес: `RunAtLoad` + `KeepAlive`, тобто launchd підніме
-його після падіння, сну чи логіну. Саме user-agent, а не системний демон — інакше
-Keychain власника з токеном був би недосяжний.
-
-Перевірка: `launchctl list | grep telegram-bot`, лог — `logs/launchd/telegram-bot.launchd.log`.
-Ручний запуск для налагодження: `python3 agents/scripts/telegram-bot.py` (Ctrl-C зупиняє).
+Скрипт читає токен з Keychain, секрет з env-файлу, викликає `setWebhook`, оновлює
+список команд бота й перевіряє результат через `getWebhookInfo`. Токен і секрет не
+друкуються. Після цього надішли боту `/status`: на `/runs` мають з'явитися
+`telegram-update` job і пов'язаний run зі статусом `ok`.
 
 ### 8.3. Де що лежить
 
 | Що | Де | Комітиться |
 |---|---|---|
-| Offset апдейтів, поточна чернетка, ще не підтверджені файли | `~/Library/Application Support/ideas-scout/` | ні — і навмисно поза репо |
+| Поточна чернетка, ще не підтверджені файли | `~/Library/Application Support/ideas-scout/` | ні — і навмисно поза репо |
 | Підтверджений матеріал (текст, скріншоти, збережені сторінки) | `inbox/<draft_id>-<track>/` | так |
 | Рядки прогресу для чату | `logs/triage/<draft_id>.progress` | ні (gitignored) |
 | Вердикт для чату | `logs/triage/<draft_id>.md` | так |
@@ -356,8 +368,10 @@ Keychain власника з токеном був би недосяжний.
 
 | Що бачиш | Що це означає | Перша дія |
 |---|---|---|
-| Бот мовчить на повідомлення | Демон не запущений або M1 спить | `launchctl list \| grep telegram-bot`; телеграм тримає повідомлення до доби, тож нічого не втрачено |
+| Бот мовчить, job не з'явився | Webhook не зареєстрований або Vercel відхиляє секрет | Запусти `configure-telegram-webhook.py` ще раз; перевір Vercel env і redeploy |
+| `telegram_update` стоїть у черзі | M1 спить або job-worker не запущений | `launchctl print gui/$(id -u)/com.ideas-scout.job-worker`; потім лог `logs/launchd/job-worker.launchd.log` |
+| `telegram_update` має `failed` | Одноразовий handler або triage впав | Відкрий `last_error` на `/runs` і `tail -40 logs/launchd/job-worker.launchd.log` |
 | «Оцінка не завершилась (код …)» | `runner.sh` або CLI впали — матеріал у `inbox/` лишився | `tail -40 logs/launchd/app-ideas-triage.log` |
 | Панель зависла на «Оцінюю…» | Агент не пише `logs/triage/<id>.progress` | Дочекатись таймауту (15 хв), потім подивитись лог джоба |
 | Бот пише «Чекаю, зайнято іншим прогоном» | Саме йде нічний прогін і тримає git-лок | Нічого — стане в чергу сам |
-| Після перезапуску: «Попередня оцінка урвалась» | Демон перезапустився під час прогону; матеріал цілий | Натиснути «Повторити» |
+| «Попередня оцінка урвалась» | M1-worker або handler перезапустився під час прогону; матеріал цілий | Натиснути «Повторити» |
