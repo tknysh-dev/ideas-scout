@@ -26,10 +26,13 @@ agents/
     runner.sh                   # єдина точка запуску одного прогону агента
     monitor.sh                  # щоденний дайджест у Telegram
     telegram-bot.py             # демон-приймальня ручних ідей (long-polling, той самий бот, що шле дайджест)
+    job-worker.sh               # Supabase Realtime → дозволений локальний скрипт
+    infrastructure-dry-run.sh   # 10-секундний тест наскрізного виконання
+  worker/                       # окремий Node runtime постійного M1-worker-а
   launchd/                     # шаблони launchd-плістів (рендеряться install-launchd.sh)
 dashboard/                     # веб-дашборд, читає Supabase напряму; вхід — GitHub OAuth (Auth.js)
 shared/                        # спільні контракти БД для agents/ і dashboard/
-  schema.sql                    # DDL: ideas, sources, runs, events, inbox
+  schema.sql                    # DDL: ideas, sources, runs, events, inbox, jobs
   contracts.md                  # людський опис полів/статусів/кодів — що означає кожна колонка
 templates/
   idea.md                       # історичний шаблон запису ідеї (frontmatter) — джерело стилю тіла (body), формат уже не файловий

@@ -123,35 +123,63 @@ Dry-run виконує **реальний** лок і **реальну** git-г�
 
 ## 3. Launchd: постановка й зняття з автопілоту
 
-### 3.1. Поставити
+### 3.1. Підготувати чергу M1 один раз
+
+Виконай `shared/migrations/2026-07-31-job-queue.sql` у Supabase SQL Editor. Якщо
+в `~/.config/ideas-scout/env` уже є `SUPABASE_DB_URL`, те саме робить команда:
+
+```
+./shared/migrations/apply.sh shared/migrations/2026-07-31-job-queue.sql
+```
+
+Міграція створює `jobs`, атомарний `claim_next_job` і додає таблицю до Supabase
+Realtime. Повторно її не запускай.
+
+### 3.2. Поставити
 
 ```
 ./agents/scripts/install-launchd.sh
 ```
 
 Скрипт сам попереджає, що це має відбуватись на M1. Він:
+- встановлює Node-залежності job-worker-а, якщо їх ще немає;
 - рендерить `agents/launchd/*.plist` (підставляє реальний шлях репозиторію замість `__REPO__`);
 - кладе результат у `~/Library/LaunchAgents/`;
 - перевіряє кожен файл через `plutil -lint` перед завантаженням;
 - виконує `launchctl bootstrap gui/$UID <plist>`.
 
-Усі джоби мають `RunAtLoad=false` — вони не запустяться відразу після встановлення, лише за розкладом. Якщо M1 спав у запланований час, launchd виконає джоб при пробудженні — але захист робочих годин (розділ 2.2) не дасть такому catch-up-прогону з'їсти підписку вдень: він завершиться зі `status: skipped_work_hours` і почекає наступного планового слоту.
+Розкладні джоби мають `RunAtLoad=false`. `job-worker` і Telegram-бот — постійні
+демони з `RunAtLoad=true` та `KeepAlive=true`. Якщо M1 спав у запланований час,
+launchd виконає розкладний джоб при пробудженні — але захист робочих годин
+(розділ 2.2) не дасть такому catch-up-прогону з'їсти підписку вдень.
 
 | Джоб | Розклад | Що робить |
 |---|---|---|
 | `com.ideas-scout.passive-income-collector` | Пн/Ср/Пт, 03:00 | `runner.sh --track passive-income --agent collector --provider claude` |
 | `com.ideas-scout.passive-income-analyst` | Вт/Чт/Сб, 05:00 | `runner.sh --track passive-income --agent analyst --provider claude` |
 | `com.ideas-scout.monitor` | Щодня, 09:30 | `monitor.sh` |
+| `com.ideas-scout.job-worker` | Постійно | Realtime-черга `jobs` → локальні allowlisted скрипти |
 
 Трек `app-ideas` свідомо відсутній у launchd — критерії оцінки для нього (`agents/criteria/criteria-apps.md`) ще порожні (v0.0). Додати відповідні plist-и й рядок у `EXPECTED_JOBS` у `agents/scripts/monitor.sh`, коли трек активується.
 
-### 3.2. Перевірити, що встановлено
+### 3.3. Перевірити, що встановлено
 
 ```
 launchctl print gui/$(id -u)/com.ideas-scout.passive-income-collector
+launchctl print gui/$(id -u)/com.ideas-scout.job-worker
 ```
 
-### 3.3. Зняти
+Для наскрізного інфраструктурного тесту:
+
+```
+./agents/scripts/enqueue-dry-run.sh
+```
+
+За приблизно 10 секунд на `/runs` з'явиться `infrastructure-dry-run` зі статусом
+`dry_run`, а відповідний рядок у блоці «Черга M1» стане «Успішно». Лог worker-а:
+`logs/launchd/job-worker.launchd.log`.
+
+### 3.4. Зняти
 
 ```
 ./agents/scripts/install-launchd.sh --uninstall

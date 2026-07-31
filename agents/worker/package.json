@@ -1,0 +1,13 @@
+{
+  "name": "ideas-scout-job-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node job-worker.mjs",
+    "test": "node --test job-worker.test.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.111.0"
+  }
+}

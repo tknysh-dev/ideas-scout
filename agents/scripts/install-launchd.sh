@@ -39,6 +39,14 @@ if [ "${#PLISTS[@]}" -eq 0 ]; then
   exit 1
 fi
 
+if [ "$UNINSTALL" -eq 0 ] && [ ! -d "$REPO_ROOT/agents/worker/node_modules/@supabase/supabase-js" ]; then
+  echo "install-launchd.sh: встановлюю залежності job-worker"
+  if ! npm ci --omit=dev --prefix "$REPO_ROOT/agents/worker"; then
+    echo "install-launchd.sh: не вдалося встановити залежності job-worker" >&2
+    exit 1
+  fi
+fi
+
 for src in "${PLISTS[@]}"; do
   base="$(basename "$src")"
   label="${base%.plist}"
@@ -69,6 +77,6 @@ done
 if [ "$UNINSTALL" -eq 1 ]; then
   echo "install-launchd.sh: усі джоби ideas-scout знято."
 else
-  echo "install-launchd.sh: усі джоби ideas-scout встановлено (RunAtLoad=false — чекають свого розкладу)."
+  echo "install-launchd.sh: усі джоби ideas-scout встановлено; постійні worker-и запущені."
   echo "Перевірити: launchctl print ${DOMAIN}/com.ideas-scout.passive-income-collector"
 fi

@@ -82,6 +82,24 @@ export interface RunRow {
   meta: unknown;
 }
 
+export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface JobRow {
+  id: string;
+  type: string;
+  payload: unknown;
+  status: JobStatus;
+  requested_by: string;
+  attempt_count: number;
+  max_attempts: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  worker_id: string | null;
+  run_id: string | null;
+  last_error: string | null;
+}
+
 export interface EventRow {
   id: number;
   idea_id: string;
