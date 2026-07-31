@@ -135,6 +135,10 @@ Dry-run виконує **реальний** лок і **реальну** git-г�
 Міграція створює `jobs`, атомарний `claim_next_job` і додає таблицю до Supabase
 Realtime. Повторно її не запускай.
 
+На M1 також потрібен Node.js із `npm`. Installer шукає їх у звичайному `PATH`,
+`/opt/homebrew/bin`, `/usr/local/bin` і `~/.local/bin`. Якщо Homebrew уже є, але
+Node.js немає: `/opt/homebrew/bin/brew install node`.
+
 ### 3.2. Поставити
 
 ```

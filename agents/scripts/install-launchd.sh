@@ -17,6 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LAUNCHD_SRC_DIR="$REPO_ROOT/agents/launchd"
 LAUNCHD_DEST_DIR="$HOME/Library/LaunchAgents"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 UNINSTALL=0
 case "${1:-}" in
@@ -36,6 +37,16 @@ shopt -u nullglob
 
 if [ "${#PLISTS[@]}" -eq 0 ]; then
   echo "install-launchd.sh: у $LAUNCHD_SRC_DIR немає *.plist" >&2
+  exit 1
+fi
+
+if [ "$UNINSTALL" -eq 0 ] && { ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; }; then
+  echo "install-launchd.sh: для job-worker потрібні node і npm." >&2
+  if [ -x /opt/homebrew/bin/brew ]; then
+    echo "Встанови: /opt/homebrew/bin/brew install node" >&2
+  else
+    echo "Встанови Node.js LTS, потім повтори цей скрипт." >&2
+  fi
   exit 1
 fi
 
