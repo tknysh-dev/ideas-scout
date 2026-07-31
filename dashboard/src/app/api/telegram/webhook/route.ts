@@ -8,6 +8,14 @@ const SECRET_HEADER = "x-telegram-bot-api-secret-token";
 const MAX_BODY_BYTES = 256 * 1024;
 const NUDGE_DELAY_MS = 10 * 60 * 1000;
 
+interface JobInsert {
+  type: "telegram_update" | "telegram_nudge";
+  payload: Record<string, unknown>;
+  requested_by: "telegram:webhook";
+  idempotency_key: string;
+  available_at: string;
+}
+
 function hasValidSecret(request: NextRequest, expected: string) {
   const provided = request.headers.get(SECRET_HEADER);
   if (!provided) return false;
@@ -68,12 +76,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Database is not configured" }, { status: 503 });
   }
 
-  const jobs = [
+  const receivedAt = Date.now();
+  // Усі об'єкти batch insert мають однаковий набір колонок. Інакше PostgREST
+  // трактує відсутній available_at як NULL замість database default, а колонка
+  // jobs.available_at має NOT NULL constraint — звичайні повідомлення давали 503.
+  const jobs: JobInsert[] = [
     {
       type: "telegram_update",
       payload: { update },
       requested_by: "telegram:webhook",
       idempotency_key: `telegram-update:${update.update_id}`,
+      available_at: new Date(receivedAt).toISOString(),
     },
   ];
   if (needsNudge(update)) {
@@ -82,8 +95,8 @@ export async function POST(request: NextRequest) {
       payload: {},
       requested_by: "telegram:webhook",
       idempotency_key: `telegram-nudge:${update.update_id}`,
-      available_at: new Date(Date.now() + NUDGE_DELAY_MS).toISOString(),
-    } as (typeof jobs)[number] & { available_at: string });
+      available_at: new Date(receivedAt + NUDGE_DELAY_MS).toISOString(),
+    });
   }
 
   const { data, error } = await supabase.from("jobs").insert(jobs).select("id,type");
@@ -93,6 +106,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, duplicate: true });
   }
   if (error) {
+    // Payload і секрет навмисно не логуємо; code/message достатньо для Vercel Logs.
+    console.error("Telegram webhook enqueue failed", {
+      updateId: update.update_id,
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
     return NextResponse.json({ ok: false, error: "Could not enqueue update" }, { status: 503 });
   }
 
