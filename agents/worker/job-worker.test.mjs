@@ -13,6 +13,14 @@ test("buildRunId includes deterministic timestamp and job prefix", () => {
 
 test("worker only resolves allowlisted job types", () => {
   assert.match(commandForJob({ type: "infrastructure_dry_run" }).executable, /infrastructure-dry-run\.sh$/);
+  const research = commandForJob({
+    type: "deep_research",
+    payload: { idea_id: "PI-0013" },
+  });
+  assert.match(research.executable, /deep-research\.sh$/);
+  assert.equal(research.stdin, '{"idea_id":"PI-0013"}');
+  assert.equal(research.successStatus, "dry_run");
+
   const telegram = commandForJob({
     type: "telegram_update",
     payload: { update: { update_id: 42 } },

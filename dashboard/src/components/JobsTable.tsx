@@ -9,6 +9,15 @@ const STATUS_META: Record<JobRow["status"], { label: string; tone: string }> = {
   cancelled: { label: "Скасовано", tone: "text-ink-dim" },
 };
 
+function jobLabel(job: JobRow) {
+  if (job.type !== "deep_research") return job.type;
+  if (!job.payload || typeof job.payload !== "object") return "Глибоке дослідження";
+  const ideaId = (job.payload as Record<string, unknown>).idea_id;
+  return typeof ideaId === "string"
+    ? `Глибоке дослідження · ${ideaId}`
+    : "Глибоке дослідження";
+}
+
 export default function JobsTable({ jobs }: { jobs: JobRow[] }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-line bg-paper-raised">
@@ -31,7 +40,7 @@ export default function JobsTable({ jobs }: { jobs: JobRow[] }) {
                 <td className="px-4 py-3 font-mono text-xs text-ink-dim">
                   {formatDateTime(job.created_at)}
                 </td>
-                <td className="px-4 py-3 text-ink">{job.type}</td>
+                <td className="px-4 py-3 text-ink">{jobLabel(job)}</td>
                 <td className={`px-4 py-3 ${status.tone}`} title={job.last_error ?? undefined}>
                   {status.label}
                 </td>

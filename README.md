@@ -28,6 +28,7 @@ agents/
     telegram-bot.py             # одноразова обробка Telegram update/nudge на M1
     configure-telegram-webhook.py # реєстрація Vercel webhook у Telegram
     job-worker.sh               # Supabase Realtime → дозволений локальний скрипт
+    deep-research.sh             # handler кнопки дослідження (поки 10-секундний dry run)
     infrastructure-dry-run.sh   # 10-секундний тест наскрізного виконання
   worker/                       # окремий Node runtime постійного M1-worker-а
   launchd/                     # шаблони launchd-плістів (рендеряться install-launchd.sh)

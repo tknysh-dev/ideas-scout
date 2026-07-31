@@ -130,6 +130,9 @@ shell-інтерпретації та відхиляє невідомі типи
 
 - `infrastructure_dry_run` — десятисекундний тест без зовнішніх ефектів, який
   завершує пов'язаний run зі статусом `dry_run`;
+- `deep_research` — запуск глибокого дослідження для конкретного `payload.idea_id`.
+  Наразі allowlisted M1-скрипт виконує десятисекундний dry run; payload передається
+  через stdin і не може визначати executable або shell-команду;
 - `telegram_update` — один автентичний Telegram update, отриманий Vercel webhook-ом;
   JSON передається дозволеному Python-обробнику через stdin, не через shell/аргументи;
 - `telegram_nudge` — відкладена перевірка, чи слід через 10 хвилин нагадати про

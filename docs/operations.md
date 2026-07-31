@@ -184,6 +184,13 @@ launchctl print gui/$(id -u)/com.ideas-scout.job-worker
 `dry_run`, а відповідний рядок у блоці «Черга M1» стане «Успішно». Лог worker-а:
 `logs/launchd/job-worker.launchd.log`.
 
+Кнопка «Глибоке дослідження» на сторінці конкретної ідеї створює job
+`deep_research` із payload `{ "idea_id": "…" }`. Worker запускає лише статично
+дозволений `agents/scripts/deep-research.sh`; payload надходить через stdin і не
+може підмінити executable. Наразі скрипт робить 10-секундний dry run. Результат
+видно в тій самій черзі `/runs` як «Глибоке дослідження · <idea_id>», а пов'язаний
+run має job `deep-research` і статус `dry_run`.
+
 ### 3.4. Зняти
 
 ```

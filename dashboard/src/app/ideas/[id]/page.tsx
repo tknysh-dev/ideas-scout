@@ -111,7 +111,12 @@ export default async function IdeaPage({
         )}
         {OWNER_DECIDABLE_STATUSES.includes(record.status) && (
           <div className="mt-4">
-            <DecisionPanel ideaId={record.id} currentStatus={record.status} bare />
+            <DecisionPanel
+              ideaId={record.id}
+              currentStatus={record.status}
+              bare
+              deepResearch
+            />
           </div>
         )}
       </header>

@@ -20,6 +20,15 @@ const JOB_HANDLERS = Object.freeze({
     successNote: "Інфраструктурний dry run успішно виконано.",
     failureNote: "Інфраструктурний dry run завершився помилкою.",
   }),
+  deep_research: Object.freeze({
+    executable: join(REPO_ROOT, "agents/scripts/deep-research.sh"),
+    args: [],
+    timeoutMs: 60_000,
+    passPayload: true,
+    successStatus: "dry_run",
+    successNote: "Глибоке дослідження успішно виконало dry run на M1.",
+    failureNote: "Dry run глибокого дослідження завершився помилкою.",
+  }),
   telegram_update: Object.freeze({
     executable: join(REPO_ROOT, "agents/scripts/telegram-bot.py"),
     args: ["--process-update"],
@@ -53,6 +62,12 @@ export function commandForJob(job) {
     ...handler,
     stdin: handler.passPayload ? JSON.stringify(job.payload ?? {}) : null,
   };
+}
+
+function publicJobMeta(job) {
+  if (job.type !== "deep_research") return {};
+  const ideaId = job.payload?.idea_id;
+  return typeof ideaId === "string" ? { idea_id: ideaId } : {};
 }
 
 function log(message) {
@@ -150,7 +165,12 @@ export function createJobWorker({ supabase, workerId }) {
       provider: "local",
       started_at: startedAt.toISOString(),
       status: "running",
-      meta: { job_id: job.id, worker_id: workerId, attempt: job.attempt_count },
+      meta: {
+        job_id: job.id,
+        worker_id: workerId,
+        attempt: job.attempt_count,
+        ...publicJobMeta(job),
+      },
     });
     if (runStartError) {
       await finishJob(job, "failed", null, `Не вдалося створити run: ${runStartError.message}`);
@@ -198,6 +218,7 @@ export function createJobWorker({ supabase, workerId }) {
           stderr: result.stderr.trim(),
           exit_code: result.exitCode,
           timed_out: result.timedOut,
+          ...publicJobMeta(job),
         },
       })
       .eq("run_id", runId);

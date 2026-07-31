@@ -35,6 +35,13 @@
      як велика заливка той самий колір читається значно різкіше, ніж у пігулці. */
   --accept-btn-bg: #4e8465;
   --accept-btn-fg: #f4f8f3;
+
+  /* «Глибоке дослідження» — окрема операційна дія, не статус і не рішення.
+     Холодний синій відділяє запуск M1-job від зеленої/червоної пари вердикту. */
+  --research-btn-bg: #26689f;
+  --research-btn-hover: #1e5a8c;
+  --research-btn-border: #1b5686;
+  --research-btn-fg: #f4f9fd;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -68,6 +75,11 @@
 
     --accept-btn-bg: #3f6d53;
     --accept-btn-fg: #e8f2ea;
+
+    --research-btn-bg: #2f74ad;
+    --research-btn-hover: #3b83bd;
+    --research-btn-border: #5594c6;
+    --research-btn-fg: #f4f9fd;
   }
 }
 
