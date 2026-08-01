@@ -130,6 +130,35 @@ if [ "$MAX_STASH" -gt 0 ]; then
   DIGEST_LINES+=("")
 fi
 
+# Черга jobs — окремий контур від launchd-прогонів вище: Telegram-бот і dashboard
+# лише кладуть у неї завдання, а забирає їх постійний job-worker на M1. Коли той
+# спить чи глухне, тиша в Telegram виглядає точно як «нічого не відбувалось»,
+# тому глибина черги мусить бути в дайджесті явно.
+QUEUE_STALE_AFTER_S=900
+
+QUEUE_JSON="$(./agents/scripts/db.sh queue-health 2>/dev/null || echo "")"
+if [ -z "$QUEUE_JSON" ]; then
+  DIGEST_LINES+=("⚠️ Черга подій: не вдалося прочитати стан jobs у Supabase")
+else
+  read -r QUEUE_DUE QUEUE_OLDEST_S QUEUE_RUNNING QUEUE_STALE <<<"$(python3 -c "
+import json, sys
+q = json.loads(sys.argv[1])
+print(q['due_pending'], q['oldest_due_pending_s'], q['running'], q['stale_running'])
+" "$QUEUE_JSON" 2>/dev/null || echo "0 0 0 0")"
+
+  if [ "${QUEUE_OLDEST_S:-0}" -gt "$QUEUE_STALE_AFTER_S" ]; then
+    DIGEST_LINES+=("⚠️ Черга подій: ${QUEUE_DUE} завдань чекають обробки, найстаріше — вже $((QUEUE_OLDEST_S / 60)) хв. Так виглядає непрацюючий job-worker на M1: webhook і dashboard далі кладуть завдання в чергу, але їх ніхто не забирає, тож твої повідомлення боту лишаються без відповіді. Перевір на M1: launchctl print gui/\$(id -u)/com.ideas-scout.job-worker")
+  else
+    DIGEST_LINES+=("Черга подій: ${QUEUE_DUE} чекає, ${QUEUE_RUNNING} у роботі")
+  fi
+
+  if [ "${QUEUE_STALE:-0}" -gt 0 ]; then
+    DIGEST_LINES+=("⚠️ ${QUEUE_STALE} завдань у статусі running із простроченою орендою — воркер, що їх узяв, помер посеред роботи; вони чекають на автоматичне перепризначення")
+  fi
+fi
+
+DIGEST_LINES+=("")
+
 SINCE_24H="$(python3 -c "
 import datetime
 print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ'))

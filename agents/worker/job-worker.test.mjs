@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRunId, commandForJob } from "./job-worker.mjs";
+import { backoffFor, buildRunId, commandForJob } from "./job-worker.mjs";
 
 test("buildRunId includes deterministic timestamp and job prefix", () => {
   const result = buildRunId(
@@ -34,4 +34,11 @@ test("worker only resolves allowlisted job types", () => {
   assert.deepEqual(nudge.args, ["--nudge"]);
   assert.equal(nudge.stdin, null);
   assert.throws(() => commandForJob({ type: "arbitrary_command" }), /Непідтримуваний тип job/);
+});
+
+test("realtime reconnect backoff grows and saturates", () => {
+  assert.equal(backoffFor(1), 1_000);
+  assert.equal(backoffFor(4), 60_000);
+  assert.equal(backoffFor(5), 120_000);
+  assert.equal(backoffFor(99), 120_000);
 });

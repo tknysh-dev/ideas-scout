@@ -435,6 +435,49 @@ db_count_ideas_changed_since() {
     'import json,sys; print(len(json.load(sys.stdin)))'
 }
 
+# db_queue_health — стан черги jobs одним JSON-рядком: скільки подій уже мали
+# бути обробленими (pending, у яких available_at у минулому — відкладені nudge
+# сюди не рахуються), вік найстарішої з них і скільки running-джобів прострочили
+# lease. Ненульовий oldest_due_pending_s — ознака, що воркер не забирає чергу.
+db_queue_health() {
+  _db_get "/jobs?select=status,available_at,lease_expires_at&status=in.(pending,running)" | python3 -c '
+import datetime, json, sys
+
+now = datetime.datetime.now(datetime.timezone.utc)
+
+
+def ts(value):
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+due = oldest = running = stale = 0
+for row in json.load(sys.stdin):
+    if row.get("status") == "pending":
+        at = ts(row.get("available_at"))
+        if at is None or at > now:
+            continue
+        due += 1
+        oldest = max(oldest, int((now - at).total_seconds()))
+    else:
+        running += 1
+        lease = ts(row.get("lease_expires_at"))
+        if lease is None or lease < now:
+            stale += 1
+
+print(json.dumps({
+    "due_pending": due,
+    "oldest_due_pending_s": oldest,
+    "running": running,
+    "stale_running": stale,
+}))
+'
+}
+
 # ---------------------------------------------------------------------------
 # CLI dispatch — лише коли скрипт запущено напряму, не при source.
 # ---------------------------------------------------------------------------
@@ -460,6 +503,7 @@ _db_usage() {
   update-inbox <draft_id> <json|-|file>
   get-inbox <draft_id>
   count-ideas-changed-since <iso8601>
+  queue-health
 
 JSON-аргументи: літеральний рядок, "-" (stdin), або шлях до файлу.
 EOF
@@ -486,6 +530,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     update-inbox) db_update_inbox "$@" ;;
     get-inbox) db_get_inbox "$@" ;;
     count-ideas-changed-since) db_count_ideas_changed_since "$@" ;;
+    queue-health) db_queue_health "$@" ;;
     -h|--help|"") _db_usage; [ "$cmd" = "" ] && exit 2 || exit 0 ;;
     *) echo "db.sh: невідома команда: $cmd" >&2; _db_usage; exit 2 ;;
   esac

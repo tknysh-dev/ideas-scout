@@ -8,6 +8,12 @@ const REPO_ROOT = resolve(WORKER_DIR, "../..");
 const LEASE_SECONDS = 300;
 const HEARTBEAT_MS = 60_000;
 const SAFETY_SWEEP_MS = 300_000;
+const WATCHDOG_MS = 30_000;
+// Уві сні Mac таймери не тікають, тому аномально великий розрив між тіками
+// watchdog — надійніший сигнал пробудження, ніж будь-яка подія macOS.
+const WAKE_GAP_MS = 90_000;
+const RECONNECT_BACKOFF_MS = Object.freeze([1_000, 5_000, 15_000, 60_000, 120_000]);
+const MAX_RECONNECT_ATTEMPTS = 6;
 const OUTPUT_LIMIT = 64 * 1024;
 
 const JOB_HANDLERS = Object.freeze({
@@ -53,6 +59,11 @@ export function buildRunId(jobId, jobType = "infrastructure_dry_run", date = new
   const timestamp = date.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
   const jobSlug = jobType.replaceAll("_", "-").replace(/[^a-z0-9-]/gi, "-");
   return `${timestamp}-local-${jobSlug}-${jobId.slice(0, 8)}`;
+}
+
+export function backoffFor(attempt) {
+  const index = Math.min(Math.max(attempt, 1), RECONNECT_BACKOFF_MS.length) - 1;
+  return RECONNECT_BACKOFF_MS[index];
 }
 
 export function commandForJob(job) {
@@ -279,23 +290,86 @@ async function main() {
   });
   const worker = createJobWorker({ supabase, workerId });
 
-  const channel = supabase
-    .channel("ideas-scout-job-worker")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "jobs" },
-      () => void worker.drain(),
-    )
-    .subscribe((status) => {
-      log(`realtime=${status}`);
-      if (status === "SUBSCRIBED") void worker.drain();
-    });
+  let channel = null;
+  let reconnectAttempt = 0;
+  let reconnectTimer = null;
+  let stopping = false;
+
+  function openChannel() {
+    channel = supabase
+      .channel("ideas-scout-job-worker")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "jobs" },
+        () => void worker.drain(),
+      )
+      .subscribe((status) => {
+        log(`realtime=${status}`);
+        if (stopping) return;
+        if (status === "SUBSCRIBED") {
+          reconnectAttempt = 0;
+          void worker.drain();
+          return;
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          scheduleReconnect();
+        }
+      });
+  }
+
+  function scheduleReconnect({ immediate = false } = {}) {
+    if (stopping || reconnectTimer) return;
+    reconnectAttempt += 1;
+    if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
+      // Клієнт Supabase не завжди відновлюється сам після втрати сокета; вихід
+      // ненульовим кодом віддає підйом воркера launchd-у (KeepAlive) — це єдиний
+      // шлях, який не лишає процес живим, але глухим до черги.
+      log(`fatal: realtime не піднявся за ${MAX_RECONNECT_ATTEMPTS} спроб — виходжу під рестарт launchd`);
+      process.exit(1);
+    }
+    const delay = immediate ? 0 : backoffFor(reconnectAttempt);
+    log(`realtime reconnect #${reconnectAttempt} через ${delay} ms`);
+    reconnectTimer = setTimeout(async () => {
+      reconnectTimer = null;
+      if (stopping) return;
+      try {
+        if (channel) await supabase.removeChannel(channel);
+      } catch (error) {
+        log(`realtime removeChannel failed: ${error.message}`);
+      }
+      openChannel();
+      // Черга розбирається одразу, не чекаючи на SUBSCRIBED: події, що надійшли
+      // поки канал лежав, Realtime не переграє.
+      void worker.drain();
+    }, delay);
+  }
+
+  openChannel();
 
   const safetySweep = setInterval(() => void worker.drain(), SAFETY_SWEEP_MS);
+
+  let lastTick = Date.now();
+  const watchdog = setInterval(() => {
+    const now = Date.now();
+    const gap = now - lastTick;
+    lastTick = now;
+    if (gap < WAKE_GAP_MS) return;
+    log(`wake після ~${Math.round(gap / 1000)} с простою — перепідключаю realtime`);
+    reconnectAttempt = 0;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    scheduleReconnect({ immediate: true });
+  }, WATCHDOG_MS);
+
   const shutdown = async (signal) => {
     log(`received ${signal}, stopping`);
+    stopping = true;
     clearInterval(safetySweep);
-    await supabase.removeChannel(channel);
+    clearInterval(watchdog);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (channel) await supabase.removeChannel(channel);
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
