@@ -1,3 +1,4 @@
+import Card from "@/components/Card";
 import CollapsibleBody from "@/components/CollapsibleBody";
 import Prose from "@/components/Prose";
 import type { CriteriaAnalysis, CriterionTone } from "@/lib/criteria";
@@ -12,8 +13,10 @@ const TONE_META: Record<CriterionTone, { label: string; token: string }> = {
 
 export default function CriteriaAnalysisSection({
   analysis,
+  ideaId,
 }: {
   analysis: CriteriaAnalysis;
+  ideaId?: string;
 }) {
   return (
     <section className="mt-8">
@@ -22,14 +25,11 @@ export default function CriteriaAnalysisSection({
       </h2>
 
       <ul className="space-y-3">
-        {analysis.results.map(({ spec, tone, verdict, body, sharedWith }) => {
+        {analysis.results.map(({ spec, tone, verdict, body, sharedWith }, index) => {
           const meta = TONE_META[tone];
           const shared = sharedWith && !body ? sharedWith.join(", ") : null;
           return (
-            <li
-              key={spec.n}
-              className="rounded-lg border border-line bg-paper-raised p-4"
-            >
+            <Card as="li" key={spec.n} index={index} padding="sm" exclude={ideaId}>
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <span className="inline-flex items-center gap-2 rounded-full border border-line bg-paper px-3 py-1">
                   <span className="font-mono text-[11px] text-ink-dim">{spec.n}</span>
@@ -74,19 +74,18 @@ export default function CriteriaAnalysisSection({
                   Спільний розбір із критеріями {shared}
                 </p>
               )}
-            </li>
+            </Card>
           );
         })}
       </ul>
 
       {analysis.notes.map((note, index) => (
-        <div
+        <Card
           key={index}
-          className={
-            note.summary
-              ? "mt-3 rounded-lg border-2 border-accent bg-paper-raised p-5"
-              : "mt-3 rounded-lg border border-line bg-paper-raised p-5"
-          }
+          index={index}
+          className="mt-3"
+          accent={note.summary}
+          exclude={ideaId}
         >
           <h3
             className={`mb-2 font-mono text-[11px] uppercase tracking-widest ${
@@ -96,7 +95,7 @@ export default function CriteriaAnalysisSection({
             {note.title}
           </h3>
           <Prose content={note.body} />
-        </div>
+        </Card>
       ))}
     </section>
   );

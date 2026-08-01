@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { EASE } from "@/components/motion";
 
 const COLLAPSED_PX = 84;
 
@@ -27,9 +29,13 @@ export default function CollapsibleBody({ children }: { children: React.ReactNod
 
   return (
     <div>
-      <div
+      {/* height: "auto" в motion міряється сама — власна висота вмісту тут
+          невідома наперед і змінюється разом із шириною колонки. */}
+      <motion.div
         className="relative overflow-hidden"
-        style={{ maxHeight: clamped ? COLLAPSED_PX : undefined }}
+        animate={{ height: clamped ? COLLAPSED_PX : "auto" }}
+        initial={false}
+        transition={{ duration: 0.3, ease: EASE }}
       >
         <div
           ref={inner}
@@ -37,10 +43,18 @@ export default function CollapsibleBody({ children }: { children: React.ReactNod
         >
           {children}
         </div>
-        {clamped && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-[color:var(--paper-raised)]" />
-        )}
-      </div>
+        <AnimatePresence>
+          {clamped && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2, ease: EASE }}
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-[color:var(--paper-raised)]"
+            />
+          )}
+        </AnimatePresence>
+      </motion.div>
 
       {overflows && (
         <button

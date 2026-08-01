@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Alegreya, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import PageShell, { MotionRoot } from "@/components/PageShell";
 import Sidebar from "@/components/Sidebar";
 import { getAuthEnv } from "@/lib/config";
 import { getServiceClient } from "@/lib/supabase/service";
@@ -45,10 +46,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="uk" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <body className="min-h-screen bg-paper text-ink antialiased">
-        <div className="flex min-h-screen">
-          <Sidebar pendingDecisions={pendingDecisions} authDisabled={!getAuthEnv()} />
-          <main className="min-w-0 flex-1">{children}</main>
-        </div>
+        <MotionRoot>
+          <div className="flex min-h-screen">
+            <Sidebar pendingDecisions={pendingDecisions} authDisabled={!getAuthEnv()} />
+            <PageShell>{children}</PageShell>
+          </div>
+        </MotionRoot>
       </body>
     </html>
   );

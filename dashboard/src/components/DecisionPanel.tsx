@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "motion/react";
+import { EASE } from "@/components/motion";
 import { decideIdea, type DecisionAction } from "@/lib/actions/decisions";
 import { enqueueDeepResearch } from "@/lib/actions/jobs";
 import { REJECTION_META, statusMeta } from "@/lib/status";
@@ -239,20 +241,22 @@ export default function DecisionPanel({
         </p>
       )}
 
-      {dialog && (
-        <DecisionDialog
-          action={dialog}
-          isRevision={isRevision}
-          reason={reason}
-          rejectionCode={rejectionCode}
-          error={error}
-          pending={pending}
-          onReason={setReason}
-          onCode={setRejectionCode}
-          onCancel={closeDialog}
-          onConfirm={confirmDialog}
-        />
-      )}
+      <AnimatePresence>
+        {dialog && (
+          <DecisionDialog
+            action={dialog}
+            isRevision={isRevision}
+            reason={reason}
+            rejectionCode={rejectionCode}
+            error={error}
+            pending={pending}
+            onReason={setReason}
+            onCode={setRejectionCode}
+            onCancel={closeDialog}
+            onConfirm={confirmDialog}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -292,15 +296,25 @@ function DecisionDialog({
   }, [onCancel]);
 
   return (
-    <div
+    <motion.div
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.18, ease: EASE }}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onCancel();
       }}
     >
-      <div className="w-full max-w-lg rounded-lg border border-line bg-paper-raised p-5 shadow-xl">
+      <motion.div
+        initial={{ opacity: 0, y: 12, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 8, scale: 0.98 }}
+        transition={{ duration: 0.2, ease: EASE }}
+        className="w-full max-w-lg rounded-lg border border-line bg-paper-raised p-5 shadow-xl"
+      >
         <h3 className="mb-3 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
           {action === "rejected" ? "Відхилити ідею" : "Змінити рішення на «прийнято»"}
         </h3>
@@ -373,7 +387,7 @@ function DecisionDialog({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

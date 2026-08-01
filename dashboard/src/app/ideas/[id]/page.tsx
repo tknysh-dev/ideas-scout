@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import Card from "@/components/Card";
 import ConfigNotice from "@/components/ConfigNotice";
 import CriteriaAnalysisSection from "@/components/CriteriaAnalysis";
 import DecisionPanel from "@/components/DecisionPanel";
@@ -18,8 +19,6 @@ import {
 } from "@/lib/status";
 import { analyzeCriteria, splitCriteriaSection } from "@/lib/criteria";
 import type { EventRow, Idea, SourceRow } from "@/lib/types";
-import type { IdeaRef } from "@/lib/idea-refs";
-import { collectIdeaIds } from "@/lib/idea-refs";
 import { formatDate, formatDateTime } from "@/lib/dates";
 
 
@@ -65,23 +64,6 @@ export default async function IdeaPage({
   const { section: criteriaSection, rest: bodyRest } = splitCriteriaSection(record.body);
   const criteria = analyzeCriteria(record, criteriaSection);
 
-  const ideaRefs: Record<string, IdeaRef> = {};
-  const referenced = record.body ? collectIdeaIds(record.body, record.id) : [];
-  if (referenced.length > 0) {
-    const { data: refRows } = await supabase
-      .from("ideas")
-      .select("id,title,status,mechanic_summary")
-      .in("id", referenced);
-    for (const row of refRows ?? []) {
-      ideaRefs[row.id] = {
-        id: row.id,
-        title: row.title,
-        status: row.status,
-        summary: row.mechanic_summary,
-      };
-    }
-  }
-
   return (
     <div className="mx-auto max-w-4xl px-8 py-10">
       <div className="mb-6 flex items-center gap-2 font-mono text-xs text-ink-dim">
@@ -100,7 +82,7 @@ export default async function IdeaPage({
         <span>{record.id}</span>
       </div>
 
-      <header className="mb-8">
+      <Card as="section" plain className="mb-8" exclude={record.id}>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <StatusBadge status={record.status} />
           <TypeBadge type={record.type} />
@@ -119,10 +101,10 @@ export default async function IdeaPage({
             />
           </div>
         )}
-      </header>
+      </Card>
 
       <div className="grid gap-5">
-        <FieldGroup title="Сигнал">
+        <FieldGroup title="Сигнал" index={0} exclude={record.id}>
           <Field label="Виявлено">{formatDate(record.discovered)}</Field>
           <Field label="Тип сигналу">{SIGNAL_TYPE_META[record.signal_type]}</Field>
           {record.monetization_hypothesis && (
@@ -132,7 +114,7 @@ export default async function IdeaPage({
           <Field label="Заявлений дохід">{record.claimed_revenue ?? "—"}</Field>
         </FieldGroup>
 
-        <FieldGroup title="Вердикт">
+        <FieldGroup title="Вердикт" index={1} exclude={record.id}>
           {record.rejection_code && (
             <Field label="Код відмови">
               <span className="text-[color:var(--status-rejected-fg)]">
@@ -160,7 +142,7 @@ export default async function IdeaPage({
           )}
         </FieldGroup>
 
-        <FieldGroup title="Стеля й зусилля">
+        <FieldGroup title="Стеля й зусилля" index={2} exclude={record.id}>
           <Field label="Очікувана стеля">{record.ceiling_estimate ?? "—"}</Field>
           <Field label="Годин на запуск">{record.launch_effort_hours ?? "—"}</Field>
           <Field label="Позначка">
@@ -168,7 +150,7 @@ export default async function IdeaPage({
           </Field>
         </FieldGroup>
 
-        <FieldGroup title="Повторний перегляд">
+        <FieldGroup title="Повторний перегляд" index={3} exclude={record.id}>
           <Field label="Умова перегляду">{record.review_condition ?? "—"}</Field>
           <Field label="Скільки разів повертали">{record.review_count}</Field>
           <Field label="Останній перегляд">{formatDate(record.last_reviewed)}</Field>
@@ -182,7 +164,7 @@ export default async function IdeaPage({
           )}
         </FieldGroup>
 
-        <FieldGroup title="Провенанс вердикту">
+        <FieldGroup title="Провенанс вердикту" index={4} exclude={record.id}>
           <Field label="Провайдер">{record.verdict_provider ?? "—"}</Field>
           <Field label="Модель">{record.verdict_model ?? "—"}</Field>
           <Field label="Run ID">
@@ -198,16 +180,16 @@ export default async function IdeaPage({
         </FieldGroup>
       </div>
 
-      {criteria && <CriteriaAnalysisSection analysis={criteria} />}
+      {criteria && <CriteriaAnalysisSection analysis={criteria} ideaId={record.id} />}
 
       {bodyRest && (
         <section className="mt-8">
           <h2 className="mb-3 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
             Опис
           </h2>
-          <div className="rounded-lg border border-line bg-paper-raised p-6">
-            <Prose content={bodyRest} ideaRefs={ideaRefs} />
-          </div>
+          <Card padding="lg" exclude={record.id}>
+            <Prose content={bodyRest} />
+          </Card>
         </section>
       )}
 
@@ -217,8 +199,14 @@ export default async function IdeaPage({
             Джерела
           </h2>
           <ul className="space-y-3">
-            {(sources as SourceRow[]).map((source) => (
-              <li key={source.id} className="rounded-lg border border-line bg-paper-raised p-4">
+            {(sources as SourceRow[]).map((source, index) => (
+              <Card
+                as="li"
+                key={source.id}
+                index={index}
+                padding="sm"
+                exclude={record.id}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <a
                     href={source.url}
@@ -244,7 +232,7 @@ export default async function IdeaPage({
                   <span>Незалежних підтверджень: {source.independent_confirmations}</span>
                   {source.origin && <span>Походження: {source.origin}</span>}
                 </div>
-              </li>
+              </Card>
             ))}
           </ul>
         </section>
@@ -256,15 +244,15 @@ export default async function IdeaPage({
             Хронологія подій
           </h2>
           <ol className="relative space-y-5 border-l border-line pl-5">
-            {(events as EventRow[]).map((event) => (
-              <li key={event.id} className="relative">
+            {(events as EventRow[]).map((event, index) => (
+              <Card as="li" key={event.id} index={index} plain exclude={record.id} className="relative">
                 <span className="absolute -left-[1.45rem] top-1 h-2 w-2 rounded-full bg-accent" />
                 <p className="font-mono text-xs text-ink-dim">
                   {formatDateTime(event.happened_at)} · {event.actor}
                 </p>
                 <p className="text-sm text-ink">{event.change}</p>
                 {event.reason && <p className="text-sm text-ink-dim">{event.reason}</p>}
-              </li>
+              </Card>
             ))}
           </ol>
         </section>

@@ -1,3 +1,4 @@
+import IdeaText from "@/components/IdeaText";
 import { formatDateTime } from "@/lib/dates";
 import type { JobRow } from "@/lib/types";
 
@@ -40,7 +41,9 @@ export default function JobsTable({ jobs }: { jobs: JobRow[] }) {
                 <td className="px-4 py-3 font-mono text-xs text-ink-dim">
                   {formatDateTime(job.created_at)}
                 </td>
-                <td className="px-4 py-3 text-ink">{jobLabel(job)}</td>
+                <td className="px-4 py-3 text-ink">
+                  <IdeaText text={jobLabel(job)} />
+                </td>
                 <td className={`px-4 py-3 ${status.tone}`} title={job.last_error ?? undefined}>
                   {status.label}
                 </td>

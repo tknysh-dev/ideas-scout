@@ -1,8 +1,17 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
+import { motion } from "motion/react";
+import { EASE } from "@/components/motion";
 import { logout } from "@/lib/actions/session";
+
+// Крапка біля пункту меню, поки сторінка ще їде з сервера. Сама поява
+// затримана в CSS, тож на швидкому переході її не видно.
+function PendingDot() {
+  const { pending } = useLinkStatus();
+  return <span aria-hidden className={`link-hint ${pending ? "is-pending" : ""}`} />;
+}
 
 const LINKS = [
   { href: "/", label: "Дошка", hint: "Дерево знахідок" },
@@ -51,11 +60,13 @@ export default function Sidebar({
                   : "text-ink-dim hover:bg-line/40 hover:text-ink"
               }`}
             >
-              <span
-                className={`absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full transition-opacity ${
-                  active ? "bg-accent opacity-100" : "opacity-0"
-                }`}
-              />
+              {active && (
+                <motion.span
+                  layoutId="sidebar-active"
+                  className="absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-accent"
+                  transition={{ duration: 0.25, ease: EASE }}
+                />
+              )}
               <span className="flex items-center gap-2 font-medium">
                 {link.label}
                 {link.href === "/decisions" && pendingDecisions > 0 && (
@@ -63,6 +74,7 @@ export default function Sidebar({
                     {pendingDecisions}
                   </span>
                 )}
+                <PendingDot />
               </span>
               <span className="block text-xs text-ink-dim/80 group-hover:text-ink-dim">
                 {link.hint}

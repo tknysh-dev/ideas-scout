@@ -9,9 +9,3 @@ export interface IdeaRef {
   status: IdeaStatus;
   summary: string | null;
 }
-
-export function collectIdeaIds(text: string, exclude?: string): string[] {
-  const found = new Set(text.match(IDEA_ID_PATTERN) ?? []);
-  if (exclude) found.delete(exclude);
-  return [...found];
-}

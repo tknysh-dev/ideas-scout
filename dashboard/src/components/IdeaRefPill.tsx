@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { AnimatePresence, motion } from "motion/react";
 import StatusBadge from "@/components/StatusBadge";
+import { EASE } from "@/components/motion";
 import type { IdeaRef } from "@/lib/idea-refs";
 
 const CLOSE_DELAY_MS = 160;
@@ -64,7 +66,11 @@ export default function IdeaRefPill({ idea }: { idea: IdeaRef }) {
         </span>
         <span className="min-w-0 truncate">{idea.title}</span>
       </Link>
-      {open && rect && <Tooltip idea={idea} rect={rect} onEnter={cancelClose} onLeave={hide} />}
+      <AnimatePresence>
+        {open && rect && (
+          <Tooltip idea={idea} rect={rect} onEnter={cancelClose} onLeave={hide} />
+        )}
+      </AnimatePresence>
     </span>
   );
 }
@@ -86,10 +92,14 @@ function Tooltip({
   const openUpward = below + 200 > window.innerHeight && rect.top > 220;
 
   return createPortal(
-    <div
+    <motion.div
       role="tooltip"
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
+      initial={{ opacity: 0, y: openUpward ? 4 : -4, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: openUpward ? 2 : -2, scale: 0.98 }}
+      transition={{ duration: 0.16, ease: EASE }}
       style={{
         position: "fixed",
         left,
@@ -116,7 +126,7 @@ function Tooltip({
       {idea.summary && (
         <p className="mt-2 text-sm leading-relaxed text-ink-dim">{idea.summary}</p>
       )}
-    </div>,
+    </motion.div>,
     document.body,
   );
 }

@@ -117,6 +117,77 @@ button:not(:disabled),
   color: var(--accent-ink);
 }
 
+/* Кістяки завантаження. Анімуємо background-position, а не opacity всього
+   блоку: пульсація цілим блоком на щільній сітці сторінки читається як
+   миготіння, а біжучий відблиск — як «вантажиться». */
+.skeleton {
+  background-color: var(--line);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--paper-raised) 65%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: -100% 0;
+  }
+  to {
+    background-position: 100% 0;
+  }
+}
+
+/* Крапка «сторінка вантажиться» біля пункту меню. Стартує невидимою із
+   затримкою: на швидкому переході вона просто не встигає з'явитись і не
+   блимає марно. */
+.link-hint {
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.link-hint.is-pending {
+  visibility: visible;
+  animation-name: hint-in, hint-pulse;
+  animation-duration: 200ms, 1s;
+  animation-delay: 120ms, 120ms;
+  animation-timing-function: ease, ease-in-out;
+  animation-iteration-count: 1, infinite;
+  animation-fill-mode: forwards, none;
+}
+
+@keyframes hint-in {
+  to {
+    opacity: 0.9;
+  }
+}
+
+@keyframes hint-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .link-hint.is-pending {
+    animation: none;
+  }
+
+  .link-hint.is-pending {
+    opacity: 0.9;
+  }
+}
+
 * {
   scrollbar-color: var(--line-strong) transparent;
   scrollbar-width: thin;

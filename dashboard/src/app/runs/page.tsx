@@ -1,14 +1,41 @@
 import ConfigNotice from "@/components/ConfigNotice";
 import EmptyState from "@/components/EmptyState";
 import JobsTable from "@/components/JobsTable";
+import Pagination from "@/components/Pagination";
 import RunsTable from "@/components/RunsTable";
+import Tabs from "@/components/Tabs";
+import { Reveal } from "@/components/motion";
 import { getServiceClient } from "@/lib/supabase/service";
 import type { JobRow, RunRow } from "@/lib/types";
 
 // Читаємо базу при кожному відкритті, інакше сторінка запікається на момент деплою.
 export const dynamic = "force-dynamic";
 
-export default async function RunsPage() {
+const PAGE_SIZE = 20;
+
+// Два різні журнали: черга M1 — це те, що власник (або бот) поставив у роботу
+// вручну, а історія — те, що агенти відпрацювали самі. Раніше вони стояли одне
+// під одним і довший список ховав коротший.
+const TABS = {
+  queue: { label: "Черга M1", table: "jobs", order: "created_at" },
+  history: { label: "Історія виконання", table: "runs", order: "started_at" },
+} as const;
+
+type TabKey = keyof typeof TABS;
+
+function parsePage(value: string | undefined) {
+  const page = Number.parseInt(value ?? "1", 10);
+  return Number.isFinite(page) && page > 0 ? page : 1;
+}
+
+export default async function RunsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string; page?: string }>;
+}) {
+  const params = await searchParams;
+  const tab: TabKey = params.tab === "history" ? "history" : "queue";
+  const page = parsePage(params.page);
   const supabase = getServiceClient();
 
   if (!supabase) {
@@ -22,10 +49,24 @@ export default async function RunsPage() {
     );
   }
 
-  const [jobsResult, runsResult] = await Promise.all([
-    supabase.from("jobs").select("*").order("created_at", { ascending: false }).limit(20),
-    supabase.from("runs").select("*").order("started_at", { ascending: false }),
+  const meta = TABS[tab];
+  const from = (page - 1) * PAGE_SIZE;
+
+  // Лічильники обох табів потрібні завжди — вони стоять у самих табах; дані
+  // тягнемо лише для відкритого.
+  const [queueCount, historyCount, pageResult] = await Promise.all([
+    supabase.from("jobs").select("id", { count: "exact", head: true }),
+    supabase.from("runs").select("run_id", { count: "exact", head: true }),
+    supabase
+      .from(meta.table)
+      .select("*", { count: "exact" })
+      .order(meta.order, { ascending: false })
+      .range(from, from + PAGE_SIZE - 1),
   ]);
+
+  const total = pageResult.count ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const rows = pageResult.data ?? [];
 
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
@@ -34,39 +75,61 @@ export default async function RunsPage() {
           Журнал прогонів
         </p>
         <h1 className="font-display text-3xl text-ink">Прогони</h1>
+        <p className="mt-1 max-w-2xl text-sm text-ink-dim">
+          Черга M1 — задачі, поставлені в роботу вручну (глибоке дослідження, dry-run).
+          Історія виконання — прогони, які агенти відпрацювали самі за розкладом.
+        </p>
       </header>
 
-      <section className="mb-10">
-        <h2 className="mb-3 font-display text-xl text-ink">Черга M1</h2>
-        {jobsResult.error ? (
+      <Tabs
+        active={tab}
+        items={[
+          {
+            value: "queue",
+            label: TABS.queue.label,
+            href: "/runs?tab=queue",
+            count: queueCount.count ?? 0,
+          },
+          {
+            value: "history",
+            label: TABS.history.label,
+            href: "/runs?tab=history",
+            count: historyCount.count ?? 0,
+          },
+        ]}
+      />
+
+      <div className="mt-5">
+        {pageResult.error ? (
           <ConfigNotice
-            title={`Помилка читання jobs: ${jobsResult.error.message}`}
+            title={`Помилка запиту до Supabase: ${pageResult.error.message}`}
             vars={[]}
           />
-        ) : !jobsResult.data || jobsResult.data.length === 0 ? (
+        ) : rows.length === 0 ? (
           <EmptyState
-            title="Черга порожня"
-            hint="Тут з'являться команди, передані локальному worker на M1."
+            title={tab === "queue" ? "Черга порожня" : "Прогонів ще не було"}
+            hint={
+              tab === "queue"
+                ? "Тут з'являться команди, передані локальному worker на M1."
+                : "Тут з'являться записи джобів збирача, аналітика, ревізора й тріажу."
+            }
           />
         ) : (
-          <JobsTable jobs={jobsResult.data as JobRow[]} />
+          <Reveal key={`${tab}-${page}`}>
+            {tab === "queue" ? (
+              <JobsTable jobs={rows as JobRow[]} />
+            ) : (
+              <RunsTable runs={rows as RunRow[]} />
+            )}
+            <Pagination
+              page={page}
+              pageCount={pageCount}
+              total={total}
+              hrefFor={(next) => `/runs?tab=${tab}&page=${next}`}
+            />
+          </Reveal>
         )}
-      </section>
-
-      <h2 className="mb-3 font-display text-xl text-ink">Історія виконання</h2>
-      {runsResult.error ? (
-        <ConfigNotice
-          title={`Помилка запиту до Supabase: ${runsResult.error.message}`}
-          vars={[]}
-        />
-      ) : !runsResult.data || runsResult.data.length === 0 ? (
-        <EmptyState
-          title="Прогонів ще не було"
-          hint="Тут з'являться записи джобів збирача, аналітика, ревізора й тріажу."
-        />
-      ) : (
-        <RunsTable runs={runsResult.data as RunRow[]} />
-      )}
+      </div>
     </div>
   );
 }

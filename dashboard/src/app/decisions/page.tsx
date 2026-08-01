@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Card from "@/components/Card";
 import ConfigNotice from "@/components/ConfigNotice";
 import DecisionPanel from "@/components/DecisionPanel";
 import EmptyState from "@/components/EmptyState";
@@ -60,8 +61,8 @@ export default async function DecisionsPage() {
         />
       ) : (
         <ul className="space-y-6">
-          {ideas.map((idea) => (
-            <li key={idea.id} className="rounded-lg border border-line bg-paper-raised p-5">
+          {ideas.map((idea, index) => (
+            <Card as="li" key={idea.id} index={index} exclude={idea.id}>
               <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="font-mono text-xs uppercase tracking-widest text-ink-dim">
@@ -80,7 +81,7 @@ export default async function DecisionsPage() {
                 <StatusBadge status={idea.status} />
               </div>
               <DecisionPanel ideaId={idea.id} currentStatus={idea.status} compact />
-            </li>
+            </Card>
           ))}
         </ul>
       )}

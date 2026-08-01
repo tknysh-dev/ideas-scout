@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Card from "@/components/Card";
 import ConfigNotice from "@/components/ConfigNotice";
 import EmptyState from "@/components/EmptyState";
 import { getServiceClient } from "@/lib/supabase/service";
@@ -56,8 +57,8 @@ export default async function InboxPage() {
         />
       ) : (
         <ul className="space-y-4">
-          {(data as InboxRow[]).map((item) => (
-            <li key={item.id} className="rounded-lg border border-line bg-paper-raised p-5">
+          {(data as InboxRow[]).map((item, index) => (
+            <Card as="li" key={item.id} index={index}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-xs text-ink-dim">
@@ -115,7 +116,7 @@ export default async function InboxPage() {
                   </Link>
                 )}
               </div>
-            </li>
+            </Card>
           ))}
         </ul>
       )}
