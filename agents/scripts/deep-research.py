@@ -46,6 +46,13 @@ BASE_KEYS_BY_TRACK = {
     "passive-income": [str(n) for n in range(7)],   # 0..6
     "app-ideas": [str(n) for n in range(8)],        # 0..7
 }
+# Ім'я файлу критеріїв не виводиться з імені треку: passive-income збігається
+# випадково, а app-ideas лежить у criteria-apps.md. Раніше шлях склеювався
+# f-рядком, тож дослідження треку застосунків падало на FileNotFoundError.
+CRITERIA_DOC_BY_TRACK = {
+    "passive-income": "criteria-passive-income.md",
+    "app-ideas": "criteria-apps.md",
+}
 FATAL_KEYS = {str(n) for n in range(6)}             # 0..5 фатальні в обох треках
 VERDICTS = {"passed", "failed", "owner", "skipped", "not_applicable", "noted"}
 RESOLUTIONS = {"consensus", "evidence", "cross_exam", "pessimistic_default"}
@@ -287,7 +294,7 @@ def enqueue_competitors(idea_id: str, run_id: str | None) -> None:
 def run_deep_stage(idea_id: str, run_id: str | None, today: str) -> None:
     idea, track, sources = load_idea(idea_id)
 
-    criteria_doc = read_file(os.path.join(REPO_ROOT, "agents/criteria", f"criteria-{track}.md"))
+    criteria_doc = read_file(os.path.join(REPO_ROOT, "agents/criteria", CRITERIA_DOC_BY_TRACK[track]))
     deep_doc = read_file(os.path.join(REPO_ROOT, "agents/criteria/deep-research.md"))
     base_keys = BASE_KEYS_BY_TRACK[track]
     allowed_keys = set(base_keys) | set(DEEP_KEYS)
