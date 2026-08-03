@@ -35,6 +35,18 @@ function isTelegramUpdate(value: unknown): value is Record<string, unknown> & { 
   );
 }
 
+function chatIdOf(update: Record<string, unknown>) {
+  const container =
+    update.message ??
+    update.edited_message ??
+    (update.callback_query as Record<string, unknown> | undefined)?.message;
+  if (!container || typeof container !== "object") return null;
+  const chat = (container as Record<string, unknown>).chat;
+  if (!chat || typeof chat !== "object") return null;
+  const id = (chat as Record<string, unknown>).id;
+  return typeof id === "number" || typeof id === "string" ? String(id) : null;
+}
+
 function needsNudge(update: Record<string, unknown>) {
   const message = update.message;
   if (!message || typeof message !== "object") return false;
@@ -44,7 +56,8 @@ function needsNudge(update: Record<string, unknown>) {
 
 export async function POST(request: NextRequest) {
   const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (!expectedSecret) {
+  const ownerChatId = process.env.TELEGRAM_CHAT_ID;
+  if (!expectedSecret || !ownerChatId) {
     return NextResponse.json({ ok: false, error: "Webhook is not configured" }, { status: 503 });
   }
   if (!hasValidSecret(request, expectedSecret)) {
@@ -69,6 +82,12 @@ export async function POST(request: NextRequest) {
   }
   if (!isTelegramUpdate(update)) {
     return NextResponse.json({ ok: false, error: "Invalid Telegram update" }, { status: 400 });
+  }
+
+  // Чужі апдейти відсіюємо тут, а не у воркері: інакше будь-хто, хто знайшов бота
+  // за юзернеймом, наповнює чергу job'ами. 200 — щоб Telegram не ретраїв доставку.
+  if (chatIdOf(update) !== ownerChatId) {
+    return NextResponse.json({ ok: true, ignored: true });
   }
 
   const supabase = getServiceClient();

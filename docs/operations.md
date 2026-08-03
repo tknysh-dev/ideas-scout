@@ -358,8 +358,10 @@ JSON-ом через stdin. Бот бере токен і `chat_id` з того 
 ### 8.2. Налаштування webhook
 
 1. Згенеруй один секрет: `openssl rand -hex 32`.
-2. Додай його у Vercel як `TELEGRAM_WEBHOOK_SECRET` для Production і зроби redeploy.
-3. Додай **те саме** значення в `~/.config/ideas-scout/env` на M1:
+2. Додай його у Vercel як `TELEGRAM_WEBHOOK_SECRET` для Production, а поряд —
+   `TELEGRAM_CHAT_ID` зі значенням із Keychain (`ideas-scout-telegram-chat`), і зроби
+   redeploy. Без `TELEGRAM_CHAT_ID` webhook відповідає 503 і нічого не приймає.
+3. Додай **те саме** значення секрету в `~/.config/ideas-scout/env` на M1:
    `TELEGRAM_WEBHOOK_SECRET=<значення>`.
 4. На M1 після `git pull` повторно виконай `./agents/scripts/install-launchd.sh`.
    Installer сам зупинить і видалить старий `com.ideas-scout.telegram-bot` long-polling
@@ -370,9 +372,10 @@ JSON-ом через stdin. Бот бере токен і `chat_id` з того 
 ./agents/scripts/configure-telegram-webhook.py https://<твій-домен-vercel>
 ```
 
-Скрипт читає токен з Keychain, секрет з env-файлу, викликає `setWebhook`, оновлює
-список команд бота й перевіряє результат через `getWebhookInfo`. Токен і секрет не
-друкуються. Після цього надішли боту `/status`: на `/runs` мають з'явитися
+Скрипт читає токен і chat_id з Keychain, секрет з env-файлу, викликає `setWebhook`,
+ставить список команд бота лише для твого чату (для решти чатів команди видаляє,
+тож стороння людина не бачить меню) і перевіряє результат через `getWebhookInfo`.
+Токен і секрет не друкуються. Після цього надішли боту `/status`: на `/runs` мають з'явитися
 `telegram-update` job і пов'язаний run зі статусом `ok`.
 
 ### 8.3. Де що лежить

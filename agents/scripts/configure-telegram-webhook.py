@@ -45,19 +45,19 @@ def read_env_value(name):
     return ""
 
 
-def keychain_token():
+def keychain(service):
     try:
         result = subprocess.run(
-            ["security", "find-generic-password", "-s", "ideas-scout-telegram", "-w"],
+            ["security", "find-generic-password", "-s", service, "-w"],
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        fail(f"не вдалося прочитати Telegram-токен із Keychain: {error}")
+        fail(f"не вдалося прочитати {service} із Keychain: {error}")
     if result.returncode != 0 or not result.stdout.strip():
-        fail("у Keychain немає ideas-scout-telegram")
+        fail(f"у Keychain немає {service}")
     return result.stdout.strip()
 
 
@@ -95,7 +95,10 @@ def main():
         fail(
             f"додай TELEGRAM_WEBHOOK_SECRET у {ENV_FILE}; дозволено 1–256 символів A-Z, a-z, 0-9, _ і -"
         )
-    token = keychain_token()
+    token = keychain("ideas-scout-telegram")
+    chat_id = keychain("ideas-scout-telegram-chat")
+    if not re.fullmatch(r"-?[0-9]+", chat_id):
+        fail("ideas-scout-telegram-chat у Keychain не є числом")
 
     telegram_api(
         token,
@@ -105,11 +108,16 @@ def main():
         allowed_updates=["message", "callback_query"],
         drop_pending_updates=False,
     )
+    # Меню команд видно тільки у власному чаті: чужий, що знайшов бота, не бачить
+    # ні списку, ні натяку, що тут узагалі є що викликати.
     telegram_api(
         token,
         "setMyCommands",
         commands=[{"command": command, "description": description} for command, description in COMMANDS],
+        scope={"type": "chat", "chat_id": int(chat_id)},
     )
+    for scope in ({"type": "default"}, {"type": "all_private_chats"}, {"type": "all_group_chats"}):
+        telegram_api(token, "deleteMyCommands", scope=scope)
     info = telegram_api(token, "getWebhookInfo")
     if not isinstance(info, dict) or info.get("url") != webhook_url:
         fail("Telegram прийняв запит, але getWebhookInfo не підтвердив очікувану адресу")
