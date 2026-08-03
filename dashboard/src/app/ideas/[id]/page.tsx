@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import Card from "@/components/Card";
+import CompetitorsSection from "@/components/CompetitorsSection";
 import ConfigNotice from "@/components/ConfigNotice";
 import CriteriaAnalysisSection from "@/components/CriteriaAnalysis";
 import DecisionPanel from "@/components/DecisionPanel";
+import DeepResearchBlocks from "@/components/DeepResearchBlocks";
 import { Field, FieldGroup } from "@/components/FieldGroup";
 import Prose from "@/components/Prose";
 import StatusBadge from "@/components/StatusBadge";
@@ -18,7 +20,9 @@ import {
   trackLabel,
 } from "@/lib/status";
 import { analyzeCriteria, splitCriteriaSection } from "@/lib/criteria";
-import type { EventRow, Idea, SourceRow } from "@/lib/types";
+import type { StructuredVerdict } from "@/lib/criteria";
+import { groupVerdicts, VERDICT_TONE } from "@/lib/deep-research";
+import type { CompetitorRow, CriteriaVerdictRow, EventRow, Idea, SourceRow } from "@/lib/types";
 import { formatDate, formatDateTime } from "@/lib/dates";
 
 
@@ -42,10 +46,18 @@ export default async function IdeaPage({
     );
   }
 
-  const [{ data: idea }, { data: sources }, { data: events }] = await Promise.all([
+  const [
+    { data: idea },
+    { data: sources },
+    { data: events },
+    { data: verdictRows },
+    { data: competitorRows },
+  ] = await Promise.all([
     supabase.from("ideas").select("*").eq("id", id).maybeSingle(),
     supabase.from("sources").select("*").eq("idea_id", id).order("id"),
     supabase.from("events").select("*").eq("idea_id", id).order("happened_at"),
+    supabase.from("criteria_verdicts").select("*").eq("idea_id", id).eq("stage", "deep"),
+    supabase.from("competitors").select("*").eq("idea_id", id).order("created_at"),
   ]);
 
   if (!idea) notFound();
@@ -61,8 +73,23 @@ export default async function IdeaPage({
     parent = parentData;
   }
 
+  const deep = groupVerdicts((verdictRows ?? []) as CriteriaVerdictRow[]);
+  const competitors = (competitorRows ?? []) as CompetitorRow[];
+
+  // Після глибокого дослідження вердикт критерію існує як дані, тож розбір
+  // прози лишається лише джерелом пояснювального тексту, а не вердикту.
+  const structured = new Map<string, StructuredVerdict>();
+  for (const [key, entry] of deep.byKey) {
+    if (entry.synthesis) {
+      structured.set(key, {
+        tone: VERDICT_TONE[entry.synthesis.verdict],
+        summary: entry.synthesis.summary,
+      });
+    }
+  }
+
   const { section: criteriaSection, rest: bodyRest } = splitCriteriaSection(record.body);
-  const criteria = analyzeCriteria(record, criteriaSection);
+  const criteria = analyzeCriteria(record, criteriaSection, structured);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-10">
@@ -86,6 +113,18 @@ export default async function IdeaPage({
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <StatusBadge status={record.status} />
           <TypeBadge type={record.type} />
+          {record.research_depth === "deep" && (
+            <span
+              title="Критерії перевірено кількома незалежними моделями, вердикт зведено синтезом"
+              className="inline-flex w-fit items-center whitespace-nowrap rounded-full px-2.5 py-0.5 font-mono text-[11px] font-medium uppercase tracking-wide"
+              style={{
+                color: "var(--research-btn-fg)",
+                backgroundColor: "var(--research-btn-bg)",
+              }}
+            >
+              Глибоке дослідження
+            </span>
+          )}
         </div>
         <h1 className="font-display text-3xl text-ink">{record.title}</h1>
         {record.mechanic_summary && (
@@ -177,10 +216,34 @@ export default async function IdeaPage({
             )}
           </Field>
           <Field label="Версія критеріїв">{record.criteria_version ?? "—"}</Field>
+          <Field label="Глибина дослідження">
+            {record.research_depth === "deep"
+              ? `Глибоке — перевірено незалежно${
+                  deep.providers.length > 0 ? ` (${deep.providers.join(", ")})` : ""
+                }`
+              : "Початкове — одна модель"}
+          </Field>
+          {record.deep_researched_at && (
+            <Field label="Глибоке дослідження">
+              {formatDateTime(record.deep_researched_at)}
+            </Field>
+          )}
         </FieldGroup>
       </div>
 
-      {criteria && <CriteriaAnalysisSection analysis={criteria} ideaId={record.id} />}
+      {criteria && (
+        <CriteriaAnalysisSection
+          analysis={criteria}
+          ideaId={record.id}
+          verdicts={deep.byKey.size > 0 ? deep.byKey : undefined}
+        />
+      )}
+
+      {deep.byKey.size > 0 && <DeepResearchBlocks data={deep} ideaId={record.id} />}
+
+      {competitors.length > 0 && (
+        <CompetitorsSection competitors={competitors} ideaId={record.id} />
+      )}
 
       {bodyRest && (
         <section className="mt-8">

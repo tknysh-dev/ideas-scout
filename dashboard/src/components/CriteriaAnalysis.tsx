@@ -1,21 +1,20 @@
 import Card from "@/components/Card";
 import CollapsibleBody from "@/components/CollapsibleBody";
 import Prose from "@/components/Prose";
-import type { CriteriaAnalysis, CriterionTone } from "@/lib/criteria";
-
-const TONE_META: Record<CriterionTone, { label: string; token: string }> = {
-  passed: { label: "Пройдено", token: "accepted" },
-  failed: { label: "Провалено", token: "rejected" },
-  owner: { label: "На рішення власника", token: "approved_pending" },
-  skipped: { label: "Не оцінювався", token: "transferred" },
-  noted: { label: "Із зауваженням", token: "analyzing" },
-};
+import VerdictDetails from "@/components/VerdictDetails";
+import type { CriteriaAnalysis } from "@/lib/criteria";
+import { TONE_META, type CriterionVerdicts } from "@/lib/deep-research";
 
 export default function CriteriaAnalysisSection({
   analysis,
+  verdicts,
   ideaId,
 }: {
   analysis: CriteriaAnalysis;
+  // Вердикти глибокого дослідження по критерію (ключ — номер критерія як
+  // рядок). Необов'язковий: без глибокого дослідження картки виглядають
+  // так само, як і раніше.
+  verdicts?: Map<string, CriterionVerdicts>;
   ideaId?: string;
 }) {
   return (
@@ -28,6 +27,7 @@ export default function CriteriaAnalysisSection({
         {analysis.results.map(({ spec, tone, verdict, body, sharedWith }, index) => {
           const meta = TONE_META[tone];
           const shared = sharedWith && !body ? sharedWith.join(", ") : null;
+          const entry = verdicts?.get(String(spec.n));
           return (
             <Card as="li" key={spec.n} index={index} padding="sm" exclude={ideaId}>
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -73,6 +73,9 @@ export default function CriteriaAnalysisSection({
                 <p className="mt-2 font-mono text-[11px] text-ink-dim">
                   Спільний розбір із критеріями {shared}
                 </p>
+              )}
+              {entry && (entry.synthesis || entry.models.length > 0) && (
+                <VerdictDetails entry={entry} />
               )}
             </Card>
           );

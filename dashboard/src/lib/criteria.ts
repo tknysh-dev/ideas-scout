@@ -50,6 +50,9 @@ export interface CriterionResult {
   body: string;
   // Заповнено, якщо аналітик розібрав кілька критеріїв одним абзацом.
   sharedWith?: number[];
+  // true, якщо тон і вердикт узято зі структурованого запису глибокого
+  // дослідження, а не відновлено з прози регуляркою.
+  structured?: boolean;
 }
 
 const SECTION_HEADING = /^##\s+Аналіз за критеріями\s*$/m;
@@ -145,7 +148,21 @@ function toNote(block: string): CriterionNote {
   };
 }
 
-export function analyzeCriteria(idea: Idea, section: string | null): CriteriaAnalysis | null {
+// Структурований вердикт критерію (рядок синтезу глибокого дослідження).
+// Мінімальна форма, щоб criteria.ts не залежав від таблиць БД.
+export interface StructuredVerdict {
+  tone: CriterionTone;
+  summary: string | null;
+}
+
+export function analyzeCriteria(
+  idea: Idea,
+  section: string | null,
+  // Після глибокого дослідження вердикти існують як дані, тож регулярка по
+  // прозі більше не потрібна: вона лишається запасним шляхом для карток, які
+  // глибокого дослідження ще не проходили.
+  structured?: Map<string, StructuredVerdict>,
+): CriteriaAnalysis | null {
   const checklist = CHECKLISTS[idea.track];
   if (!checklist) return null;
 
@@ -206,7 +223,20 @@ export function analyzeCriteria(idea: Idea, section: string | null): CriteriaAna
 
   const results = checklist.map<CriterionResult>((spec) => {
     const hit = parsed.get(spec.n);
+    const exact = structured?.get(String(spec.n));
+
     if (!hit) {
+      // Структурований вердикт без прози — звичайна ситуація для критеріїв,
+      // яких первинний аналітик не згадував, а глибоке дослідження оцінило.
+      if (exact) {
+        return {
+          spec,
+          tone: exact.tone,
+          verdict: exact.summary ?? "",
+          body: "",
+          structured: true,
+        };
+      }
       return {
         spec,
         tone: "skipped",
@@ -219,10 +249,11 @@ export function analyzeCriteria(idea: Idea, section: string | null): CriteriaAna
     const first = Math.min(...hit.group);
     return {
       spec,
-      tone: hit.tone,
-      verdict: hit.verdict,
+      tone: exact ? exact.tone : hit.tone,
+      verdict: exact?.summary || hit.verdict,
       body: spec.n === first ? hit.body : "",
       sharedWith: hit.group.length > 1 ? hit.group : undefined,
+      structured: Boolean(exact),
     };
   });
 
