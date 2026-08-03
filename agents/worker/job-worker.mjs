@@ -374,6 +374,12 @@ async function main() {
   });
   const worker = createJobWorker({ supabase, workerId });
 
+  // Маркер старту: лог — один append-only файл на всі життя процесу, тож без
+  // нього `tail` змішує рядки нового воркера зі старим і перепідключення давно
+  // померлого процесу читаються як поточні. doctor.sh рахує статистику від
+  // останнього такого рядка.
+  log(`worker started ${workerId}`);
+
   const realtime = createRealtimeSupervisor({
     supabase,
     onEvent: () => void worker.drain(),

@@ -206,15 +206,29 @@ else
                 hint "launchctl kickstart -k ${DOMAIN}/com.ideas-scout.job-worker" ;;
   esac
 
-  reconnects="$(tail -200 "$WORKER_LOG" | grep -c "realtime reconnect" || true)"
-  case "$reconnects" in ''|*[!0-9]*) reconnects=0 ;; esac
-  if [ "$reconnects" -gt 10 ]; then
-    warn "${reconnects} перепідключень Realtime в останніх 200 рядках — канал не тримається; шукай причину в мережі або на боці Supabase"
+  # Лог воркера — append-only файл, спільний для всіх життів процесу. `tail -200`
+  # по ньому рахував перепідключення давно вбитих процесів: свіжий воркер дописує
+  # кілька рядків, решта хвоста — чужа історія, тому warning залипав ще довго
+  # після вдалого фіксу. Рахуємо від маркера старту поточного процесу.
+  start_line="$(grep -n "worker started" "$WORKER_LOG" | tail -1 | cut -d: -f1)"
+  if [ -n "$start_line" ]; then
+    WORKER_LIFETIME="$(tail -n "+${start_line}" "$WORKER_LOG")"
+    lifetime_scope="від старту воркера"
+  else
+    # Воркер ще не перезапускався після появи маркера — старий (неточний) режим.
+    WORKER_LIFETIME="$(tail -200 "$WORKER_LOG")"
+    lifetime_scope="в останніх 200 рядках лога, включно з попередніми запусками"
   fi
 
-  fatals="$(tail -200 "$WORKER_LOG" | grep -c "^.*fatal:" || true)"
+  reconnects="$(printf '%s\n' "$WORKER_LIFETIME" | grep -c "realtime reconnect" || true)"
+  case "$reconnects" in ''|*[!0-9]*) reconnects=0 ;; esac
+  if [ "$reconnects" -gt 10 ]; then
+    warn "${reconnects} перепідключень Realtime ${lifetime_scope} — канал не тримається; шукай причину в мережі або на боці Supabase"
+  fi
+
+  fatals="$(printf '%s\n' "$WORKER_LIFETIME" | grep -c "^.*fatal:" || true)"
   case "$fatals" in ''|*[!0-9]*) fatals=0 ;; esac
-  [ "$fatals" -gt 0 ] && warn "${fatals} фатальних виходів воркера в останніх 200 рядках лога"
+  [ "$fatals" -gt 0 ] && warn "${fatals} фатальних виходів воркера ${lifetime_scope}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -269,7 +283,10 @@ if [ "$SKIP_NETWORK" -eq 1 ]; then
   note "перевірку прогонів пропущено (--offline)"
 else
   # Пороги дзеркалять monitor.sh: у джобів різний розклад, спільний поріг брехав би.
-  for entry in "passive-income-collector:259200" "passive-income-analyst:259200" \
+  # analyst ходить Вт/Чт/Сб, тобто здоровий розрив Сб->Вт — рівно 3 дні. Поріг у
+  # 3 дні спрацьовував щопонеділка на справному розкладі; беремо 4 дні, щоб
+  # попередження означало реально пропущений слот, а не сам розклад.
+  for entry in "passive-income-collector:259200" "passive-income-analyst:345600" \
                "passive-income-revisor:432000" "app-ideas-collector:691200" \
                "app-ideas-analyst:691200"; do
     job="${entry%:*}"; threshold="${entry#*:}"

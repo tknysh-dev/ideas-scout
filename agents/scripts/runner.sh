@@ -318,10 +318,34 @@ fi
 RUN_ID="$(date +%Y%m%d-%H%M%S)-${PROVIDER}-${TRACK}-${AGENT}"
 echo "runner.sh: run_id=$RUN_ID"
 
-if ./agents/scripts/db.sh register-run-start "$RUN_ID" "$AGENT" "$TRACK" "$PROVIDER" >/dev/null; then
-  RUN_REGISTERED=1
-else
-  echo "runner.sh: попередження — не вдалось зареєструвати прогін у БД (runs); продовжую, статус наприкінці теж не запишеться" >&2
+# Реєстрація — умова спостережуваності, а не формальність: write_status пише в
+# runs лише за RUN_REGISTERED=1, тож прогін, що стартував без реєстрації, падає
+# НЕВИДИМО — doctor далі показує позаминулий успіх. Саме так зникло падіння
+# passive-income-analyst 2026-08-01: launchd розбудив машину в DarkWake раніше,
+# ніж піднялась мережа, DNS не резолвився, а прогін пішов далі й спалив повний
+# виклик CLI, результат якого нікуди було записати. Тому: чекаємо мережу з
+# backoff, і якщо не піднялась — виходимо ДО виклику провайдера.
+REGISTER_BACKOFF_S="${IDEAS_SCOUT_REGISTER_BACKOFF_S:-5 10 20 30 60 60}"
+# shellcheck disable=SC2086  # навмисне розбиття списку затримок на слова
+for delay in 0 $REGISTER_BACKOFF_S; do
+  if [ "$delay" -gt 0 ]; then
+    echo "runner.sh: БД недоступна — чекаю ${delay}с на мережу перед повтором реєстрації" >&2
+    sleep "$delay"
+  fi
+  if ./agents/scripts/db.sh register-run-start "$RUN_ID" "$AGENT" "$TRACK" "$PROVIDER" >/dev/null 2>&1; then
+    RUN_REGISTERED=1
+    break
+  fi
+done
+
+if [ "$RUN_REGISTERED" != "1" ]; then
+  if [ "${IDEAS_SCOUT_ALLOW_UNREGISTERED:-0}" = "1" ]; then
+    echo "runner.sh: БД недоступна, але IDEAS_SCOUT_ALLOW_UNREGISTERED=1 — продовжую; статус у runs НЕ потрапить" >&2
+  else
+    echo "runner.sh: БД недоступна після всіх спроб реєстрації — виходжу, не викликаючи CLI (інакше падіння лишиться невидимим для doctor/monitor)." >&2
+    echo "runner.sh: разовий обхід — IDEAS_SCOUT_ALLOW_UNREGISTERED=1; наступний прогін піде за розкладом." >&2
+    exit 75  # EX_TEMPFAIL — умова середовища, не помилка коду
+  fi
 fi
 
 # ---------------------------------------------------------------------------
