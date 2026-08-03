@@ -131,6 +131,30 @@ def get_recent_ideas(limit: int = 5) -> list[dict]:
     ) or []
 
 
+def get_ideas_created_since(since_iso: str) -> list[dict]:
+    """Картки, заведені після since_iso — саме «нові знахідки» для дайджесту.
+
+    Фільтр по created_at, а не updated_at: правка статусу старої картки новою
+    знахідкою не є, а раніше потрапляла в те саме число.
+    """
+    q = (
+        "select=id,title,status,track,created_at"
+        f"&created_at=gte.{urllib.parse.quote(since_iso, safe='')}"
+        "&order=track.asc,created_at.desc"
+    )
+    return _request("GET", f"/ideas?{q}") or []
+
+
+def count_ideas_updated_since(since_iso: str) -> int:
+    """Скільки вже наявних карток лише змінились (без новостворених)."""
+    q = (
+        "select=id"
+        f"&updated_at=gte.{urllib.parse.quote(since_iso, safe='')}"
+        f"&created_at=lt.{urllib.parse.quote(since_iso, safe='')}"
+    )
+    return len(_request("GET", f"/ideas?{q}") or [])
+
+
 def get_last_runs(limit: int = 20) -> list[dict]:
     return _request(
         "GET",

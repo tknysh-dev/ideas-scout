@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db  # agents/scripts/db.py — доступ до Supabase (Фаза 4 міграції)
+from doctor_report import run_doctor  # спільний із monitor.sh формат звіту
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATE_DIR = os.path.expanduser("~/Library/Application Support/ideas-scout")
@@ -692,96 +693,6 @@ HELP = """<b>Як цим користуватись</b>
 <b>Що варто знати</b>
 Кожне посилання агент піде відкривати — приватні URL сюди краще не слати. Повний
 вердикт завжди лишається карткою в репозиторії; у чат іде витяг."""
-
-
-DOCTOR_TIMEOUT_S = 180
-DOCTOR_SUMMARY_RE = re.compile(r"(\d+)\s+ок\s+·\s+(\d+)\s+попередж\w*\s+·\s+(\d+)\s+проблем")
-
-
-DOCTOR_EMOJI = {"✔": "✅", "▲": "🟡", "✘": "🔴", "·": "⚪"}
-
-
-def run_doctor():
-    """Ганяє doctor.sh і перекладає його вивід у Telegram-повідомлення.
-
-    Без --llm: /status ходить сюди щоразу, а реальний виклик claude -p їв би
-    ліміт підписки на кожне натискання.
-    """
-    script = os.path.join(REPO_ROOT, "agents/scripts/doctor.sh")
-    try:
-        p = subprocess.run(
-            [script],
-            cwd=REPO_ROOT,
-            env={**os.environ, "NO_COLOR": "1"},
-            capture_output=True,
-            text=True,
-            timeout=DOCTOR_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired:
-        return f"❔ <b>Здоров'я системи</b>\ndoctor.sh не вклався в {DOCTOR_TIMEOUT_S} с — швидше за все висить мережева перевірка."
-    except OSError as e:
-        return f"❔ <b>Здоров'я системи</b>\nне вдалось запустити doctor.sh: {esc(e)}"
-    return format_doctor_report(p.stdout, p.returncode, p.stderr)
-
-
-def format_doctor_report(stdout, returncode, stderr=""):
-    """Вивід doctor.sh → HTML для Telegram, структура один-в-один.
-
-    Перекладаються лише маркери на emoji; порядок секцій, тексти й підказки —
-    ті самі, що в терміналі, щоб не тримати в голові дві різні картини системи.
-    """
-    lines = stdout.splitlines()
-    header = lines[0].strip() if lines else ""
-    counts = None
-    in_summary = False
-    items = []   # (kind, section, text) — kind: section|check|hint|tail
-    for raw in lines[1:]:
-        line = raw.rstrip()
-        if not line:
-            continue
-        body = line.strip()
-        marker = DOCTOR_EMOJI.get(body[:1])
-        if marker:
-            items.append(("check", body[:1], f"{marker} {body[1:].strip()}"))
-        elif body.startswith("↳"):
-            # Підказка стосується попереднього рядка — без неї попередження
-            # часто не дає зрозуміти, що саме робити.
-            items.append(("hint", "", f"   ↳ <code>{esc(body[1:].strip())}</code>"))
-        elif DOCTOR_SUMMARY_RE.search(body):
-            counts = DOCTOR_SUMMARY_RE.search(body).groups()
-            items.append(("tail", "", f"{counts[0]} ок · {counts[1]} попереджень · {counts[2]} проблем"))
-        elif not line.startswith(" "):
-            # Після «Підсумок» неіндентований рядок — це вже підсумковий вирок,
-            # а не заголовок наступної секції.
-            if in_summary:
-                # «дивись рядки з ✘ вище» має вказувати на той значок, який
-                # людина справді бачить у чаті.
-                items.append(("tail", "", esc(body).translate(str.maketrans(DOCTOR_EMOJI))))
-            else:
-                in_summary = body.startswith("Підсумок")
-                items.append(("section", "", f"\n<b>{esc(body)}</b>"))
-        else:
-            items.append(("tail", "", esc(body)))
-
-    if returncode not in (0, 1, 2) and counts is None:
-        stderr = " ".join(stderr.split())[:300]
-        return f"❔ <b>Здоров'я системи</b>\ndoctor.sh упав (код {returncode}): {esc(stderr or '—')}"
-
-    head = "🔴" if counts and counts[2] != "0" else ("🟡" if counts and counts[1] != "0" else "✅")
-    prefix = [f"{head} <b>{esc(header)}</b>" if header else f"{head} <b>doctor</b>"]
-
-    # Повний звіт зазвичай влазить у ліміт Telegram, але не гарантовано. Різати
-    # хвіст не можна — там підсумок, найцінніше; тому спершу летять довідкові
-    # рядки, потім успішні, і лише проблеми лишаються завжди.
-    for drop in ((), ("·",), ("·", "✔")):
-        rendered = prefix + [
-            text for kind, marker, text in items
-            if not (kind == "check" and marker in drop)
-        ]
-        text = "\n".join(rendered)
-        if len(text) <= TG_TEXT_LIMIT:
-            return text
-    return text
 
 
 def cmd_status():

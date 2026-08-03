@@ -165,7 +165,7 @@ launchd виконає розкладний джоб при пробудженн
 | `com.ideas-scout.monitor` | Щодня, 09:30 | `monitor.sh` |
 | `com.ideas-scout.job-worker` | Постійно | Realtime-черга `jobs` → локальні allowlisted скрипти |
 
-Трек `app-ideas` свідомо відсутній у launchd — критерії оцінки для нього (`agents/criteria/criteria-apps.md`) ще порожні (v0.0). Додати відповідні plist-и й рядок у `EXPECTED_JOBS` у `agents/scripts/monitor.sh`, коли трек активується.
+Трек `app-ideas` свідомо відсутній у launchd — критерії оцінки для нього (`agents/criteria/criteria-apps.md`) ще порожні (v0.0). Додати відповідні plist-и й рядок у список джобів із порогами свіжості в `agents/scripts/doctor.sh` (секція «Прогони агентів»), коли трек активується.
 
 ### 3.3. Перевірити, що встановлено
 
@@ -247,7 +247,7 @@ run має job `deep-research` і статус `dry_run`.
 - Аналітик (`passive-income`, `claude`): вт/чт/сб, 05:00.
 - Ревізор (`passive-income`, `claude`): ср/сб, 06:00.
 - Моніторинг: щодня, 09:30.
-- Трек `app-ideas` — вимкнено до заповнення `agents/criteria/criteria-apps.md` (критерії v0.0 зараз порожні). Коли активується — додати plist-и за зразком наявних і рядки в `EXPECTED_JOBS` (`agents/scripts/monitor.sh`).
+- Трек `app-ideas` — вимкнено до заповнення `agents/criteria/criteria-apps.md` (критерії v0.0 зараз порожні). Коли активується — додати plist-и за зразком наявних і рядки в списку джобів у `agents/scripts/doctor.sh`.
 
 Після `git pull`, що приносить новий/змінений `.plist` у `agents/launchd/`, перевстанови джоби: `./agents/scripts/install-launchd.sh` (він сам робить `bootout` + `bootstrap` для кожного файла, тож повторний запуск безпечний).
 
