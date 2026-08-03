@@ -147,6 +147,29 @@ def extract_json_block(text: str) -> dict | None:
     return None
 
 
+def align_bulk(rows: list[dict]) -> list[dict]:
+    """Однаковий набір ключів у всіх рядках пакета — вимога PostgREST.
+
+    Пакетний POST з різними наборами ключів відхиляється цілком:
+    HTTP 400, PGRST102 "All object keys must match". Санітизатори ж
+    складають рядки з полів, які модель могла й не заповнити, тож набір
+    ключів залежить від відповіді моделі — тобто пакет ламався не завжди,
+    а лише на певних даних, і завжди в кінці прогону, після години роботи
+    моделей. Вирівнюємо тут, на межі з базою, а не в кожному санітизаторі:
+    обмеження належить транспорту, і додати сюди новий виклик безпечніше,
+    ніж не забути про нього в наступному санітизаторі.
+
+    Відсутні ключі доливаються як None. Нової поломки це не створює: якщо
+    колонка NOT NULL без дефолту, рядок без неї впав би й без вирівнювання.
+    """
+    if len(rows) < 2:
+        return rows
+    all_keys: set[str] = set()
+    for row in rows:
+        all_keys.update(row)
+    return [{key: row.get(key) for key in all_keys} for row in rows]
+
+
 def sanitize_evidence(raw) -> list[dict]:
     result = []
     if not isinstance(raw, list):
@@ -334,7 +357,7 @@ def run_deep_stage(idea_id: str, run_id: str | None, today: str) -> None:
     if not model_rows:
         # Звіти про провал все одно зберігаємо — інакше діагностика лише по stdout-хвосту.
         db._request("DELETE", f"/research_reports?idea_id=eq.{urllib.parse.quote(idea_id, safe='')}&stage=eq.deep_criteria")
-        db._request("POST", "/research_reports", report_rows)
+        db._request("POST", "/research_reports", align_bulk(report_rows))
         raise SystemExit("deep-research: жоден дослідник не повернув валідних даних — синтез неможливий")
 
     # Крос-допит: лише для розбіжностей по фатальних критеріях і лише якщо є ключ.
@@ -406,7 +429,7 @@ def run_deep_stage(idea_id: str, run_id: str | None, today: str) -> None:
 
     quoted_id = urllib.parse.quote(idea_id, safe="")
     db._request("DELETE", f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.deep_criteria")
-    db._request("POST", "/research_reports", report_rows)
+    db._request("POST", "/research_reports", align_bulk(report_rows))
 
     if not synth_rows:
         raise SystemExit(f"deep-research: синтез не повернув валідного JSON (exit={exit_code}) — "
@@ -429,7 +452,7 @@ def run_deep_stage(idea_id: str, run_id: str | None, today: str) -> None:
     all_keys = {k for row in verdict_rows for k in row}
     verdict_rows = [{k: row.get(k) for k in all_keys} for row in verdict_rows]
     db._request("DELETE", f"/criteria_verdicts?idea_id=eq.{quoted_id}&stage=eq.deep")
-    db._request("POST", "/criteria_verdicts", verdict_rows)
+    db._request("POST", "/criteria_verdicts", align_bulk(verdict_rows))
     log(f"criteria_verdicts: записано {len(verdict_rows)} рядків (stage=deep)")
 
     # ---- Перезапис картки: рішення про статус приймає скрипт, не модель. ----
@@ -555,7 +578,7 @@ def run_competitors_stage(idea_id: str, run_id: str | None, today: str) -> None:
     quoted_id = urllib.parse.quote(idea_id, safe="")
     if not model_lists:
         db._request("DELETE", f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.competitors")
-        db._request("POST", "/research_reports", report_rows)
+        db._request("POST", "/research_reports", align_bulk(report_rows))
         raise SystemExit("deep-research: жоден дослідник не повернув конкурентів — синтез неможливий")
 
     synthesis_template = read_file(os.path.join(REPO_ROOT, "agents/prompts/deep-research-competitors-synthesis.md"))
@@ -585,7 +608,7 @@ def run_competitors_stage(idea_id: str, run_id: str | None, today: str) -> None:
         "status": "ok" if final_rows else "error", "report_md": output[:200_000],
     })
     db._request("DELETE", f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.competitors")
-    db._request("POST", "/research_reports", report_rows)
+    db._request("POST", "/research_reports", align_bulk(report_rows))
 
     if not final_rows:
         raise SystemExit(f"deep-research: синтез конкурентів не повернув валідного JSON (exit={exit_code}) — "
@@ -594,7 +617,7 @@ def run_competitors_stage(idea_id: str, run_id: str | None, today: str) -> None:
     for row in final_rows:
         row.update({"idea_id": idea_id, "run_id": run_id})
     db._request("DELETE", f"/competitors?idea_id=eq.{quoted_id}")
-    db._request("POST", "/competitors", final_rows)
+    db._request("POST", "/competitors", align_bulk(final_rows))
     log(f"competitors: записано {len(final_rows)} рядків")
 
     updates: dict = {}
