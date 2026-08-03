@@ -4,7 +4,8 @@
 # реєстрацію Telegram-webhook, свіжість логінів до LLM і стан репозиторію.
 #
 # Тільки читає. Нічого не запускає, не лагодить і не надсилає — щоб можна було
-# ганяти будь-коли, зокрема посеред прогону агента.
+# ганяти будь-коли, зокрема посеред прогону агента. Єдиний виняток —
+# --baseline-clamshell, який пише позначку часу й одразу виходить.
 #
 # Секрети не друкуються ніде: перевіряється лише факт наявності й формат.
 #
@@ -23,20 +24,37 @@ WORKER_LOG="$REPO_ROOT/logs/launchd/job-worker.launchd.log"
 QUEUE_STALE_AFTER_S=900
 WORKER_LOG_STALE_AFTER_S=$((6 * 3600))
 
+# Журнал живлення — системний і накопичувальний: засинання від кришки, що були
+# ДО `sudo pmset -a disablesleep 1`, лишаються в ньому назавжди й вічно тягнуть
+# за собою ▲. Вичищати сам журнал не можна (та й не треба — це діагностична
+# історія), тому запам'ятовуємо момент фіксу й рахуємо лише пізніші засинання.
+CLAMSHELL_BASELINE_FILE="${IDEAS_SCOUT_CLAMSHELL_BASELINE:-$HOME/.config/ideas-scout/clamshell-baseline}"
+
 SKIP_NETWORK=0
 PROBE_LLM=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --offline) SKIP_NETWORK=1 ;;
     --llm) PROBE_LLM=1 ;;
+    --baseline-clamshell)
+      mkdir -p "$(dirname "$CLAMSHELL_BASELINE_FILE")" || exit 2
+      date '+%Y-%m-%d %H:%M:%S' > "$CLAMSHELL_BASELINE_FILE" || exit 2
+      echo "doctor.sh: позначку фіксу сну поставлено на $(cat "$CLAMSHELL_BASELINE_FILE")"
+      echo "doctor.sh: засинання від кришки до цього моменту більше не рахуються; нові — рахуються."
+      exit 0 ;;
     -h|--help)
       cat <<'EOF'
-Використання: doctor.sh [--offline] [--llm]
+Використання: doctor.sh [--offline] [--llm] [--baseline-clamshell]
 
   --offline  без мережевих перевірок (Supabase, Telegram, LLM)
   --llm      додатково зробити реальний виклик claude -p, щоб переконатись,
              що логін живий — єдина по-справжньому надійна перевірка, але
              вона витрачає ліміт підписки
+  --baseline-clamshell
+             запам'ятати поточний момент як «сон полагоджено» і вийти. Далі
+             doctor рахує лише засинання від кришки ПІСЛЯ цієї позначки, тож
+             попередження означатиме, що pmset відвалився, а не стару історію.
+             Ставити ПІСЛЯ `sudo pmset -a disablesleep 1`.
 EOF
       exit 0 ;;
     *) echo "doctor.sh: невідомий аргумент: $1" >&2; exit 2 ;;
@@ -123,10 +141,28 @@ else
 
   # Clamshell sleep не блокується жодною assertion-утилітою (Amphetamine теж),
   # тому рахуємо саме його, а не загальну кількість снів.
-  CLAMSHELL="$(pmset -g log 2>/dev/null | grep -c "Clamshell Sleep" || true)"
-  case "$CLAMSHELL" in ''|*[!0-9]*) CLAMSHELL=0 ;; esac
-  if [ "$CLAMSHELL" -gt 0 ]; then
-    warn "у журналі живлення ${CLAMSHELL} засинань від закритої кришки — якщо число росте після фіксу, sudo pmset не застосувався"
+  CLAMSHELL_ALL="$(pmset -g log 2>/dev/null | grep -c "Clamshell Sleep" || true)"
+  case "$CLAMSHELL_ALL" in ''|*[!0-9]*) CLAMSHELL_ALL=0 ;; esac
+
+  CLAMSHELL_SINCE=""
+  [ -f "$CLAMSHELL_BASELINE_FILE" ] && CLAMSHELL_SINCE="$(head -1 "$CLAMSHELL_BASELINE_FILE" 2>/dev/null | tr -d '\n')"
+
+  if [ -n "$CLAMSHELL_SINCE" ]; then
+    # Префікс рядка pmset — "РРРР-ММ-ДД ГГ:ХХ:СС" фіксованої ширини, тому
+    # лексикографічне порівняння з позначкою і є порівнянням за часом.
+    CLAMSHELL="$(pmset -g log 2>/dev/null | grep "Clamshell Sleep" \
+      | awk -v b="$CLAMSHELL_SINCE" 'substr($0,1,19) >= b' | wc -l | tr -d ' ')"
+    case "$CLAMSHELL" in ''|*[!0-9]*) CLAMSHELL=0 ;; esac
+    CLAMSHELL_OLD=$((CLAMSHELL_ALL - CLAMSHELL))
+    if [ "$CLAMSHELL" -gt 0 ]; then
+      warn "${CLAMSHELL} засинань від закритої кришки ПІСЛЯ фіксу (${CLAMSHELL_SINCE}) — sudo pmset не застосувався або злетів"
+      hint "sudo pmset -a disablesleep 1 && sudo pmset -c sleep 0 disksleep 0 standby 0 powernap 0"
+    else
+      ok "засинань від кришки після фіксу (${CLAMSHELL_SINCE}) немає${CLAMSHELL_OLD:+; ${CLAMSHELL_OLD} у журналі до нього — історія}"
+    fi
+  elif [ "$CLAMSHELL_ALL" -gt 0 ]; then
+    warn "у журналі живлення ${CLAMSHELL_ALL} засинань від закритої кришки — журнал накопичувальний, тож сюди входить і те, що було до фіксу"
+    hint "./agents/scripts/doctor.sh --baseline-clamshell   # після sudo pmset: рахувати лише нові"
   else
     ok "засинань від закритої кришки в журналі немає"
   fi
@@ -354,6 +390,8 @@ if [ -n "$(kc ideas-scout-healthcheck)" ]; then
   ok "dead-man's switch налаштований (ideas-scout-healthcheck)"
 elif [ "$IS_AGENT_HOST" -eq 1 ]; then
   warn "немає ideas-scout-healthcheck — якщо дайджест перестане надходити, ніхто про це не попередить ззовні"
+  hint "заведи ping-URL (healthchecks.io, безкоштовного плану досить), тоді:"
+  hint "security add-generic-password -U -A -s ideas-scout-healthcheck -a ideas-scout -w 'https://hc-ping.com/<uuid>'"
 else
   note "немає ideas-scout-healthcheck (перевіряється на машині з джобами)"
 fi
