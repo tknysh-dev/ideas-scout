@@ -185,9 +185,12 @@ def sanitize_criteria(raw, allowed_keys: set[str], *, require_resolution: bool) 
             "detail": item["detail"][:5000] if isinstance(item.get("detail"), str) else None,
             "evidence": sanitize_evidence(item.get("evidence")),
         }
-        if require_resolution:
-            resolution = item.get("resolution")
-            row["resolution"] = resolution if resolution in RESOLUTIONS else None
+        # Ключ resolution присутній завжди, навіть коли зводити нема чого: у
+        # пакетній вставці PostgREST усі об'єкти мусять мати однаковий набір
+        # ключів, інакше PGRST102 "All object keys must match". Рядки моделей
+        # резолюції не мають за змістом — тут це None, а не відсутній ключ.
+        resolution = item.get("resolution") if require_resolution else None
+        row["resolution"] = resolution if resolution in RESOLUTIONS else None
         rows[key] = row
     return rows
 
@@ -420,6 +423,11 @@ def run_deep_stage(idea_id: str, run_id: str | None, today: str) -> None:
         verdict_rows.append({**row, "idea_id": idea_id, "run_id": run_id, "stage": "deep",
                              "kind": "synthesis", "provider": "claude",
                              "criteria_version": criteria_version})
+    # Запобіжник на випадок, коли до рядка колись додасться ще одне необов'язкове
+    # поле: розбіжність у ключах вилазить аж тут, після години роботи моделей, і
+    # коштує всього прогону. Дешевше вирівняти, ніж втратити.
+    all_keys = {k for row in verdict_rows for k in row}
+    verdict_rows = [{k: row.get(k) for k in all_keys} for row in verdict_rows]
     db._request("DELETE", f"/criteria_verdicts?idea_id=eq.{quoted_id}&stage=eq.deep")
     db._request("POST", "/criteria_verdicts", verdict_rows)
     log(f"criteria_verdicts: записано {len(verdict_rows)} рядків (stage=deep)")
