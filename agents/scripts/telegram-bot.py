@@ -59,20 +59,6 @@ def log(msg):
     print(f"{datetime.now(timezone.utc).strftime('%FT%TZ')} {msg}", flush=True)
 
 
-def fmt_local(iso):
-    """UTC-мітка з БД → локальний час машини (те, що очікує власник)."""
-    if not iso:
-        return ""
-    try:
-        return (
-            datetime.fromisoformat(iso.replace("Z", "+00:00"))
-            .astimezone()
-            .strftime("%Y-%m-%d %H:%M")
-        )
-    except ValueError:
-        return iso[:16]
-
-
 # ---------------------------------------------------------------------------
 # Секрети: лише Keychain, як у monitor.sh. Ніколи з репо чи env.
 # ---------------------------------------------------------------------------
@@ -696,10 +682,10 @@ HELP = """<b>Як цим користуватись</b>
 <b>Команди</b>
 <code>/new</code> — закрити чернетку і почати нову
 <code>/cancel</code> — викинути чернетку
-<code>/status</code> — що зараз відбувається, як відпрацювали нічні агенти і що в системі
-зламано (прогін <code>doctor.sh</code>: машина, launchd, воркер, черга, Supabase, секрети,
-webhook). Показує лише те, що вимагає уваги; живий виклик до LLM не робиться, щоб
-не їсти ліміт підписки — для нього є <code>doctor.sh --llm</code> у терміналі
+<code>/status</code> — повний звіт <code>doctor.sh</code> з M1: машина й сон, launchd-джоби,
+воркер і черга, Supabase, прогони агентів, секрети, webhook, логіни, репозиторій.
+✅ норма · 🟡 глянути · 🔴 зламано зараз · ⚪ довідка. Живого виклику до LLM не
+робить, щоб не їсти ліміт підписки — для нього є <code>doctor.sh --llm</code> у терміналі
 <code>/last</code> — п'ять останніх карток
 <code>/help</code> — це повідомлення
 
@@ -712,8 +698,11 @@ DOCTOR_TIMEOUT_S = 180
 DOCTOR_SUMMARY_RE = re.compile(r"(\d+)\s+ок\s+·\s+(\d+)\s+попередж\w*\s+·\s+(\d+)\s+проблем")
 
 
+DOCTOR_EMOJI = {"✔": "✅", "▲": "🟡", "✘": "🔴", "·": "⚪"}
+
+
 def run_doctor():
-    """Ганяє doctor.sh і лишає з його виводу лише те, що вимагає уваги.
+    """Ганяє doctor.sh і перекладає його вивід у Telegram-повідомлення.
 
     Без --llm: /status ходить сюди щоразу, а реальний виклик claude -p їв би
     ліміт підписки на кожне натискання.
@@ -736,74 +725,78 @@ def run_doctor():
 
 
 def format_doctor_report(stdout, returncode, stderr=""):
+    """Вивід doctor.sh → HTML для Telegram, структура один-в-один.
+
+    Перекладаються лише маркери на emoji; порядок секцій, тексти й підказки —
+    ті самі, що в терміналі, щоб не тримати в голові дві різні картини системи.
+    """
+    lines = stdout.splitlines()
+    header = lines[0].strip() if lines else ""
     counts = None
-    section_title = ""
-    blocks = []
-    for raw in stdout.splitlines():
+    in_summary = False
+    items = []   # (kind, section, text) — kind: section|check|hint|tail
+    for raw in lines[1:]:
         line = raw.rstrip()
         if not line:
             continue
-        if not line.startswith(" "):
-            section_title = line
-            continue
         body = line.strip()
-        if body[:1] in ("▲", "✘"):
-            blocks.append((section_title, body))
-        elif body.startswith("↳") and blocks:
+        marker = DOCTOR_EMOJI.get(body[:1])
+        if marker:
+            items.append(("check", body[:1], f"{marker} {body[1:].strip()}"))
+        elif body.startswith("↳"):
             # Підказка стосується попереднього рядка — без неї попередження
             # часто не дає зрозуміти, що саме робити.
-            blocks[-1] = (blocks[-1][0], blocks[-1][1] + "\n   " + body)
+            items.append(("hint", "", f"   ↳ <code>{esc(body[1:].strip())}</code>"))
+        elif DOCTOR_SUMMARY_RE.search(body):
+            counts = DOCTOR_SUMMARY_RE.search(body).groups()
+            items.append(("tail", "", f"{counts[0]} ок · {counts[1]} попереджень · {counts[2]} проблем"))
+        elif not line.startswith(" "):
+            # Після «Підсумок» неіндентований рядок — це вже підсумковий вирок,
+            # а не заголовок наступної секції.
+            if in_summary:
+                # «дивись рядки з ✘ вище» має вказувати на той значок, який
+                # людина справді бачить у чаті.
+                items.append(("tail", "", esc(body).translate(str.maketrans(DOCTOR_EMOJI))))
+            else:
+                in_summary = body.startswith("Підсумок")
+                items.append(("section", "", f"\n<b>{esc(body)}</b>"))
         else:
-            m = DOCTOR_SUMMARY_RE.search(body)
-            if m:
-                counts = m.groups()
+            items.append(("tail", "", esc(body)))
 
     if returncode not in (0, 1, 2) and counts is None:
         stderr = " ".join(stderr.split())[:300]
         return f"❔ <b>Здоров'я системи</b>\ndoctor.sh упав (код {returncode}): {esc(stderr or '—')}"
 
-    head = "✅" if not blocks else ("🔴" if any(b[1].startswith("✘") for b in blocks) else "🟡")
-    out = [f"{head} <b>Здоров'я системи</b>"]
-    if counts:
-        out.append(f"{counts[0]} ок · {counts[1]} попереджень · {counts[2]} проблем")
-    if not blocks:
-        out.append("Зауважень немає.")
-        return "\n".join(out)
+    head = "🔴" if counts and counts[2] != "0" else ("🟡" if counts and counts[1] != "0" else "✅")
+    prefix = [f"{head} <b>{esc(header)}</b>" if header else f"{head} <b>doctor</b>"]
 
-    current = None
-    for title, body in blocks:
-        if title != current:
-            current = title
-            out.append(f"\n<b>{esc(title)}</b>")
-        out.append(esc(body))
-    return "\n".join(out)
+    # Повний звіт зазвичай влазить у ліміт Telegram, але не гарантовано. Різати
+    # хвіст не можна — там підсумок, найцінніше; тому спершу летять довідкові
+    # рядки, потім успішні, і лише проблеми лишаються завжди.
+    for drop in ((), ("·",), ("·", "✔")):
+        rendered = prefix + [
+            text for kind, marker, text in items
+            if not (kind == "check" and marker in drop)
+        ]
+        text = "\n".join(rendered)
+        if len(text) <= TG_TEXT_LIMIT:
+            return text
+    return text
 
 
 def cmd_status():
-    d = draft()
+    # Стан прогонів /status більше не перелічує сам: doctor.sh дивиться на ті самі
+    # рядки, але каже, які з них уже протухли. Про чернетку — лише коли вона є:
+    # «чернетки немає» щоразу відсувало вниз те, заради чого команду й тиснуть.
     out = []
-    if not d:
-        out.append("Чернетки немає — кидай що завгодно.")
-    elif d["state"] == "running":
-        out.append(f"Іде оцінка чернетки {d['id']}.")
-    else:
+    d = draft()
+    if d and d["state"] == "running":
+        out.append(f"✍️ Іде оцінка чернетки {d['id']}.\n")
+    elif d:
         n = len(d["fragments"])
         left = max(0, DRAFT_WINDOW_S - (int(time.time()) - d["last_msg_time"])) // 60
-        out.append(f"Відкрита чернетка: {n} фрагмент(ів), трек {TRACKS[d['track']]}, ~{left} хв до питання.")
-
-    try:
-        runs = db.get_last_runs(limit=10)
-    except db.DbError as e:
-        runs = []
-        out.append(f"(не вдалось прочитати прогони з БД: {esc(str(e))})")
-    rows = [
-        f"• {esc(r.get('job'))}/{esc(r.get('track') or '—')}: {esc(r.get('status'))} "
-        f"({esc(fmt_local(r.get('finished_at')))})"
-        for r in runs
-    ]
-    if rows:
-        out.append("\n<b>Останні прогони</b>\n" + "\n".join(rows))
-    out.append("\n" + run_doctor())
+        out.append(f"✍️ Відкрита чернетка: {n} фрагмент(ів), трек {TRACKS[d['track']]}, ~{left} хв до питання.\n")
+    out.append(run_doctor())
     return "\n".join(out)
 
 
