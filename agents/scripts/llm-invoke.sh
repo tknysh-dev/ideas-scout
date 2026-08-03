@@ -90,10 +90,11 @@ run_codex() {
   # sandbox read-only + --search: модель шукає у вебі нативним інструментом,
   # а shell-команди в пісочниці не можуть писати на диск. -C вказує на порожню
   # робочу теку ПОЗА репозиторієм — досліднику нема чого робити в коді.
-  # УВАГА: прапорці звірити з `codex exec --help` на M1 перед першим бойовим
-  # прогоном (llm-invoke.sh check робить цю перевірку автоматично).
-  local -a cmd=(codex exec --skip-git-repo-check --sandbox read-only --search
-    --ask-for-approval never -C "$workdir")
+  # УВАГА: --search і --ask-for-approval живуть на КОРЕНЕВІЙ команді codex, а не
+  # на підкоманді exec (перевірено на codex-cli 0.146.0) — після exec вони дають
+  # "unexpected argument '--search' found". Порядок прапорців тут не косметика.
+  local -a cmd=(codex --search --ask-for-approval never
+    exec --skip-git-repo-check --sandbox read-only -C "$workdir")
   [ -n "$model" ] && cmd+=(-m "$model")
   cmd+=("$prompt")
   with_timeout "$timeout_s" "${cmd[@]}"
@@ -186,14 +187,20 @@ check_one() {
       ;;
     codex)
       if ! command -v codex >/dev/null 2>&1; then echo "codex: ВІДСУТНІЙ (npm i -g @openai/codex; потім 'codex login')"; return 1; fi
-      local help
-      help="$(codex exec --help 2>&1)"
+      # Прапорці розкидані по двох рівнях CLI, тож і help читаємо з двох:
+      # --search/--ask-for-approval лише в кореневому, решта — в exec.
+      local root_help exec_help
+      root_help="$(codex --help 2>&1)"
+      exec_help="$(codex exec --help 2>&1)"
       local missing=""
-      for flag in --sandbox --search --skip-git-repo-check --ask-for-approval; do
-        printf '%s' "$help" | grep -q -- "$flag" || missing="$missing $flag"
+      for flag in --search --ask-for-approval; do
+        printf '%s' "$root_help" | grep -q -- "$flag" || missing="$missing $flag"
+      done
+      for flag in --sandbox --skip-git-repo-check; do
+        printf '%s' "$exec_help" | grep -q -- "$flag" || missing="$missing $flag"
       done
       if [ -n "$missing" ]; then
-        echo "codex: ВСТАНОВЛЕНО ($(codex --version 2>/dev/null | head -1)), але 'codex exec --help' не показує:$missing — скоригуй run_codex() в llm-invoke.sh"
+        echo "codex: ВСТАНОВЛЕНО ($(codex --version 2>/dev/null | head -1)), але codex --help / codex exec --help не показують:$missing — скоригуй run_codex() в llm-invoke.sh"
         return 1
       fi
       echo "codex: OK ($(codex --version 2>/dev/null | head -1))"
