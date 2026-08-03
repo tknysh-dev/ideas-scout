@@ -530,8 +530,12 @@ print(json.dumps({"created": created, "updated": updated}))
 # бути обробленими (pending, у яких available_at у минулому — відкладені nudge
 # сюди не рахуються), вік найстарішої з них і скільки running-джобів прострочили
 # lease. Ненульовий oldest_due_pending_s — ознака, що воркер не забирає чергу.
+#
+# Окремо віддається busy_type/busy_s: воркер бере джоби по одному, тож довгий
+# джоб (глибоке дослідження — до 90 хв) законно тримає чергу. Без цього поля
+# черга за ним виглядає точно як мертвий воркер.
 db_queue_health() {
-  _db_get "/jobs?select=status,available_at,lease_expires_at&status=in.(pending,running)" | python3 -c '
+  _db_get "/jobs?select=type,status,available_at,started_at,lease_expires_at&status=in.(pending,running)" | python3 -c '
 import datetime, json, sys
 
 now = datetime.datetime.now(datetime.timezone.utc)
@@ -547,6 +551,8 @@ def ts(value):
 
 
 due = oldest = running = stale = 0
+busy_type = ""
+busy_s = 0
 for row in json.load(sys.stdin):
     if row.get("status") == "pending":
         at = ts(row.get("available_at"))
@@ -559,14 +565,74 @@ for row in json.load(sys.stdin):
         lease = ts(row.get("lease_expires_at"))
         if lease is None or lease < now:
             stale += 1
+            continue
+        started = ts(row.get("started_at"))
+        age = int((now - started).total_seconds()) if started else 0
+        # Найдовший із живих — саме він визначає, чи виправдане очікування черги.
+        if age >= busy_s:
+            busy_s = age
+            busy_type = row.get("type") or ""
 
 print(json.dumps({
     "due_pending": due,
     "oldest_due_pending_s": oldest,
     "running": running,
     "stale_running": stale,
+    "busy_type": busy_type,
+    "busy_s": busy_s,
 }))
 '
+}
+
+# db_deep_research_health — чи не сиплеться глибоке дослідження мовчки: останні
+# звіти моделей зі статусом error/timeout і скільки джобів дослідження впало.
+# Порожній JSON з нулями означає «нема на що дивитись», а не «нема таблиць» —
+# відсутність таблиць видно окремою помилкою PostgREST у doctor.sh.
+db_deep_research_health() {
+  local since="${1:-}"
+  [ -n "$since" ] || since="$(python3 -c '
+import datetime
+print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+')"
+  # Запит до research_reports служить і перевіркою, що міграція глибокого
+  # дослідження накочена: без таблиці PostgREST відповідає помилкою, і це має
+  # долетіти до doctor.sh як окремий стан, а не розчинитись у «даних немає».
+  local reports jobs tables_ok=true
+  reports="$(_db_get "/research_reports?select=provider,stage,status,created_at&created_at=gte.$(_urlenc "$since")" 2>/dev/null)" || tables_ok=false
+  jobs="$(_db_get "/jobs?select=type,status,last_error,finished_at&type=in.(deep_research,deep_research_competitors)&status=eq.failed&finished_at=gte.$(_urlenc "$since")" 2>/dev/null || echo "[]")"
+  python3 -c '
+import json, sys
+
+tables_ok = sys.argv[3] == "true"
+try:
+    reports = json.loads(sys.argv[1] or "[]")
+except json.JSONDecodeError:
+    reports, tables_ok = [], False
+try:
+    jobs = json.loads(sys.argv[2] or "[]")
+except json.JSONDecodeError:
+    jobs = []
+if not isinstance(reports, list):
+    reports = []
+if not isinstance(jobs, list):
+    jobs = []
+
+bad = [r for r in reports if r.get("status") in ("error", "timeout")]
+providers = sorted({r.get("provider") or "?" for r in bad})
+last_error = ""
+if jobs:
+    newest = max(jobs, key=lambda j: j.get("finished_at") or "")
+    last_error = " ".join(str(newest.get("last_error") or "").split())[:300]
+
+print(json.dumps({
+    "tables_ok": tables_ok,
+    "reports_total": len(reports),
+    "reports_failed": len(bad),
+    "failed_providers": providers,
+    "jobs_failed": len(jobs),
+    "last_job_error": last_error,
+}))
+' "$reports" "$jobs" "$tables_ok"
 }
 
 # ---------------------------------------------------------------------------
@@ -599,6 +665,7 @@ _db_usage() {
   get-inbox <draft_id>
   ideas-activity-since <iso8601>
   queue-health
+  deep-research-health [iso8601-since]
 
 JSON-аргументи: літеральний рядок, "-" (stdin), або шлях до файлу.
 EOF
@@ -630,6 +697,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     get-inbox) db_get_inbox "$@" ;;
     ideas-activity-since) db_ideas_activity_since "$@" ;;
     queue-health) db_queue_health "$@" ;;
+    deep-research-health) db_deep_research_health "$@" ;;
     -h|--help|"") _db_usage; [ "$cmd" = "" ] && exit 2 || exit 0 ;;
     *) echo "db.sh: невідома команда: $cmd" >&2; _db_usage; exit 2 ;;
   esac
