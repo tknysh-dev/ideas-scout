@@ -2,7 +2,7 @@ import { Skeleton } from "@/components/Skeleton";
 
 export default function Loading() {
   return (
-    <div className="mx-auto max-w-4xl px-8 py-10">
+    <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-10">
       <Skeleton className="mb-4 h-3 w-56" />
       <Skeleton className="mb-6 h-7 w-72" />
       {/* max-w-[72ch] — та сама міра рядка, що й у .prose-doc. */}

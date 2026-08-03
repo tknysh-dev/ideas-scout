@@ -2,7 +2,7 @@ import ArchitectureDiagram from "@/components/ArchitectureDiagram";
 
 export default function ArchitecturePage() {
   return (
-    <div className="mx-auto max-w-6xl px-8 py-10">
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-8 sm:py-10">
       <header className="mb-6">
         <p className="font-mono text-xs uppercase tracking-widest text-ink-dim">
           як це працює

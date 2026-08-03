@@ -47,7 +47,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="uk" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <body className="min-h-screen bg-paper text-ink antialiased">
         <MotionRoot>
-          <div className="flex min-h-screen">
+          <div className="flex min-h-screen flex-col md:flex-row">
             <Sidebar pendingDecisions={pendingDecisions} authDisabled={!getAuthEnv()} />
             <PageShell>{children}</PageShell>
           </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
@@ -30,23 +31,82 @@ export default function Sidebar({
   authDisabled?: boolean;
 }) {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+
+  // Закриваємо висувну панель при кожній навігації — інакше на мобільному
+  // вона лишається відкритою поверх нової сторінки.
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
 
   if (pathname === "/login") return null;
 
   return (
-    <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-line bg-paper-raised px-5 py-6">
-      <div className="mb-8">
-        <p className="font-display text-[1.35rem] leading-none tracking-tight text-ink">
-          Ideas
-          <br />
-          Scout
-        </p>
-        <p className="mt-1.5 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
-          реєстр знахідок
-        </p>
+    <>
+      <div className="sticky top-0 z-30 flex w-full shrink-0 items-center gap-3 self-start border-b border-line bg-paper-raised px-4 py-3 md:hidden">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="Відкрити меню"
+          aria-expanded={open}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-ink"
+        >
+          <span className="sr-only">Меню</span>
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden>
+            <path
+              d="M3 5h14M3 10h14M3 15h14"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+        <p className="font-display text-lg leading-none tracking-tight text-ink">Ideas Scout</p>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-1">
+      {open && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+          onClick={() => setOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex h-screen w-72 max-w-[80vw] shrink-0 flex-col overflow-y-auto border-r border-line bg-paper-raised px-5 py-6 transition-transform duration-200 ease-out md:sticky md:top-0 md:z-auto md:w-60 md:max-w-none md:translate-x-0 ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <p className="font-display text-[1.35rem] leading-none tracking-tight text-ink">
+              Ideas
+              <br />
+              Scout
+            </p>
+            <p className="mt-1.5 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
+              реєстр знахідок
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            aria-label="Закрити меню"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line text-ink-dim md:hidden"
+          >
+            <span className="sr-only">Закрити</span>
+            <svg viewBox="0 0 20 20" width="14" height="14" fill="none" aria-hidden>
+              <path
+                d="M4 4l12 12M16 4L4 16"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <nav className="flex flex-1 flex-col gap-1">
         {LINKS.map((link) => {
           const active =
             link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
@@ -98,6 +158,7 @@ export default function Sidebar({
           </button>
         </form>
       )}
-    </aside>
+      </aside>
+    </>
   );
 }

@@ -19,7 +19,7 @@ export default async function ConfigFilePage({
 
   if (getConfigSource() === "github" && !getGithubEnv()) {
     return (
-      <div className="mx-auto max-w-4xl px-8 py-10">
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-10">
         <ConfigNotice title="Немає доступу до GitHub" vars={["GITHUB_TOKEN"]} />
       </div>
     );
@@ -39,7 +39,7 @@ export default async function ConfigFilePage({
   const isMarkdown = filePath.endsWith(".md") || filePath.endsWith(".mdx");
 
   return (
-    <div className="mx-auto max-w-4xl px-8 py-10">
+    <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-10">
       <div className="mb-4 font-mono text-xs text-ink-dim">
         <Link href="/config" className="hover:text-accent">
           Конфігурація

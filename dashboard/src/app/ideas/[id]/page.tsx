@@ -33,7 +33,7 @@ export default async function IdeaPage({
 
   if (!supabase) {
     return (
-      <div className="mx-auto max-w-4xl px-8 py-10">
+      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-10">
         <ConfigNotice
           title="Немає доступу до бази"
           vars={["SUPABASE_URL", "SUPABASE_SERVICE_KEY"]}
@@ -65,7 +65,7 @@ export default async function IdeaPage({
   const criteria = analyzeCriteria(record, criteriaSection);
 
   return (
-    <div className="mx-auto max-w-4xl px-8 py-10">
+    <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-10">
       <div className="mb-6 flex items-center gap-2 font-mono text-xs text-ink-dim">
         <Link href="/" className="hover:text-accent">
           {trackLabel(record.track)}
