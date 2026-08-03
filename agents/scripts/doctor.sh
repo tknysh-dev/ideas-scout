@@ -293,7 +293,15 @@ print(row.get('status') or '?', row.get('finished_at') or '')
     if [ "$age" -gt "$threshold" ]; then
       warn "${job}: останній прогін $(human_age "$age") тому (поріг $(human_age "$threshold")), статус=${r_status}"
     elif [ "$r_status" = "error" ]; then
-      warn "${job}: останній прогін завершився помилкою ($(human_age "$age") тому)"
+      # Без тексту помилки доводиться йти по логах на самій машині, а doctor.sh
+      # часто читають саме тоді, коли доступу до неї вже немає.
+      r_error="$(python3 -c "
+import json, sys
+rows = json.loads(sys.argv[1])
+errors = (rows[0] if rows else {}).get('errors') or []
+print(' '.join(str(errors[0]).split())[:300] if errors else '')
+" "$run_json" 2>/dev/null || echo "")"
+      warn "${job}: останній прогін завершився помилкою ($(human_age "$age") тому)${r_error:+ — ${r_error}}"
     else
       ok "${job}: ${r_status}, $(human_age "$age") тому"
     fi

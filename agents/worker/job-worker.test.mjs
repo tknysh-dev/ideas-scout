@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { backoffFor, buildRunId, commandForJob } from "./job-worker.mjs";
+import { backoffFor, buildRunId, commandForJob, createRealtimeSupervisor } from "./job-worker.mjs";
 
 test("buildRunId includes deterministic timestamp and job prefix", () => {
   const result = buildRunId(
@@ -41,4 +41,52 @@ test("realtime reconnect backoff grows and saturates", () => {
   assert.equal(backoffFor(4), 60_000);
   assert.equal(backoffFor(5), 120_000);
   assert.equal(backoffFor(99), 120_000);
+});
+
+function fakeSupabase() {
+  const channels = [];
+  return {
+    channels,
+    channel() {
+      const ch = {
+        listener: null,
+        removed: false,
+        on() { return ch; },
+        subscribe(listener) { ch.listener = listener; return ch; },
+      };
+      channels.push(ch);
+      return ch;
+    },
+    async removeChannel(ch) {
+      ch.removed = true;
+      // Реальний клієнт віддає CLOSED знесеному каналу — саме це колись
+      // запускало нескінченне коло перепідключень.
+      ch.listener?.("CLOSED");
+    },
+  };
+}
+
+test("teardown CLOSED does not schedule another reconnect", async () => {
+  const supabase = fakeSupabase();
+  const timers = [];
+  const supervisor = createRealtimeSupervisor({
+    supabase,
+    onEvent: () => {},
+    onFatal: () => assert.fail("не мало дійти до fatal"),
+    emit: () => {},
+    setTimer: (fn) => { timers.push(fn); return timers.length; },
+    clearTimer: () => {},
+  });
+
+  supervisor.start();
+  supabase.channels[0].listener("CHANNEL_ERROR");
+  assert.equal(timers.length, 1);
+
+  await timers[0]();
+
+  assert.equal(supabase.channels.length, 2, "має бути рівно один новий канал");
+  assert.equal(timers.length, 1, "teardown-CLOSED не планує перепідключення");
+
+  supabase.channels[1].listener("SUBSCRIBED");
+  assert.equal(timers.length, 1);
 });

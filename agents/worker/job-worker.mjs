@@ -276,39 +276,32 @@ export function createJobWorker({ supabase, workerId }) {
   return { drain };
 }
 
-async function main() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY;
-  if (!url || !key) throw new Error("Потрібні SUPABASE_URL і SUPABASE_SERVICE_KEY");
-
-  // Ліниве завантаження залишає чисті contract-тести доступними ще до `npm ci`;
-  // production-worker однаково встановлює пакет через install-launchd.sh.
-  const { createClient } = await import("@supabase/supabase-js");
-  const workerId = `${hostname()}:${process.pid}`;
-  const supabase = createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const worker = createJobWorker({ supabase, workerId });
-
+export function createRealtimeSupervisor({
+  supabase,
+  onEvent,
+  onFatal,
+  emit = log,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+}) {
   let channel = null;
   let reconnectAttempt = 0;
   let reconnectTimer = null;
   let stopping = false;
 
   function openChannel() {
-    channel = supabase
-      .channel("ideas-scout-job-worker")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "jobs" },
-        () => void worker.drain(),
-      )
+    const own = supabase.channel("ideas-scout-job-worker");
+    channel = own;
+    own
+      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => onEvent())
       .subscribe((status) => {
-        log(`realtime=${status}`);
-        if (stopping) return;
+        emit(`realtime=${status}`);
+        // Знесений канал теж віддає CLOSED. Без цієї перевірки власний teardown
+        // читався б як розрив і планував ще один reconnect — по колу, назавжди.
+        if (stopping || channel !== own) return;
         if (status === "SUBSCRIBED") {
           reconnectAttempt = 0;
-          void worker.drain();
+          onEvent();
           return;
         }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
@@ -324,27 +317,69 @@ async function main() {
       // Клієнт Supabase не завжди відновлюється сам після втрати сокета; вихід
       // ненульовим кодом віддає підйом воркера launchd-у (KeepAlive) — це єдиний
       // шлях, який не лишає процес живим, але глухим до черги.
-      log(`fatal: realtime не піднявся за ${MAX_RECONNECT_ATTEMPTS} спроб — виходжу під рестарт launchd`);
-      process.exit(1);
+      emit(`fatal: realtime не піднявся за ${MAX_RECONNECT_ATTEMPTS} спроб — виходжу під рестарт launchd`);
+      onFatal();
+      return;
     }
     const delay = immediate ? 0 : backoffFor(reconnectAttempt);
-    log(`realtime reconnect #${reconnectAttempt} через ${delay} ms`);
-    reconnectTimer = setTimeout(async () => {
+    emit(`realtime reconnect #${reconnectAttempt} через ${delay} ms`);
+    reconnectTimer = setTimer(async () => {
       reconnectTimer = null;
       if (stopping) return;
+      const previous = channel;
+      channel = null;
       try {
-        if (channel) await supabase.removeChannel(channel);
+        if (previous) await supabase.removeChannel(previous);
       } catch (error) {
-        log(`realtime removeChannel failed: ${error.message}`);
+        emit(`realtime removeChannel failed: ${error.message}`);
       }
       openChannel();
       // Черга розбирається одразу, не чекаючи на SUBSCRIBED: події, що надійшли
       // поки канал лежав, Realtime не переграє.
-      void worker.drain();
+      onEvent();
     }, delay);
   }
 
-  openChannel();
+  return {
+    start: openChannel,
+    reconnectNow() {
+      reconnectAttempt = 0;
+      if (reconnectTimer) {
+        clearTimer(reconnectTimer);
+        reconnectTimer = null;
+      }
+      scheduleReconnect({ immediate: true });
+    },
+    async stop() {
+      stopping = true;
+      if (reconnectTimer) clearTimer(reconnectTimer);
+      const previous = channel;
+      channel = null;
+      if (previous) await supabase.removeChannel(previous);
+    },
+  };
+}
+
+async function main() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_KEY;
+  if (!url || !key) throw new Error("Потрібні SUPABASE_URL і SUPABASE_SERVICE_KEY");
+
+  // Ліниве завантаження залишає чисті contract-тести доступними ще до `npm ci`;
+  // production-worker однаково встановлює пакет через install-launchd.sh.
+  const { createClient } = await import("@supabase/supabase-js");
+  const workerId = `${hostname()}:${process.pid}`;
+  const supabase = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const worker = createJobWorker({ supabase, workerId });
+
+  const realtime = createRealtimeSupervisor({
+    supabase,
+    onEvent: () => void worker.drain(),
+    onFatal: () => process.exit(1),
+  });
+  realtime.start();
 
   const safetySweep = setInterval(() => void worker.drain(), SAFETY_SWEEP_MS);
 
@@ -355,21 +390,14 @@ async function main() {
     lastTick = now;
     if (gap < WAKE_GAP_MS) return;
     log(`wake після ~${Math.round(gap / 1000)} с простою — перепідключаю realtime`);
-    reconnectAttempt = 0;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    scheduleReconnect({ immediate: true });
+    realtime.reconnectNow();
   }, WATCHDOG_MS);
 
   const shutdown = async (signal) => {
     log(`received ${signal}, stopping`);
-    stopping = true;
     clearInterval(safetySweep);
     clearInterval(watchdog);
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    if (channel) await supabase.removeChannel(channel);
+    await realtime.stop();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
