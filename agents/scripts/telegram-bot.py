@@ -657,7 +657,7 @@ def run_triage(d):
 COMMANDS = [
     ("new", "закрити чернетку і почати нову"),
     ("cancel", "викинути чернетку"),
-    ("status", "що зараз відбувається"),
+    ("status", "що зараз відбувається і що зламано"),
     ("last", "п'ять останніх карток"),
     ("help", "як користуватись ботом"),
 ]
@@ -696,13 +696,87 @@ HELP = """<b>Як цим користуватись</b>
 <b>Команди</b>
 <code>/new</code> — закрити чернетку і почати нову
 <code>/cancel</code> — викинути чернетку
-<code>/status</code> — що зараз відбувається і як відпрацювали нічні агенти
+<code>/status</code> — що зараз відбувається, як відпрацювали нічні агенти і що в системі
+зламано (прогін <code>doctor.sh</code>: машина, launchd, воркер, черга, Supabase, секрети,
+webhook). Показує лише те, що вимагає уваги; живий виклик до LLM не робиться, щоб
+не їсти ліміт підписки — для нього є <code>doctor.sh --llm</code> у терміналі
 <code>/last</code> — п'ять останніх карток
 <code>/help</code> — це повідомлення
 
 <b>Що варто знати</b>
 Кожне посилання агент піде відкривати — приватні URL сюди краще не слати. Повний
 вердикт завжди лишається карткою в репозиторії; у чат іде витяг."""
+
+
+DOCTOR_TIMEOUT_S = 180
+DOCTOR_SUMMARY_RE = re.compile(r"(\d+)\s+ок\s+·\s+(\d+)\s+попередж\w*\s+·\s+(\d+)\s+проблем")
+
+
+def run_doctor():
+    """Ганяє doctor.sh і лишає з його виводу лише те, що вимагає уваги.
+
+    Без --llm: /status ходить сюди щоразу, а реальний виклик claude -p їв би
+    ліміт підписки на кожне натискання.
+    """
+    script = os.path.join(REPO_ROOT, "agents/scripts/doctor.sh")
+    try:
+        p = subprocess.run(
+            [script],
+            cwd=REPO_ROOT,
+            env={**os.environ, "NO_COLOR": "1"},
+            capture_output=True,
+            text=True,
+            timeout=DOCTOR_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return f"❔ <b>Здоров'я системи</b>\ndoctor.sh не вклався в {DOCTOR_TIMEOUT_S} с — швидше за все висить мережева перевірка."
+    except OSError as e:
+        return f"❔ <b>Здоров'я системи</b>\nне вдалось запустити doctor.sh: {esc(e)}"
+    return format_doctor_report(p.stdout, p.returncode, p.stderr)
+
+
+def format_doctor_report(stdout, returncode, stderr=""):
+    counts = None
+    section_title = ""
+    blocks = []
+    for raw in stdout.splitlines():
+        line = raw.rstrip()
+        if not line:
+            continue
+        if not line.startswith(" "):
+            section_title = line
+            continue
+        body = line.strip()
+        if body[:1] in ("▲", "✘"):
+            blocks.append((section_title, body))
+        elif body.startswith("↳") and blocks:
+            # Підказка стосується попереднього рядка — без неї попередження
+            # часто не дає зрозуміти, що саме робити.
+            blocks[-1] = (blocks[-1][0], blocks[-1][1] + "\n   " + body)
+        else:
+            m = DOCTOR_SUMMARY_RE.search(body)
+            if m:
+                counts = m.groups()
+
+    if returncode not in (0, 1, 2) and counts is None:
+        stderr = " ".join(stderr.split())[:300]
+        return f"❔ <b>Здоров'я системи</b>\ndoctor.sh упав (код {returncode}): {esc(stderr or '—')}"
+
+    head = "✅" if not blocks else ("🔴" if any(b[1].startswith("✘") for b in blocks) else "🟡")
+    out = [f"{head} <b>Здоров'я системи</b>"]
+    if counts:
+        out.append(f"{counts[0]} ок · {counts[1]} попереджень · {counts[2]} проблем")
+    if not blocks:
+        out.append("Зауважень немає.")
+        return "\n".join(out)
+
+    current = None
+    for title, body in blocks:
+        if title != current:
+            current = title
+            out.append(f"\n<b>{esc(title)}</b>")
+        out.append(esc(body))
+    return "\n".join(out)
 
 
 def cmd_status():
@@ -729,6 +803,7 @@ def cmd_status():
     ]
     if rows:
         out.append("\n<b>Останні прогони</b>\n" + "\n".join(rows))
+    out.append("\n" + run_doctor())
     return "\n".join(out)
 
 
