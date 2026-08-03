@@ -10,13 +10,17 @@ const STATUS_META: Record<JobRow["status"], { label: string; tone: string }> = {
   cancelled: { label: "Скасовано", tone: "text-ink-dim" },
 };
 
+const JOB_TYPE_LABELS: Record<string, string> = {
+  deep_research: "Глибоке дослідження",
+  deep_research_competitors: "Дослідження конкурентів",
+};
+
 function jobLabel(job: JobRow) {
-  if (job.type !== "deep_research") return job.type;
-  if (!job.payload || typeof job.payload !== "object") return "Глибоке дослідження";
+  const base = JOB_TYPE_LABELS[job.type];
+  if (!base) return job.type;
+  if (!job.payload || typeof job.payload !== "object") return base;
   const ideaId = (job.payload as Record<string, unknown>).idea_id;
-  return typeof ideaId === "string"
-    ? `Глибоке дослідження · ${ideaId}`
-    : "Глибоке дослідження";
+  return typeof ideaId === "string" ? `${base} · ${ideaId}` : base;
 }
 
 export default function JobsTable({ jobs }: { jobs: JobRow[] }) {

@@ -74,6 +74,7 @@ export const REJECTION_META: Record<RejectionCode, string> = {
   CAPITAL: "Бракує коштів на інструмент",
   AUTONOMY: "Не проходить поріг автономності підтримки",
   SATURATED: "Ринок насичений",
+  NO_MARKET: "Немає ознак ринку/попиту",
 };
 
 export const CONFIDENCE_META: Record<Confidence, { label: string; tone: string }> = {

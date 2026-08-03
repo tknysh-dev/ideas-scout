@@ -19,7 +19,16 @@ test("worker only resolves allowlisted job types", () => {
   });
   assert.match(research.executable, /deep-research\.sh$/);
   assert.equal(research.stdin, '{"idea_id":"PI-0013"}');
-  assert.equal(research.successStatus, "dry_run");
+  assert.equal(research.successStatus, "ok");
+
+  const competitors = commandForJob({
+    type: "deep_research_competitors",
+    payload: { idea_id: "PI-0013" },
+  });
+  assert.match(competitors.executable, /deep-research\.sh$/);
+  assert.deepEqual(competitors.args, ["--stage", "competitors"]);
+  assert.equal(competitors.stdin, '{"idea_id":"PI-0013"}');
+  assert.equal(competitors.successStatus, "ok");
 
   const telegram = commandForJob({
     type: "telegram_update",

@@ -40,7 +40,7 @@ create table ideas (
   rejection_code text check (
     rejection_code in (
       'NO_MONETIZATION', 'SOURCE_SUSPECT', 'LEGAL', 'CAPABILITY_GAP',
-      'CAPITAL', 'AUTONOMY', 'SATURATED'
+      'CAPITAL', 'AUTONOMY', 'SATURATED', 'NO_MARKET'
     )
   ),
   rejection_detail text,
@@ -66,6 +66,12 @@ create table ideas (
   verdict_provider text,   -- зауваження: у реальних записах трапляються і 'claude', і 'anthropic' як позначення того самого провайдера (див. shared/contracts.md) — тому навмисно без CHECK, щоб міграція не впала на неузгоджених історичних даних
   verdict_model text,
   verdict_run_id text,     -- FK на runs(run_id) додається нижче окремим ALTER TABLE — таблиця runs визначена після ideas, а вердикт логічно належить ideas
+
+  -- Глибоке дослідження (мульти-LLM): 'deep' після того, як синтез перезаписав
+  -- поля вердикту; структуровані вердикти по критеріях — у criteria_verdicts.
+  research_depth text not null default 'initial' check (research_depth in ('initial', 'deep')),
+  deep_researched_at timestamptz,
+  deep_research_run_id text,       -- FK на runs(run_id) — ALTER TABLE нижче, з тієї ж причини, що й verdict_run_id
 
   schema_version integer not null default 3,
   criteria_version text,          -- напр. "v0.3", версія agents/criteria/criteria-<track>.md на момент вердикту
@@ -208,6 +214,10 @@ alter table ideas
   add constraint ideas_verdict_run_id_fkey
   foreign key (verdict_run_id) references runs(run_id);
 
+alter table ideas
+  add constraint ideas_deep_research_run_id_fkey
+  foreign key (deep_research_run_id) references runs(run_id);
+
 -- ============================================================================
 -- EVENTS — журнал змін ідеї: заміна секції "## Історія рішень" тіла Markdown-файлу.
 -- ============================================================================
@@ -220,6 +230,88 @@ create table events (
   actor text not null,                    -- 'collector' | 'analyst' | 'revisor' | 'triage' | 'owner' тощо (джоб або людина)
   change text not null,                   -- що саме змінилось (напр. "status: approved_pending -> accepted")
   reason text                             -- обґрунтування
+);
+
+-- ============================================================================
+-- CRITERIA_VERDICTS — структуровані вердикти по критеріях, по одному рядку на
+-- (стадія, модель, критерій). Дотепер вердикти жили лише прозою в ideas.body і
+-- відновлювались regex-парсером (dashboard/src/lib/criteria.ts); синтез кількох
+-- незалежних моделей у глибокому дослідженні потребує машиночитного джерела
+-- правди. Проза в body лишається людською випискою, а не носієм даних.
+-- ============================================================================
+
+create table criteria_verdicts (
+  id uuid primary key default gen_random_uuid(),
+  idea_id text not null references ideas(id) on delete cascade,
+  run_id text references runs(run_id),
+  stage text not null check (stage in ('initial', 'deep')),
+  kind text not null check (kind in ('model', 'synthesis')),
+  provider text not null,          -- 'claude' | 'codex' | 'gemini' | 'deepseek' | … — без CHECK, список провайдерів еволюціонує
+  model text,
+  -- Критерії базового чеклиста мають ключі '0'..'7' (номери з
+  -- agents/criteria/criteria-<track>.md); додаткові блоки глибокого
+  -- дослідження — префікс 'd_': 'd_demand', 'd_unit_econ', 'd_channels',
+  -- 'd_graveyard', 'd_dependencies', 'd_mvp', 'd_legal'.
+  criterion_key text not null,
+  verdict text not null check (
+    verdict in ('passed', 'failed', 'owner', 'skipped', 'not_applicable', 'noted')
+  ),
+  score text,                      -- шкали окремих критеріїв: 'B' (довіра до джерела), '4/5' (автономність)
+  summary text,                    -- вердикт одним рядком — пігулка на дашборді
+  detail text,                     -- обґрунтування прозою
+  evidence jsonb not null default '[]'::jsonb,  -- [{url, published_date, quote}]; факти без датованого url синтез не враховує
+  resolution text check (
+    resolution in ('consensus', 'evidence', 'cross_exam', 'pessimistic_default')
+  ),                               -- лише для kind='synthesis': як розвʼязано розбіжність моделей
+  criteria_version text,
+  created_at timestamptz not null default now(),
+  -- Повторний прогін тієї ж стадії перезаписує свої рядки upsert-ом; історія
+  -- прогонів лишається в runs/events, а не тут.
+  unique (idea_id, stage, kind, provider, criterion_key)
+);
+
+comment on column criteria_verdicts.resolution is
+  'consensus = моделі зійшлись; evidence = перемогла сторона з верифікованими джерелами; cross_exam = після раунду спростувань; pessimistic_default = докази не розвʼязали суперечку, взято найгірший вердикт.';
+
+-- ============================================================================
+-- RESEARCH_REPORTS — повні Markdown-звіти прогонів глибокого дослідження
+-- (по одному на модель + синтез). runs.meta тримає лише 64 КБ хвоста stdout,
+-- тому звіти живуть окремою таблицею.
+-- ============================================================================
+
+create table research_reports (
+  id uuid primary key default gen_random_uuid(),
+  idea_id text not null references ideas(id) on delete cascade,
+  run_id text references runs(run_id),
+  stage text not null check (stage in ('deep_criteria', 'competitors')),
+  kind text not null check (kind in ('model', 'synthesis')),
+  provider text not null,
+  model text,
+  status text not null default 'ok' check (status in ('ok', 'error', 'timeout', 'skipped')),
+  report_md text,
+  created_at timestamptz not null default now(),
+  unique (idea_id, stage, kind, provider)
+);
+
+-- ============================================================================
+-- COMPETITORS — реєстр конкурентів ніші за результатами етапу «конкуренти»
+-- глибокого дослідження (синтезовані рядки, не сирі знахідки окремих моделей).
+-- ============================================================================
+
+create table competitors (
+  id uuid primary key default gen_random_uuid(),
+  idea_id text not null references ideas(id) on delete cascade,
+  run_id text references runs(run_id),
+  name text not null,
+  url text,
+  pricing text,                    -- цінова модель вільним текстом ("$9/міс", "freemium")
+  liveness text check (liveness in ('active', 'stale', 'dead')),  -- dead = кладовище ніші; причина смерті — у weaknesses
+  last_activity date,              -- остання ознака життя (реліз, пост, оновлення)
+  strengths text,
+  weaknesses text,
+  differentiation text,            -- кут відриву, який реально втримати соло-розробнику
+  evidence jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
 );
 
 -- ============================================================================
@@ -251,6 +343,9 @@ create index idx_events_idea_id on events(idea_id);
 create index idx_sources_idea_id on sources(idea_id);
 create index idx_jobs_claimable on jobs(status, available_at, created_at);
 create index idx_jobs_created_at on jobs(created_at desc);
+create index idx_criteria_verdicts_idea_id on criteria_verdicts(idea_id);
+create index idx_research_reports_idea_id on research_reports(idea_id);
+create index idx_competitors_idea_id on competitors(idea_id);
 
 -- ============================================================================
 -- updated_at тригер для ideas
@@ -286,6 +381,9 @@ alter table runs enable row level security;
 alter table events enable row level security;
 alter table inbox enable row level security;
 alter table jobs enable row level security;
+alter table criteria_verdicts enable row level security;
+alter table research_reports enable row level security;
+alter table competitors enable row level security;
 
 create policy ideas_full_access on ideas
   for all
@@ -318,6 +416,24 @@ create policy inbox_full_access on inbox
   with check (true);
 
 create policy jobs_full_access on jobs
+  for all
+  to authenticated, service_role
+  using (true)
+  with check (true);
+
+create policy criteria_verdicts_full_access on criteria_verdicts
+  for all
+  to authenticated, service_role
+  using (true)
+  with check (true);
+
+create policy research_reports_full_access on research_reports
+  for all
+  to authenticated, service_role
+  using (true)
+  with check (true);
+
+create policy competitors_full_access on competitors
   for all
   to authenticated, service_role
   using (true)

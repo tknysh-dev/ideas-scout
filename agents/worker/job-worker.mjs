@@ -27,13 +27,24 @@ const JOB_HANDLERS = Object.freeze({
     failureNote: "Інфраструктурний dry run завершився помилкою.",
   }),
   deep_research: Object.freeze({
+    // Дослідники (до 30 хв паралельно) + крос-допит + синтез — 90 хв стелі
+    // вистачає з запасом; heartbeat воркера продовжує lease кожну хвилину.
     executable: join(REPO_ROOT, "agents/scripts/deep-research.sh"),
     args: [],
-    timeoutMs: 60_000,
+    timeoutMs: 5_400_000,
     passPayload: true,
-    successStatus: "dry_run",
-    successNote: "Глибоке дослідження успішно виконало dry run на M1.",
-    failureNote: "Dry run глибокого дослідження завершився помилкою.",
+    successStatus: "ok",
+    successNote: "Глибоке дослідження завершено на M1.",
+    failureNote: "Глибоке дослідження завершилося помилкою.",
+  }),
+  deep_research_competitors: Object.freeze({
+    executable: join(REPO_ROOT, "agents/scripts/deep-research.sh"),
+    args: ["--stage", "competitors"],
+    timeoutMs: 5_400_000,
+    passPayload: true,
+    successStatus: "ok",
+    successNote: "Дослідження конкурентів завершено на M1.",
+    failureNote: "Дослідження конкурентів завершилося помилкою.",
   }),
   telegram_update: Object.freeze({
     executable: join(REPO_ROOT, "agents/scripts/telegram-bot.py"),
@@ -76,7 +87,7 @@ export function commandForJob(job) {
 }
 
 function publicJobMeta(job) {
-  if (job.type !== "deep_research") return {};
+  if (job.type !== "deep_research" && job.type !== "deep_research_competitors") return {};
   const ideaId = job.payload?.idea_id;
   return typeof ideaId === "string" ? { idea_id: ideaId } : {};
 }
@@ -90,11 +101,11 @@ function appendLimited(current, chunk) {
   return next.length <= OUTPUT_LIMIT ? next : next.slice(next.length - OUTPUT_LIMIT);
 }
 
-function runProcess(executable, args, { stdin, timeoutMs }) {
+function runProcess(executable, args, { stdin, timeoutMs, extraEnv }) {
   return new Promise((resolveProcess) => {
     const child = spawn(executable, args, {
       cwd: REPO_ROOT,
-      env: process.env,
+      env: { ...process.env, ...extraEnv },
       shell: false,
       stdio: [stdin === null ? "ignore" : "pipe", "pipe", "pipe"],
     });
@@ -202,7 +213,12 @@ export function createJobWorker({ supabase, workerId }) {
     }, HEARTBEAT_MS);
 
     log(`job=${job.id} run=${runId} started type=${job.type}`);
-    const result = await runProcess(command.executable, command.args, command);
+    // run_id передається скрипту через середовище: рядки, які він пише в БД
+    // (criteria_verdicts, research_reports), мають посилатись на цей прогін.
+    const result = await runProcess(command.executable, command.args, {
+      ...command,
+      extraEnv: { IDEAS_SCOUT_JOB_RUN_ID: runId },
+    });
     clearInterval(heartbeat);
 
     const durationSeconds = Math.round((Date.now() - startedAt.getTime()) / 1000);

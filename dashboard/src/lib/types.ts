@@ -16,9 +16,11 @@ export type RejectionCode =
   | "CAPABILITY_GAP"
   | "CAPITAL"
   | "AUTONOMY"
-  | "SATURATED";
+  | "SATURATED"
+  | "NO_MARKET";
 export type Confidence = "high" | "medium" | "low";
 export type AuthorInterest = "none" | "affiliate" | "course_seller" | "tool_vendor";
+export type ResearchDepth = "initial" | "deep";
 
 export interface Idea {
   id: string;
@@ -49,6 +51,9 @@ export interface Idea {
   verdict_provider: string | null;
   verdict_model: string | null;
   verdict_run_id: string | null;
+  research_depth: ResearchDepth;
+  deep_researched_at: string | null;
+  deep_research_run_id: string | null;
   schema_version: number;
   criteria_version: string | null;
   body: string | null;
@@ -98,6 +103,68 @@ export interface JobRow {
   worker_id: string | null;
   run_id: string | null;
   last_error: string | null;
+}
+
+export type VerdictKind = "model" | "synthesis";
+export type CriterionVerdict =
+  | "passed"
+  | "failed"
+  | "owner"
+  | "skipped"
+  | "not_applicable"
+  | "noted";
+export type SynthesisResolution =
+  | "consensus"
+  | "evidence"
+  | "cross_exam"
+  | "pessimistic_default";
+
+export interface CriteriaVerdictRow {
+  id: string;
+  idea_id: string;
+  run_id: string | null;
+  stage: ResearchDepth;
+  kind: VerdictKind;
+  provider: string;
+  model: string | null;
+  criterion_key: string;
+  verdict: CriterionVerdict;
+  score: string | null;
+  summary: string | null;
+  detail: string | null;
+  evidence: unknown;
+  resolution: SynthesisResolution | null;
+  criteria_version: string | null;
+  created_at: string;
+}
+
+export interface ResearchReportRow {
+  id: string;
+  idea_id: string;
+  run_id: string | null;
+  stage: "deep_criteria" | "competitors";
+  kind: VerdictKind;
+  provider: string;
+  model: string | null;
+  status: "ok" | "error" | "timeout" | "skipped";
+  report_md: string | null;
+  created_at: string;
+}
+
+export interface CompetitorRow {
+  id: string;
+  idea_id: string;
+  run_id: string | null;
+  name: string;
+  url: string | null;
+  pricing: string | null;
+  liveness: "active" | "stale" | "dead" | null;
+  last_activity: string | null;
+  strengths: string | null;
+  weaknesses: string | null;
+  differentiation: string | null;
+  evidence: unknown;
+  created_at: string;
 }
 
 export interface EventRow {

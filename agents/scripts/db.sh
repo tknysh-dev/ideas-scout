@@ -396,6 +396,77 @@ for r in rows:
 }
 
 # ---------------------------------------------------------------------------
+# глибоке дослідження: criteria_verdicts / research_reports / competitors
+# ---------------------------------------------------------------------------
+
+# db_replace_criteria_verdicts <idea_id> <stage> <json|-|file>
+# payload — JSON-масив об'єктів criteria_verdicts без idea_id/stage (їх
+# проставляє команда). Delete-then-insert: повторний прогін стадії заміняє
+# всі свої попередні вердикти, включно з рядками моделей, яких цього разу
+# немає в масиві.
+db_replace_criteria_verdicts() {
+  local idea_id="$1" stage="$2" payload
+  [ -n "$idea_id" ] && [ -n "$stage" ] || {
+    db_die "replace_criteria_verdicts: потрібні idea_id, stage"; return 2; }
+  payload="$(_json_arg "${3:-}")"
+  [ -n "$payload" ] || { db_die "replace_criteria_verdicts: порожній payload"; return 2; }
+  local body
+  body="$(python3 -c '
+import json, sys
+idea_id, stage = sys.argv[1:3]
+rows = json.loads(sys.argv[3])
+if not isinstance(rows, list):
+    raise SystemExit("очікується JSON-масив")
+for r in rows:
+    r["idea_id"] = idea_id
+    r["stage"] = stage
+print(json.dumps(rows))
+' "$idea_id" "$stage" "$payload")" || {
+    db_die "replace_criteria_verdicts: невалідний JSON payload"; return 2; }
+  db_delete "/criteria_verdicts?idea_id=eq.$(_urlenc "$idea_id")&stage=eq.$(_urlenc "$stage")" >/dev/null || return 1
+  _db_request POST "/criteria_verdicts" "$body"
+}
+
+# db_get_criteria_verdicts <idea_id> [stage]
+db_get_criteria_verdicts() {
+  local idea_id="$1" stage="${2:-}"
+  [ -n "$idea_id" ] || { db_die "get_criteria_verdicts: потрібен idea_id"; return 2; }
+  local q="/criteria_verdicts?idea_id=eq.$(_urlenc "$idea_id")&select=*&order=criterion_key.asc"
+  [ -n "$stage" ] && q="${q}&stage=eq.$(_urlenc "$stage")"
+  _db_get "$q"
+}
+
+# db_upsert_research_report <json|-|file> — upsert по (idea_id, stage, kind,
+# provider); payload — один об'єкт research_reports.
+db_upsert_research_report() {
+  db_upsert "research_reports" "idea_id,stage,kind,provider" "${1:-}"
+}
+
+# db_replace_competitors <idea_id> <json|-|file>
+# payload — JSON-масив об'єктів competitors без idea_id. Delete-then-insert,
+# та сама логіка ідемпотентності, що й у replace_criteria_verdicts.
+db_replace_competitors() {
+  local idea_id="$1" payload
+  [ -n "$idea_id" ] || { db_die "replace_competitors: потрібен idea_id"; return 2; }
+  payload="$(_json_arg "${2:-}")"
+  [ -n "$payload" ] || { db_die "replace_competitors: порожній payload"; return 2; }
+  local body
+  body="$(python3 -c '
+import json, sys
+idea_id = sys.argv[1]
+rows = json.loads(sys.argv[2])
+if not isinstance(rows, list):
+    raise SystemExit("очікується JSON-масив")
+for r in rows:
+    r["idea_id"] = idea_id
+print(json.dumps(rows))
+' "$idea_id" "$payload")" || {
+    db_die "replace_competitors: невалідний JSON payload"; return 2; }
+  db_delete "/competitors?idea_id=eq.$(_urlenc "$idea_id")" >/dev/null || return 1
+  _db_request POST "/competitors" "$body"
+}
+
+# ---------------------------------------------------------------------------
 # inbox
 # ---------------------------------------------------------------------------
 
@@ -519,6 +590,10 @@ _db_usage() {
   get-last-run <job> [track]
   check-url-processed <url> [track]
   check-url-in-sources <url>
+  replace-criteria-verdicts <idea_id> <stage> <json-масив|-|file>
+  get-criteria-verdicts <idea_id> [stage]
+  upsert-research-report <json|-|file>
+  replace-competitors <idea_id> <json-масив|-|file>
   insert-inbox <json|-|file>
   update-inbox <draft_id> <json|-|file>
   get-inbox <draft_id>
@@ -546,6 +621,10 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     get-last-run) db_get_last_run "$@" ;;
     check-url-processed) db_check_url_processed "$@" ;;
     check-url-in-sources) db_check_url_in_sources "$@" ;;
+    replace-criteria-verdicts) db_replace_criteria_verdicts "$@" ;;
+    get-criteria-verdicts) db_get_criteria_verdicts "$@" ;;
+    upsert-research-report) db_upsert_research_report "$@" ;;
+    replace-competitors) db_replace_competitors "$@" ;;
     insert-inbox) db_insert_inbox "$@" ;;
     update-inbox) db_update_inbox "$@" ;;
     get-inbox) db_get_inbox "$@" ;;
