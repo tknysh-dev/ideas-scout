@@ -115,7 +115,27 @@ except Exception:
     fi
   fi
 
-  DIGEST_LINES+=("- ${job}: останній прогін ${finished_at:-?}, статус=${status:-?}, push=${push:-?}${age_note}")
+  # Сам по собі "статус=error" не каже, чи це разова мережева дрібниця, чи
+  # системна поломка (протух OAuth-токен CLI — і тоді так само впаде кожен
+  # наступний прогін). Тому текст першої помилки йде прямо в дайджест.
+  error_note=""
+  if [ "$status" = "error" ]; then
+    first_error="$(python3 -c "
+import json,sys
+rows = json.loads(sys.argv[1])
+errors = (rows[0] if rows else {}).get('errors') or []
+text = ' '.join(str(errors[0]).split()) if errors else ''
+print(text[:300])
+" "$run_json" 2>/dev/null)"
+    [ -n "$first_error" ] && error_note=$'\n'"    ↳ ${first_error}"
+  fi
+
+  # dry_run — не «все добре»: прогін відпрацював, але навмисно нічого не записав.
+  # Без явної мітки такий трек тихо простоює тижнями.
+  mode_note=""
+  [ "$status" = "dry_run" ] && mode_note=" ⚠️ у режимі dry_run — реальних змін не пише"
+
+  DIGEST_LINES+=("- ${job}: останній прогін ${finished_at:-?}, статус=${status:-?}, push=${push:-?}${age_note}${mode_note}${error_note}")
 done
 
 DIGEST_LINES+=("")
@@ -163,8 +183,13 @@ SINCE_24H="$(python3 -c "
 import datetime
 print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ'))
 ")"
-CHANGED_COUNT="$(./agents/scripts/db.sh count-ideas-changed-since "$SINCE_24H" 2>/dev/null || echo "?")"
-DIGEST_LINES+=("Ideas додано/змінено за 24 год: ${CHANGED_COUNT}")
+ACTIVITY_JSON="$(./agents/scripts/db.sh ideas-activity-since "$SINCE_24H" 2>/dev/null || echo "")"
+read -r CREATED_COUNT UPDATED_COUNT <<<"$(python3 -c "
+import json, sys
+a = json.loads(sys.argv[1])
+print(a['created'], a['updated'])
+" "$ACTIVITY_JSON" 2>/dev/null || echo "? ?")"
+DIGEST_LINES+=("Ideas за 24 год: ${CREATED_COUNT} нових, ${UPDATED_COUNT} оновлених (правки статусів/полів уже наявних карток)")
 
 DIGEST_TEXT="$(printf '%s\n' "${DIGEST_LINES[@]}")"
 echo "$DIGEST_TEXT"
@@ -254,9 +279,11 @@ print(json.dumps({
   'error': sys.argv[1] or None,
   'telegram_sent': sys.argv[2] == 'true',
   'healthcheck_pinged': sys.argv[3] == 'true',
-  'changed_ideas_24h': sys.argv[4],
+  'created_ideas_24h': sys.argv[4],
+  'updated_ideas_24h': sys.argv[5],
+  'queue': json.loads(sys.argv[6]) if sys.argv[6] else None,
 }))
-" "$TG_ERROR" "$TELEGRAM_SENT" "$HEALTHCHECK_PINGED" "$CHANGED_COUNT")"
+" "$TG_ERROR" "$TELEGRAM_SENT" "$HEALTHCHECK_PINGED" "$CREATED_COUNT" "$UPDATED_COUNT" "$QUEUE_JSON")"
   ERRORS_JSON="[]"
   [ -n "$TG_ERROR" ] && ERRORS_JSON="$(python3 -c 'import json,sys; print(json.dumps([sys.argv[1]]))' "$TG_ERROR")"
   ./agents/scripts/db.sh register-run-finish "$MONITOR_RUN_ID" "$MONITOR_STATUS" "$ERRORS_JSON" "-" "-" "-" "$META_JSON" >/dev/null 2>&1 \

@@ -427,12 +427,32 @@ db_get_inbox() {
 # статистика для monitor.sh
 # ---------------------------------------------------------------------------
 
-# db_count_ideas_changed_since <iso8601> — скільки ideas мають updated_at >= X.
-db_count_ideas_changed_since() {
+# db_ideas_activity_since <iso8601> — активність по ideas з моменту X одним JSON:
+# created (картка з'явилась у цьому вікні) і updated (стара картка, якій лише
+# змінили поля). Одне число на обидва випадки читалось як «стільки нових ідей»,
+# хоча найчастіше це правки статусів уже наявних.
+db_ideas_activity_since() {
   local since="$1"
-  [ -n "$since" ] || { db_die "count_ideas_changed_since: потрібен iso8601 timestamp"; return 2; }
-  _db_get "/ideas?select=id&updated_at=gte.$(_urlenc "$since")" | python3 -c \
-    'import json,sys; print(len(json.load(sys.stdin)))'
+  [ -n "$since" ] || { db_die "ideas_activity_since: потрібен iso8601 timestamp"; return 2; }
+  _db_get "/ideas?select=created_at&updated_at=gte.$(_urlenc "$since")" | python3 -c '
+import datetime, json, sys
+
+# PostgREST віддає офсет як "+00:00", monitor.sh передає межу з "Z" — порівнювати
+# їх як рядки не можна, тому обидва боки йдуть через fromisoformat.
+since = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
+created = updated = 0
+for row in json.load(sys.stdin):
+    at = row.get("created_at")
+    try:
+        is_new = at is not None and datetime.datetime.fromisoformat(at) >= since
+    except ValueError:
+        is_new = False
+    if is_new:
+        created += 1
+    else:
+        updated += 1
+print(json.dumps({"created": created, "updated": updated}))
+' "$since"
 }
 
 # db_queue_health — стан черги jobs одним JSON-рядком: скільки подій уже мали
@@ -502,7 +522,7 @@ _db_usage() {
   insert-inbox <json|-|file>
   update-inbox <draft_id> <json|-|file>
   get-inbox <draft_id>
-  count-ideas-changed-since <iso8601>
+  ideas-activity-since <iso8601>
   queue-health
 
 JSON-аргументи: літеральний рядок, "-" (stdin), або шлях до файлу.
@@ -529,7 +549,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     insert-inbox) db_insert_inbox "$@" ;;
     update-inbox) db_update_inbox "$@" ;;
     get-inbox) db_get_inbox "$@" ;;
-    count-ideas-changed-since) db_count_ideas_changed_since "$@" ;;
+    ideas-activity-since) db_ideas_activity_since "$@" ;;
     queue-health) db_queue_health "$@" ;;
     -h|--help|"") _db_usage; [ "$cmd" = "" ] && exit 2 || exit 0 ;;
     *) echo "db.sh: невідома команда: $cmd" >&2; _db_usage; exit 2 ;;
