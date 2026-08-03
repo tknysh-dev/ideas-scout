@@ -107,7 +107,10 @@ def findings_section(ideas: list[dict], base_url: str, per_group: int | None = N
         for status in order:
             rows = groups[status]
             shown = rows if per_group is None else rows[:per_group]
-            out.append(f"{STATUS_LABELS.get(status, esc(status))}")
+            # Порожній рядок перед кожною групою: на телефоні заголовки
+            # переносяться, і без розриву статусні групи злипаються в суцільний
+            # список, де межу видно гірше, ніж будь-який відступ.
+            out.append(f"\n{STATUS_LABELS.get(status, esc(status))}")
             out.extend(idea_line(i, base_url) for i in shown)
             if len(shown) < len(rows):
                 out.append(f"  …ще {len(rows) - len(shown)} — решта в порталі")
