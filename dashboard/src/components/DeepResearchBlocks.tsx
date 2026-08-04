@@ -1,5 +1,6 @@
 import Card from "@/components/Card";
-import VerdictDetails, { Pill } from "@/components/VerdictDetails";
+import Pill from "@/components/Pill";
+import VerdictDetails from "@/components/VerdictDetails";
 import {
   DEEP_BLOCKS,
   TONE_META,

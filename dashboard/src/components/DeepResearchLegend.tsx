@@ -1,5 +1,5 @@
 import Card from "@/components/Card";
-import { Pill } from "@/components/VerdictDetails";
+import Pill from "@/components/Pill";
 import {
   DISAGREEMENT_META,
   RESOLUTION_META,

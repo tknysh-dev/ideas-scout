@@ -3,7 +3,7 @@
 # дослідження (аналог runner.sh-принципу «одне місце знає CLI», але для
 # research-only профілю: модель лише шукає у вебі й повертає текст).
 #
-# Після переходу на ручний handoff (docs/plans/deep-research-handoff.md) конвеєр
+# Після переходу на ручний handoff (docs/operations.md, розділ 3.3; shared/contracts.md) конвеєр
 # кличе звідси лише claude — синтезатора. Гілки codex/gemini/deepseek лишаються
 # робочими для ручних викликів і майбутніх сценаріїв, але дослідниками більше
 # не працюють: звіти зовнішніх моделей власник збирає в браузерних UI.
@@ -13,7 +13,8 @@
 #   llm-invoke.sh run <provider> [--model X] [--timeout S] [--workdir DIR]
 #                                              — промпт зі stdin, відповідь у stdout
 #
-# Провайдери: claude | codex | gemini | deepseek.
+# Провайдери: claude | codex | gemini | deepseek. Конвеєр кличе лише claude;
+# codex/gemini/deepseek — тільки для ручних викликів.
 #
 # Межа безпеки research-профілю ЖОРСТКІША за runner.sh: жодних Write/Edit,
 # жодного db.sh, жодного доступу до репозиторію. Дослідник читає веб і друкує
@@ -50,6 +51,7 @@ usage() {
   llm-invoke.sh run <claude|codex|gemini|deepseek> [--model X] [--timeout S] [--workdir DIR]
 
 Промпт для run подається на stdin, відповідь моделі — у stdout.
+codex/gemini/deepseek — лише для ручних викликів, конвеєр їх не кличе.
 EOF
 }
 
@@ -221,7 +223,7 @@ check_one() {
 
 cmd_check() {
   local providers=("$@")
-  [ ${#providers[@]} -gt 0 ] || providers=(claude codex gemini deepseek)
+  [ ${#providers[@]} -gt 0 ] || providers=(claude)
   local failed=0
   for p in "${providers[@]}"; do
     check_one "$p" || failed=1

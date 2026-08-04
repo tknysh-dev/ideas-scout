@@ -14,8 +14,6 @@ import {
 } from "@/lib/deep-research";
 import type { CriteriaVerdictRow } from "@/lib/types";
 
-export { default as Pill } from "@/components/Pill";
-
 // Список доказів (лінк + дата + цитата) — спільна розмітка для синтезу
 // (VerdictDetails) і для окремого рядка моделі (VerdictRowDetails).
 function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {

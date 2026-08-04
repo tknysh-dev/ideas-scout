@@ -4,7 +4,7 @@ import { useId, useRef, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { EASE } from "@/components/motion";
 
-export interface DeepResearchTab {
+interface DeepResearchTab {
   provider: string;
   count: number;
   panel: ReactNode;

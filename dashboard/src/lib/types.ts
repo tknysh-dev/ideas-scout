@@ -138,19 +138,6 @@ export interface CriteriaVerdictRow {
   created_at: string;
 }
 
-export interface ResearchReportRow {
-  id: string;
-  idea_id: string;
-  run_id: string | null;
-  stage: "deep_criteria" | "competitors";
-  kind: VerdictKind;
-  provider: string;
-  model: string | null;
-  status: "ok" | "error" | "timeout" | "skipped";
-  report_md: string | null;
-  created_at: string;
-}
-
 export interface CompetitorRow {
   id: string;
   idea_id: string;

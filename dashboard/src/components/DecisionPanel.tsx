@@ -47,13 +47,11 @@ export default function DecisionPanel({
   // Кнопки в шапці картки ідеї — без власної рамки й заголовка, вирівняні
   // праворуч під описом.
   bare = false,
-  onDecided,
 }: {
   ideaId: string;
   currentStatus: IdeaStatus;
   compact?: boolean;
   bare?: boolean;
-  onDecided?: () => void;
 }) {
   const router = useRouter();
   const [reason, setReason] = useState("");
@@ -77,7 +75,6 @@ export default function DecisionPanel({
       setReason("");
       setRejectionCode("");
       setDialog(null);
-      onDecided?.();
       router.refresh();
     });
   }

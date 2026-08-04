@@ -1,5 +1,5 @@
 import Card from "@/components/Card";
-import { Pill } from "@/components/VerdictDetails";
+import Pill from "@/components/Pill";
 import { formatDate } from "@/lib/dates";
 import { LIVENESS_META, parseEvidence } from "@/lib/deep-research";
 import type { CompetitorRow } from "@/lib/types";

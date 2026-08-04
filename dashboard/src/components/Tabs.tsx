@@ -4,7 +4,7 @@ import Link from "next/link";
 import { motion } from "motion/react";
 import { EASE } from "@/components/motion";
 
-export interface TabItem {
+interface TabItem {
   value: string;
   label: string;
   href: string;
