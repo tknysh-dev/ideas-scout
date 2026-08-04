@@ -43,6 +43,12 @@ const CHECKLISTS: Record<string, CriterionSpec[]> = {
 
 export type CriterionTone = "passed" | "failed" | "owner" | "skipped" | "noted";
 
+// Чек-лист треку — потрібен і поза analyzeCriteria: наприклад, табам моделей
+// глибокого дослідження, щоб підписати критерій_key='3' назвою «Реалізовність...».
+export function getChecklist(track: string): CriterionSpec[] | undefined {
+  return CHECKLISTS[track];
+}
+
 export interface CriterionResult {
   spec: CriterionSpec;
   tone: CriterionTone;

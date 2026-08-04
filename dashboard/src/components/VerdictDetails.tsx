@@ -9,7 +9,9 @@ import {
   VERDICT_TONE,
   parseEvidence,
   type CriterionVerdicts,
+  type EvidenceItem,
 } from "@/lib/deep-research";
+import type { CriteriaVerdictRow } from "@/lib/types";
 
 export function Pill({
   label,
@@ -32,6 +34,72 @@ export function Pill({
       <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: `var(--status-${token}-fg)` }} />
       {label}
     </span>
+  );
+}
+
+// Список доказів (лінк + дата + цитата) — спільна розмітка для синтезу
+// (VerdictDetails) і для окремого рядка моделі (VerdictRowDetails).
+function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {
+  if (evidence.length === 0) return null;
+  return (
+    <ul className="space-y-2">
+      {evidence.map((item, index) => (
+        <li key={index} className="text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all text-sm text-accent hover:underline"
+            >
+              {item.url}
+            </a>
+            {item.published_date && (
+              <span className="font-mono text-xs text-ink-dim">{formatDate(item.published_date)}</span>
+            )}
+          </div>
+          {item.quote && (
+            <blockquote className="mt-1 border-l-2 border-line-strong pl-3 text-sm italic text-ink-dim">
+              “{item.quote}”
+            </blockquote>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Вердикт, оцінка, деталі й докази одного рядка моделі (вкладка провайдера в
+// DeepResearchTabs) — та сама розмітка, що в VerdictDetails, але без
+// синтезу: тут усі поля беруться з самого рядка моделі, а не з synthesis.
+export function VerdictRowDetails({ row }: { row: CriteriaVerdictRow }) {
+  const meta = TONE_META[VERDICT_TONE[row.verdict]];
+  const evidence = parseEvidence(row.evidence);
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Pill label={meta.label} token={meta.token} />
+        {row.score && (
+          <span className="text-xs text-ink-dim">
+            Оцінка:{" "}
+            <span className="rounded border border-line px-1.5 py-0.5 font-mono text-[11px] text-ink-dim">
+              {row.score}
+            </span>
+          </span>
+        )}
+      </div>
+
+      {row.summary && <p className="text-sm text-ink-dim first-letter:uppercase">{row.summary}</p>}
+
+      {row.detail && (
+        <CollapsibleBody>
+          <Prose content={row.detail} />
+        </CollapsibleBody>
+      )}
+
+      <EvidenceList evidence={evidence} />
+    </div>
   );
 }
 
@@ -78,32 +146,7 @@ export default function VerdictDetails({ entry }: { entry: CriterionVerdicts }) 
         </CollapsibleBody>
       )}
 
-      {evidence.length > 0 && (
-        <ul className="space-y-2">
-          {evidence.map((item, index) => (
-            <li key={index} className="text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <a
-                  href={item.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="break-all text-sm text-accent hover:underline"
-                >
-                  {item.url}
-                </a>
-                {item.published_date && (
-                  <span className="font-mono text-xs text-ink-dim">{formatDate(item.published_date)}</span>
-                )}
-              </div>
-              {item.quote && (
-                <blockquote className="mt-1 border-l-2 border-line-strong pl-3 text-sm italic text-ink-dim">
-                  “{item.quote}”
-                </blockquote>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      <EvidenceList evidence={evidence} />
     </div>
   );
 }

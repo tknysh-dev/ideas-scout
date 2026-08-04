@@ -8,7 +8,7 @@ import type {
   CriterionVerdict,
   SynthesisResolution,
 } from "./types";
-import type { CriterionTone } from "./criteria";
+import { getChecklist, type CriterionSpec, type CriterionTone } from "./criteria";
 
 export type { CriterionTone };
 
@@ -174,4 +174,53 @@ export function groupVerdicts(rows: CriteriaVerdictRow[]): DeepResearchData {
   );
 
   return { byKey, providers: [...providers].sort(), hasDisagreement };
+}
+
+export interface ProviderVerdictItem {
+  key: string;
+  title: string;
+  row: CriteriaVerdictRow;
+}
+
+export interface ProviderGroup {
+  provider: string;
+  items: ProviderVerdictItem[];
+}
+
+function criterionTitle(checklist: CriterionSpec[] | undefined, key: string): string {
+  const deepBlock = DEEP_BLOCKS.find((block) => block.key === key);
+  if (deepBlock) return deepBlock.title;
+  const spec = checklist?.find((item) => String(item.n) === key);
+  return spec?.title ?? `Критерій ${key}`;
+}
+
+// Базові критерії йдуть за номером, d_-блоки — одразу після них, у порядку
+// DEEP_BLOCKS: так вкладка моделі читається в тому ж порядку, що й
+// консолідований блок вище.
+function criterionOrder(key: string): number {
+  const deepIndex = DEEP_BLOCKS.findIndex((block) => block.key === key);
+  if (deepIndex !== -1) return 1000 + deepIndex;
+  const n = Number(key);
+  return Number.isFinite(n) ? n : 2000;
+}
+
+// Групування вердиктів «за провайдером» (для табів на сторінці ідеї) — на
+// відміну від groupVerdicts (за критерієм, для консолідованого блоку).
+export function groupByProvider(rows: CriteriaVerdictRow[], track: string): ProviderGroup[] {
+  const checklist = getChecklist(track);
+  const byProvider = new Map<string, ProviderVerdictItem[]>();
+
+  for (const row of rows) {
+    if (row.kind !== "model") continue;
+    const items = byProvider.get(row.provider) ?? [];
+    items.push({ key: row.criterion_key, title: criterionTitle(checklist, row.criterion_key), row });
+    byProvider.set(row.provider, items);
+  }
+
+  return [...byProvider.entries()]
+    .map(([provider, items]) => ({
+      provider,
+      items: items.sort((a, b) => criterionOrder(a.key) - criterionOrder(b.key)),
+    }))
+    .sort((a, b) => a.provider.localeCompare(b.provider));
 }

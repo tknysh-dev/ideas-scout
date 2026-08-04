@@ -7,6 +7,8 @@ import CriteriaAnalysisSection from "@/components/CriteriaAnalysis";
 import DecisionPanel from "@/components/DecisionPanel";
 import DeepResearchBlocks from "@/components/DeepResearchBlocks";
 import DeepResearchLegend from "@/components/DeepResearchLegend";
+import DeepResearchProviderPanel from "@/components/DeepResearchProviderPanel";
+import DeepResearchTabs from "@/components/DeepResearchTabs";
 import { Field, FieldGroup } from "@/components/FieldGroup";
 import Prose from "@/components/Prose";
 import StatusBadge from "@/components/StatusBadge";
@@ -22,7 +24,7 @@ import {
 } from "@/lib/status";
 import { analyzeCriteria, splitCriteriaSection } from "@/lib/criteria";
 import type { StructuredVerdict } from "@/lib/criteria";
-import { groupVerdicts, VERDICT_TONE } from "@/lib/deep-research";
+import { groupByProvider, groupVerdicts, VERDICT_TONE } from "@/lib/deep-research";
 import type { CompetitorRow, CriteriaVerdictRow, EventRow, Idea, SourceRow } from "@/lib/types";
 import { formatDate, formatDateTime } from "@/lib/dates";
 
@@ -75,6 +77,7 @@ export default async function IdeaPage({
   }
 
   const deep = groupVerdicts((verdictRows ?? []) as CriteriaVerdictRow[]);
+  const providerGroups = groupByProvider((verdictRows ?? []) as CriteriaVerdictRow[], record.track);
   const competitors = (competitorRows ?? []) as CompetitorRow[];
 
   // Після глибокого дослідження вердикт критерію існує як дані, тож розбір
@@ -243,6 +246,26 @@ export default async function IdeaPage({
       )}
 
       {deep.byKey.size > 0 && <DeepResearchBlocks data={deep} ideaId={record.id} />}
+
+      {providerGroups.length > 0 && (
+        <section className="mt-8">
+          <h2 className="mb-3 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
+            Глибоке дослідження: за моделями
+          </h2>
+          <p className="mb-3 text-sm text-ink-dim">
+            Консолідований розбір вище лишається головним. Тут — що саме принесла кожна
+            модель-дослідник: її вердикти, оцінки, пояснення й докази по всіх критеріях і
+            додаткових блоках.
+          </p>
+          <DeepResearchTabs
+            tabs={providerGroups.map((group) => ({
+              provider: group.provider,
+              count: group.items.length,
+              panel: <DeepResearchProviderPanel group={group} ideaId={record.id} />,
+            }))}
+          />
+        </section>
+      )}
 
       {competitors.length > 0 && (
         <CompetitorsSection competitors={competitors} ideaId={record.id} />
