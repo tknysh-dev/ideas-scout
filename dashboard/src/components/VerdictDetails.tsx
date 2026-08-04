@@ -2,6 +2,7 @@ import CollapsibleBody from "@/components/CollapsibleBody";
 import Prose from "@/components/Prose";
 import { formatDate } from "@/lib/dates";
 import {
+  DISAGREEMENT_META,
   RESOLUTION_META,
   RESOLUTION_TOKEN,
   TONE_META,
@@ -51,22 +52,24 @@ export default function VerdictDetails({ entry }: { entry: CriterionVerdicts }) 
             const meta = TONE_META[VERDICT_TONE[row.verdict]];
             return <Pill key={row.provider} label={`${row.provider}: ${meta.label}`} token={meta.token} />;
           })}
-          {disagreement && <Pill label="моделі розійшлись" token={TONE_META.owner.token} />}
+          {disagreement && <Pill label={DISAGREEMENT_META.label} token={TONE_META.owner.token} />}
         </div>
       )}
 
       {synthesis?.resolution && (
-        <Pill
-          label={RESOLUTION_META[synthesis.resolution].label}
-          token={RESOLUTION_TOKEN[synthesis.resolution]}
-          title={RESOLUTION_META[synthesis.resolution].hint}
-        />
+        <div className="space-y-1">
+          <Pill label={RESOLUTION_META[synthesis.resolution].label} token={RESOLUTION_TOKEN[synthesis.resolution]} />
+          <p className="text-xs text-ink-dim">{RESOLUTION_META[synthesis.resolution].hint}</p>
+        </div>
       )}
 
       {synthesis?.score && (
-        <span className="ml-1 inline-block rounded border border-line px-1.5 py-0.5 font-mono text-[11px] text-ink-dim">
-          {synthesis.score}
-        </span>
+        <p className="text-xs text-ink-dim">
+          Оцінка:{" "}
+          <span className="rounded border border-line px-1.5 py-0.5 font-mono text-[11px] text-ink-dim">
+            {synthesis.score}
+          </span>
+        </p>
       )}
 
       {synthesis?.detail && (

@@ -3,7 +3,7 @@ import CollapsibleBody from "@/components/CollapsibleBody";
 import Prose from "@/components/Prose";
 import VerdictDetails from "@/components/VerdictDetails";
 import type { CriteriaAnalysis } from "@/lib/criteria";
-import { TONE_META, type CriterionVerdicts } from "@/lib/deep-research";
+import { MODEL_VOTES_INTRO, TONE_META, type CriterionVerdicts } from "@/lib/deep-research";
 
 export default function CriteriaAnalysisSection({
   analysis,
@@ -22,6 +22,10 @@ export default function CriteriaAnalysisSection({
       <h2 className="mb-3 font-mono text-[11px] uppercase tracking-widest text-ink-dim">
         Аналіз за критеріями
       </h2>
+
+      {verdicts && verdicts.size > 0 && (
+        <p className="mb-3 text-sm text-ink-dim">{MODEL_VOTES_INTRO}</p>
+      )}
 
       <ul className="space-y-3">
         {analysis.results.map(({ spec, tone, verdict, body, sharedWith }, index) => {

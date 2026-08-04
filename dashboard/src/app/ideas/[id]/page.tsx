@@ -6,6 +6,7 @@ import ConfigNotice from "@/components/ConfigNotice";
 import CriteriaAnalysisSection from "@/components/CriteriaAnalysis";
 import DecisionPanel from "@/components/DecisionPanel";
 import DeepResearchBlocks from "@/components/DeepResearchBlocks";
+import DeepResearchLegend from "@/components/DeepResearchLegend";
 import { Field, FieldGroup } from "@/components/FieldGroup";
 import Prose from "@/components/Prose";
 import StatusBadge from "@/components/StatusBadge";
@@ -230,6 +231,8 @@ export default async function IdeaPage({
           )}
         </FieldGroup>
       </div>
+
+      {deep.byKey.size > 0 && <DeepResearchLegend ideaId={record.id} />}
 
       {criteria && (
         <CriteriaAnalysisSection
