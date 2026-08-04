@@ -27,7 +27,7 @@ import {
 import { analyzeCriteria, splitCriteriaSection, splitSection } from "@/lib/criteria";
 import type { StructuredVerdict } from "@/lib/criteria";
 import { groupByProvider, groupVerdicts, VERDICT_TONE } from "@/lib/deep-research";
-import type { CompetitorRow, CriteriaVerdictRow, EventRow, Idea, SourceRow } from "@/lib/types";
+import type { CompetitorRow, CriteriaVerdictRow, EventRow, Idea, JobStatus, SourceRow } from "@/lib/types";
 import { formatDate, formatDateTime } from "@/lib/dates";
 
 // Сторінка показує хід синтезу і оновлюється сама, поки він іде, — запечений
@@ -59,19 +59,31 @@ export default async function IdeaPage({
     { data: events },
     { data: verdictRows },
     { data: competitorRows },
-    { data: activeJobs },
+    { data: lastJobs },
   ] = await Promise.all([
     supabase.from("ideas").select("*").eq("id", id).maybeSingle(),
     supabase.from("sources").select("*").eq("idea_id", id).order("id"),
     supabase.from("events").select("*").eq("idea_id", id).order("happened_at"),
-    supabase.from("criteria_verdicts").select("*").eq("idea_id", id).eq("stage", "deep"),
-    supabase.from("competitors").select("*").eq("idea_id", id).order("created_at"),
+    supabase
+      .from("criteria_verdicts")
+      .select("*")
+      .eq("idea_id", id)
+      .eq("stage", "deep")
+      .is("superseded_at", null),
+    supabase
+      .from("competitors")
+      .select("*")
+      .eq("idea_id", id)
+      .is("superseded_at", null)
+      .order("created_at"),
+    // Беремо найсвіжіший job незалежно від статусу: якщо після невдалої
+    // спроби вже був успішний прогін, саме він лишиться останнім за
+    // created_at, і блок стану на сторінці правильно сховається сам.
     supabase
       .from("jobs")
-      .select("status,created_at,run_id")
+      .select("status,created_at,run_id,last_error")
       .eq("type", "deep_research_synthesis")
       .filter("payload->>idea_id", "eq", id)
-      .in("status", ["pending", "running"])
       .order("created_at", { ascending: false })
       .limit(1),
   ]);
@@ -92,7 +104,13 @@ export default async function IdeaPage({
   const deep = groupVerdicts((verdictRows ?? []) as CriteriaVerdictRow[]);
   const providerGroups = groupByProvider((verdictRows ?? []) as CriteriaVerdictRow[], record.track);
   const competitors = (competitorRows ?? []) as CompetitorRow[];
-  const activeJob = (activeJobs?.[0] ?? null) as ActiveSynthesisJob | null;
+  const lastJob = (lastJobs?.[0] ?? null) as
+    | { status: JobStatus; created_at: string; run_id: string | null; last_error: string | null }
+    | null;
+  // Успішний прогін — найкращий стан, який і так видно з переписаної картки;
+  // окремий блок для нього лише дублював би те, що вже на сторінці.
+  const activeJob =
+    lastJob && lastJob.status !== "succeeded" ? (lastJob as ActiveSynthesisJob) : null;
 
   // Після глибокого дослідження вердикт критерію існує як дані, тож розбір
   // прози лишається лише джерелом пояснювального тексту, а не вердикту.

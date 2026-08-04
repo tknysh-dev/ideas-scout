@@ -173,24 +173,31 @@ export async function commitDeepResearchReports(
   // Повна заміна замість точкового upsert-у: інакше мітки попередньої
   // консолідації, яких цього разу не було, лишились би в базі привидами —
   // вкладка моделі, яку власник більше не питав, показувала б старий вердикт.
+  // Витісняємо, а не видаляємо: старий прогін лишається в тих самих таблицях
+  // під superseded_at, щоб було з чим порівняти новий (та сама модель у новій
+  // версії). Часткові unique-індекси діють лише на superseded_at is null, тому
+  // після цього UPDATE вставка нових рядків не конфліктує зі старими.
   // Рядків kind='synthesis' це не торкається: їх пише deep-research.py.
+  const supersededAt = new Date().toISOString();
   const cleanup = await Promise.all([
     supabase
       .from("criteria_verdicts")
-      .delete()
+      .update({ superseded_at: supersededAt })
       .eq("idea_id", ideaId)
       .eq("stage", "deep")
-      .eq("kind", "model"),
+      .eq("kind", "model")
+      .is("superseded_at", null),
     supabase
       .from("research_reports")
-      .delete()
+      .update({ superseded_at: supersededAt })
       .eq("idea_id", ideaId)
       .eq("stage", "deep_criteria")
-      .eq("kind", "model"),
+      .eq("kind", "model")
+      .is("superseded_at", null),
   ]);
   for (const result of cleanup) {
     if (result.error) {
-      return { error: `Не вдалося прибрати попередню консолідацію: ${result.error.message}` };
+      return { error: `Не вдалося витіснити попередню консолідацію: ${result.error.message}` };
     }
   }
 
@@ -272,7 +279,7 @@ export async function commitDeepResearchReports(
       ...saved,
       error:
         `Звіти збережено, але синтез не поставився в чергу: ${jobError.message}. ` +
-        "Повторіть консолідацію — записані звіти просто перезапишуться тими самими.",
+        "Повторіть консолідацію — щойно записані звіти просто витісняться тими самими.",
     };
   }
 

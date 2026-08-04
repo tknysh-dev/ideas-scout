@@ -265,9 +265,11 @@ create table criteria_verdicts (
   ),                               -- лише для kind='synthesis': як розвʼязано розбіжність моделей
   criteria_version text,
   created_at timestamptz not null default now(),
-  -- Повторний прогін тієї ж стадії перезаписує свої рядки upsert-ом; історія
-  -- прогонів лишається в runs/events, а не тут.
-  unique (idea_id, stage, kind, provider, criterion_key)
+  -- Повторний прогін не стирає попередній, а витісняє його: рядки лишаються в
+  -- таблиці з проставленим superseded_at, щоб можна було порівняти вердикти
+  -- різних версій моделей. Поточні дані — це рядки з superseded_at is null,
+  -- і унікальність діє лише серед них (uq_criteria_verdicts_current нижче).
+  superseded_at timestamptz
 );
 
 comment on column criteria_verdicts.resolution is
@@ -290,7 +292,7 @@ create table research_reports (
   status text not null default 'ok' check (status in ('ok', 'error', 'timeout', 'skipped')),
   report_md text,
   created_at timestamptz not null default now(),
-  unique (idea_id, stage, kind, provider)
+  superseded_at timestamptz        -- null = поточний звіт; заповнене = витіснений пізнішим прогоном (uq_research_reports_current)
 );
 
 -- ============================================================================
@@ -312,7 +314,8 @@ create table competitors (
   weaknesses text,
   differentiation text,            -- кут відриву, який реально втримати соло-розробнику
   evidence jsonb not null default '[]'::jsonb,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  superseded_at timestamptz        -- null = поточний реєстр; заповнене = витіснений пізнішим прогоном
 );
 
 -- ============================================================================
@@ -347,6 +350,20 @@ create index idx_jobs_created_at on jobs(created_at desc);
 create index idx_criteria_verdicts_idea_id on criteria_verdicts(idea_id);
 create index idx_research_reports_idea_id on research_reports(idea_id);
 create index idx_competitors_idea_id on competitors(idea_id);
+
+-- Часткові унікальні індекси = «один поточний рядок на (ідея, стадія, вид,
+-- провайдер[, критерій])»; історичні рядки з проставленим superseded_at під
+-- обмеження не потрапляють. Вони ж обслуговують читання поточних даних по
+-- ідеї, бо idea_id — перша колонка.
+create unique index uq_criteria_verdicts_current
+  on criteria_verdicts (idea_id, stage, kind, provider, criterion_key)
+  where superseded_at is null;
+create unique index uq_research_reports_current
+  on research_reports (idea_id, stage, kind, provider)
+  where superseded_at is null;
+create index idx_competitors_current
+  on competitors (idea_id)
+  where superseded_at is null;
 
 -- ============================================================================
 -- updated_at тригер для ideas

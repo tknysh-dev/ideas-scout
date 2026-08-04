@@ -567,7 +567,14 @@ if [ "$PROBE_WEBSEARCH" -eq 1 ] && [ "$SKIP_NETWORK" -eq 0 ]; then
   WS_OUT="$(printf '%s' "$WEBSEARCH_PROMPT" \
     | "$REPO_ROOT/agents/scripts/llm-invoke.sh" run claude --timeout 240 2>&1)"
   WS_TAIL="$(printf '%s' "$WS_OUT" | tr '\n' ' ' | head -c 200)"
-  if printf '%s' "$WS_OUT" | grep -Eq 'https?://[^[:space:]]+' \
+  # Модель, яка не змогла автентифікуватись, теж не поверне URL — але це зовсім
+  # інша поломка з іншим лікуванням. Не розрізнивши їх, доктор відправляв би
+  # шукати проблему з веб-пошуком там, де просто протух логін.
+  if printf '%s' "$WS_OUT" | grep -Eqi 'oauth|authenticat|401|invalid api key|credit balance'; then
+    err "claude не автентифікувався — виклик навіть не дійшов до моделі, тож ні синтезу, ні перевірки пошуку зараз не буде"
+    hint "відповідь: ${WS_TAIL:-（порожньо）}"
+    hint "залогінься під агентським юзером: claude"
+  elif printf '%s' "$WS_OUT" | grep -Eq 'https?://[^[:space:]]+' \
      && printf '%s' "$WS_OUT" | grep -Eq '[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
     ok "claude через llm-invoke.sh реально шукає у вебі (повернув URL з датою: ${WS_TAIL})"
   else
@@ -598,8 +605,12 @@ print(str(d.get('tables_ok', False)).lower(), d.get('reports_failed', 0), d.get(
 " "$DR_JSON" 2>/dev/null || echo "false 0 0 0 -")"
 
     if [ "$DR_TABLES" != "true" ]; then
-      err "таблиць глибокого дослідження немає в базі — міграція не накочена, і вставлені власником звіти нікуди буде записати"
-      hint "shared/migrations/apply.sh shared/migrations/2026-07-31-deep-research.sql"
+      # Цей запит читає й колонки, додані пізнішими міграціями, тому «немає
+      # таблиць» насправді означає «бракує якоїсь із міграцій» — назвати одну
+      # конкретну означало б відправити не туди.
+      err "структура таблиць глибокого дослідження не та, якої чекає код — якоїсь міграції не накочено, і вставлені власником звіти нікуди буде записати"
+      hint "накоти всі міграції по черзі: ls shared/migrations/*.sql"
+      hint "кожну — shared/migrations/apply.sh <файл> (або вручну через SQL Editor)"
     else
       ok "таблиці глибокого дослідження на місці"
     fi

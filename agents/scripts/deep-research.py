@@ -296,12 +296,27 @@ def sanitize_competitors(raw) -> list[dict]:
     return result
 
 
+def supersede(path: str) -> None:
+    """Позначає поточні рядки витісненими замість того, щоб їх видаляти.
+
+    Прогони глибокого дослідження порівнюють між собою (та сама модель у новій
+    версії), тому попередні вердикти, звіти й конкуренти лишаються в тих самих
+    таблицях; поточні дані — це рядки з superseded_at is null.
+    """
+    db._request(
+        "PATCH",
+        f"{path}&superseded_at=is.null",
+        {"superseded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+    )
+
+
 def load_model_reports(idea_id: str) -> list[dict]:
     """Вербатим-звіти зовнішніх моделей, які власник вставив на порталі."""
     quoted_id = urllib.parse.quote(idea_id, safe="")
     rows = db._request(
         "GET",
         f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.deep_criteria&kind=eq.model"
+        "&superseded_at=is.null"
         "&select=provider,model,status,report_md&order=provider.asc",
     ) or []
     return [row for row in rows
@@ -340,20 +355,30 @@ def parse_model_reports(reports: list[dict], allowed_keys: set[str]) -> tuple[di
     return criteria_by_provider, competitors_by_provider
 
 
-def save_synthesis_report(idea_id: str, run_id: str | None, status: str, report_md: str) -> None:
-    """Обидва виклики синтезу — в одному рядку research_reports: unique-ключ
-    таблиці (idea_id, stage, kind, provider) не дає завести два рядки claude."""
+def save_synthesis_report(idea_id: str, run_id: str | None, status: str, report_md: str,
+                          report_id: str | None = None) -> str | None:
+    """Обидва виклики синтезу — в одному рядку research_reports: unique-індекс
+    таблиці (idea_id, stage, kind, provider) не дає завести два рядки claude.
+
+    Рядок попереднього прогону витісняється, а не видаляється. Але рядок, який
+    цей же прогін уже завів (виклик A), доповнюється на місці: історією має
+    бути завершений прогін, а не його проміжний стан, тож id рядка передається
+    назад у наступний виклик.
+    """
+    payload = {"status": status, "report_md": report_md[:200_000]}
+    if report_id:
+        db._request("PATCH", f"/research_reports?id=eq.{urllib.parse.quote(report_id, safe='')}",
+                    payload)
+        return report_id
     quoted_id = urllib.parse.quote(idea_id, safe="")
-    db._request(
-        "DELETE",
-        f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.deep_criteria&kind=eq.synthesis",
-    )
-    db._request("POST", "/research_reports", [{
+    supersede(f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.deep_criteria&kind=eq.synthesis")
+    rows = db._request("POST", "/research_reports", [{
         "idea_id": idea_id, "run_id": run_id, "stage": "deep_criteria",
         "kind": "synthesis", "provider": "claude",
         "model": os.environ.get("RUNNER_CLAUDE_MODEL"),
-        "status": status, "report_md": report_md[:200_000],
+        **payload,
     }])
+    return rows[0].get("id") if isinstance(rows, list) and rows else None
 
 
 def build_idea_updates(track: str, idea: dict, synth_rows: dict, updates_raw) -> tuple[dict, list[str]]:
@@ -474,7 +499,7 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
             f"deep-research: виклик A не повернув валідних вердиктів (exit={exit_a}) — "
             "повний вивід збережено в research_reports, картку не змінено"
         )
-    save_synthesis_report(idea_id, run_id, "ok", output_a)
+    report_id = save_synthesis_report(idea_id, run_id, "ok", output_a)
     missing = sorted(allowed_keys - set(synth_rows))
     log(f"виклик A: вердиктів {len(synth_rows)} з {len(allowed_keys)}"
         + (f"; без вердикту лишились: {', '.join(missing)}" if missing else ""))
@@ -484,7 +509,7 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
                      "model": os.environ.get("RUNNER_CLAUDE_MODEL"),
                      "criteria_version": criteria_version}
                     for row in synth_rows.values()]
-    db._request("DELETE", f"/criteria_verdicts?idea_id=eq.{quoted_id}&stage=eq.deep&kind=eq.synthesis")
+    supersede(f"/criteria_verdicts?idea_id=eq.{quoted_id}&stage=eq.deep&kind=eq.synthesis")
     db._request("POST", "/criteria_verdicts", verdict_rows)
     log(f"criteria_verdicts: записано {len(verdict_rows)} рядків синтезу")
 
@@ -544,6 +569,7 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
         idea_id, run_id, "ok" if parsed_b else ("timeout" if exit_b == 124 else "error"),
         "## Виклик A: прогалини та адʼюдикація\n\n" + output_a
         + "\n\n## Виклик B: текст картки та конкуренти\n\n" + output_b,
+        report_id,
     )
     if not parsed_b:
         raise SystemExit(
@@ -555,7 +581,7 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
     if final_competitors:
         for row in final_competitors:
             row.update({"idea_id": idea_id, "run_id": run_id})
-        db._request("DELETE", f"/competitors?idea_id=eq.{quoted_id}")
+        supersede(f"/competitors?idea_id=eq.{quoted_id}")
         db._request("POST", "/competitors", final_competitors)
         log(f"competitors: записано {len(final_competitors)} рядків")
     else:

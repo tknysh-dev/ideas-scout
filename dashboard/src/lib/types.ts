@@ -135,6 +135,7 @@ export interface CriteriaVerdictRow {
   resolution: SynthesisResolution | null;
   criteria_version: string | null;
   created_at: string;
+  superseded_at?: string | null;
 }
 
 export interface CompetitorRow {
@@ -151,6 +152,7 @@ export interface CompetitorRow {
   differentiation: string | null;
   evidence: unknown;
   created_at: string;
+  superseded_at?: string | null;
 }
 
 export interface EventRow {

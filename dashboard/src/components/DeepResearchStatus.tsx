@@ -3,17 +3,23 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import Pill from "@/components/Pill";
 import { formatDateTime } from "@/lib/dates";
 
 const POLL_MS = 10_000;
 
 export interface ActiveSynthesisJob {
-  status: "pending" | "running";
+  status: "pending" | "running" | "failed" | "cancelled";
   created_at: string;
   run_id: string | null;
+  last_error: string | null;
 }
 
-const PHASE: Record<ActiveSynthesisJob["status"], { title: string; body: string }> = {
+type ActivePhase = "pending" | "running";
+
+const ACTIVE_STATUSES = new Set<ActiveSynthesisJob["status"]>(["pending", "running"]);
+
+const PHASE: Record<ActivePhase, { title: string; body: string }> = {
   pending: {
     title: "Синтез у черзі",
     body:
@@ -43,8 +49,12 @@ function Spinner() {
 // не смикаємо: користувач усе одно нічого не бачить.
 export default function DeepResearchStatus({ job }: { job: ActiveSynthesisJob }) {
   const router = useRouter();
+  const isActive = ACTIVE_STATUSES.has(job.status);
 
   useEffect(() => {
+    // Впалий чи скасований job більше не змінить стан сам — освіжати сторінку
+    // раз на десять секунд тут нема чого чекати.
+    if (!isActive) return;
     const tick = () => {
       if (!document.hidden) router.refresh();
     };
@@ -54,23 +64,62 @@ export default function DeepResearchStatus({ job }: { job: ActiveSynthesisJob })
       clearInterval(timer);
       document.removeEventListener("visibilitychange", tick);
     };
-  }, [router]);
+  }, [isActive, router]);
 
-  const phase = PHASE[job.status];
+  if (isActive) {
+    const phase = PHASE[job.status as ActivePhase];
+    return (
+      <section aria-live="polite" className="mb-8 rounded-lg border border-line bg-paper-raised p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Spinner />
+          <h2 className="text-sm font-medium text-ink">{phase.title}</h2>
+          <span className="font-mono text-[11px] text-ink-dim">
+            поставлено {formatDateTime(job.created_at)}
+          </span>
+        </div>
+        <p className="mt-2 max-w-2xl text-sm text-ink-dim">{phase.body}</p>
+        <p className="mt-2 text-sm text-ink-dim">
+          Сторінка оновлюється сама — коли синтез завершиться, тут з&apos;являться зведений
+          розбір, вкладки моделей і конкуренти.{" "}
+          <Link
+            href={job.run_id ? "/runs?tab=history" : "/runs?tab=queue"}
+            className="text-accent hover:underline"
+          >
+            {job.run_id ? `Лог прогону ${job.run_id}` : "Черга M1"}
+          </Link>
+          .
+        </p>
+      </section>
+    );
+  }
+
+  const failed = job.status === "failed";
 
   return (
     <section aria-live="polite" className="mb-8 rounded-lg border border-line bg-paper-raised p-5">
       <div className="flex flex-wrap items-center gap-2">
-        <Spinner />
-        <h2 className="text-sm font-medium text-ink">{phase.title}</h2>
+        <Pill label={failed ? "Синтез не вдався" : "Синтез скасовано"} token="rejected" />
         <span className="font-mono text-[11px] text-ink-dim">
-          поставлено {formatDateTime(job.created_at)}
+          {failed ? "востаннє спробували" : "поставлено"} {formatDateTime(job.created_at)}
         </span>
       </div>
-      <p className="mt-2 max-w-2xl text-sm text-ink-dim">{phase.body}</p>
+      <p className="mt-2 max-w-2xl text-sm text-ink-dim">
+        {failed
+          ? "Останній запуск синтезу на M1 завершився помилкою після всіх повторних спроб воркера, тож картку не переписано — вона лишається такою, якою була до цієї спроби."
+          : "Останній запуск синтезу скасували, не діждавшись результату, тож картку не переписано — вона лишається такою, якою була до цієї спроби."}
+      </p>
+      {job.last_error && (
+        <p className="mt-2 max-w-2xl overflow-x-auto rounded-md border border-line bg-paper p-2 font-mono text-xs text-ink-dim">
+          {job.last_error}
+        </p>
+      )}
+      <p className="mt-2 max-w-2xl text-sm text-ink-dim">
+        Вставлені звіти моделей нікуди не зникли — попередня консолідація вже зберегла їх у базі,
+        і невдалий синтез їх не видаляє. Ганяти дослідження в сторонніх моделях заново не треба:
+        досить відкрити «Опції → Консолідувати відповіді…» і надіслати той самий текст звітів ще раз,
+        щоб поставити новий синтез у чергу.
+      </p>
       <p className="mt-2 text-sm text-ink-dim">
-        Сторінка оновлюється сама — коли синтез завершиться, тут з&apos;являться зведений
-        розбір, вкладки моделей і конкуренти.{" "}
         <Link
           href={job.run_id ? "/runs?tab=history" : "/runs?tab=queue"}
           className="text-accent hover:underline"

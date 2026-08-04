@@ -525,10 +525,14 @@ import datetime
 print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"))
 ')"
   # Запит до research_reports служить і перевіркою, що міграція глибокого
-  # дослідження накочена: без таблиці PostgREST відповідає помилкою, і це має
-  # долетіти до doctor.sh як окремий стан, а не розчинитись у «даних немає».
+  # дослідження накочена: без таблиці (чи без колонки superseded_at) PostgREST
+  # відповідає помилкою, і це має долетіти до doctor.sh як окремий стан, а не
+  # розчинитись у «даних немає».
+  # Витіснені звіти (superseded_at не порожній) до health не беремо: питання
+  # тут — «чи зараз щось зламано», а невдалий прогін, який власник уже
+  # перекрив успішним, інакше тримав би тривогу ввімкненою цілий тиждень.
   local reports jobs tables_ok=true
-  reports="$(_db_get "/research_reports?select=provider,stage,status,created_at&created_at=gte.$(_urlenc "$since")" 2>/dev/null)" || tables_ok=false
+  reports="$(_db_get "/research_reports?select=provider,stage,status,created_at&superseded_at=is.null&created_at=gte.$(_urlenc "$since")" 2>/dev/null)" || tables_ok=false
   jobs="$(_db_get "/jobs?select=type,status,last_error,finished_at&type=eq.deep_research_synthesis&status=eq.failed&finished_at=gte.$(_urlenc "$since")" 2>/dev/null || echo "[]")"
   python3 -c '
 import json, sys
