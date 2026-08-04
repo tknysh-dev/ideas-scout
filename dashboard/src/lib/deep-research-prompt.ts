@@ -141,6 +141,9 @@ export interface HandoffPromptInput {
   criteriaDoc: string;
   deepDoc: string;
   today: string;
+  /** Сервіс і модель, які власник обрав перед копіюванням. */
+  researcher?: string;
+  researcherModel?: string;
 }
 
 // Шапка до першого `---` адресована супровіднику репозиторію, а не моделі:
@@ -154,8 +157,11 @@ function stripMaintainerHeader(template: string): string {
   return template.slice(separator.index + separator[0].length).trimStart();
 }
 
-// {{RESEARCHER_LABEL}} свідомо лишається літеральним: його вписує власник у
-// скопійованому тексті, окремо для кожного вікна моделі.
+// Мітки підставляє портал, а не людина: правити їх руками в двадцяти тисячах
+// символів надто легко забути, а модель, побачивши незаповнений плейсхолдер,
+// підставляє туди першу назву, яка трапиться поруч, — і звіт тихо лягає під
+// чужим іменем. Порожнє значення лишає плейсхолдер літеральним: тоді промпт
+// сам просить модель назватись, і це запасний шлях, а не основний.
 export function renderHandoffPrompt(input: HandoffPromptInput): string {
   const baseKeys = BASE_CRITERIA_KEYS_BY_TRACK[input.idea.track];
   if (!baseKeys) {
@@ -170,6 +176,10 @@ export function renderHandoffPrompt(input: HandoffPromptInput): string {
     MAX_BASE_KEY: baseKeys[baseKeys.length - 1],
     EXPECTED_COUNT: String(baseKeys.length + DEEP_RESEARCH_KEYS.length),
   };
+  const researcher = input.researcher?.trim();
+  const researcherModel = input.researcherModel?.trim();
+  if (researcher) values.RESEARCHER_LABEL = researcher;
+  if (researcherModel) values.RESEARCHER_MODEL = researcherModel;
   let text = stripMaintainerHeader(input.template);
   for (const [key, value] of Object.entries(values)) {
     text = text.replaceAll(`{{${key}}}`, value);

@@ -21,8 +21,14 @@ const IDEA_FIELDS =
 // Промпт збирається на сервері з тих самих файлів репозиторію, які показує
 // сторінка /config: локально — з робочої копії, у проді — з GitHub. Одна ідея,
 // один текст; ділити його на N вікон моделей — робота власника, не коду.
+export interface ResearcherLabels {
+  researcher?: string;
+  researcherModel?: string;
+}
+
 export async function buildDeepResearchPrompt(
   ideaId: string,
+  labels: ResearcherLabels = {},
   today = new Date().toISOString().slice(0, 10),
 ): Promise<DeepResearchPromptResult> {
   const supabase = getServiceClient();
@@ -64,6 +70,8 @@ export async function buildDeepResearchPrompt(
         criteriaDoc: criteriaDoc.content,
         deepDoc: deepDoc.content,
         today,
+        researcher: labels.researcher,
+        researcherModel: labels.researcherModel,
       }),
     };
   } catch (readError) {

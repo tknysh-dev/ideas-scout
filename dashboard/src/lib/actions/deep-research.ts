@@ -20,6 +20,13 @@ const IDEA_ID_RE = /^[A-Z]{2,10}-\d{3,8}$/;
 // одразу, ніж отримати обрив запиту без пояснення.
 const MAX_BLOB_CHARS = 800_000;
 
+// Мітка їде в маркер звіту, де роздільник — вертикальна риска, і далі в базу.
+// Зайві символи зламали б розбір вставленої відповіді.
+function sanitizeLabelInput(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
+}
+
 // Статус рядка research_reports: відмова моделі — не помилка порталу, тому
 // SEARCH UNAVAILABLE зберігається як 'skipped', а не 'error'.
 const REPORT_ROW_STATUS: Record<Exclude<ReportStatus, "foreign">, string> = {
@@ -85,8 +92,12 @@ async function loadResearchableIdea(ideaId: string): Promise<LoadedIdea> {
   return { track: idea.track as string };
 }
 
+// Мітки приходять із форми копіювання: підставити їх тут надійніше, ніж
+// просити людину правити два плейсхолдери в двадцяти тисячах символів.
 export async function fetchDeepResearchPrompt(
   ideaId: string,
+  researcher: string,
+  researcherModel: string,
 ): Promise<DeepResearchPromptActionResult> {
   const owner = await ownerLogin();
   if (owner.error) return { error: owner.error };
@@ -94,7 +105,13 @@ export async function fetchDeepResearchPrompt(
   const idea = await loadResearchableIdea(ideaId);
   if (idea.error) return { error: idea.error };
 
-  return buildDeepResearchPrompt(ideaId);
+  const label = sanitizeLabelInput(researcher);
+  if (!label) return { error: "Вкажи сервіс, у вікно якого вставлятимеш промпт." };
+
+  return buildDeepResearchPrompt(ideaId, {
+    researcher: label,
+    researcherModel: sanitizeLabelInput(researcherModel),
+  });
 }
 
 function summarize(report: ParsedReport): ReportSummary {

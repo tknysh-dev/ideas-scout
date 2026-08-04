@@ -203,3 +203,52 @@ test("невідоме значення поля бази не друкуєть�
   assert.match(context, /характер знахідки не уточнено/);
   assert.match(context, /невідомо, чи автор має особисту вигоду/);
 });
+
+// Мітки підставляє портал: модель, побачивши незаповнений плейсхолдер, брала
+// першу назву сервісу, що траплялась поруч, і звіт лягав під чужим іменем.
+test("обрані власником сервіс і модель підставляються в промпт", () => {
+  const prompt = renderHandoffPrompt({
+    idea,
+    sources,
+    template: repoFile("agents/prompts/deep-research-handoff.md"),
+    criteriaDoc: repoFile(criteriaDocPath("passive-income")),
+    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
+    today: "2026-08-04",
+    researcher: "DeepSeek",
+    researcherModel: "DeepSeek-V3",
+  });
+
+  assert.match(prompt, /DEEP RESEARCH REPORT START \| DeepSeek \| DeepSeek-V3 \| PI-0013/);
+  assert.doesNotMatch(prompt, /\{\{RESEARCHER_LABEL\}\}/);
+  assert.doesNotMatch(prompt, /\{\{RESEARCHER_MODEL\}\}/);
+});
+
+test("без обраних міток плейсхолдери лишаються — промпт сам просить модель назватись", () => {
+  const prompt = renderHandoffPrompt({
+    idea,
+    sources,
+    template: repoFile("agents/prompts/deep-research-handoff.md"),
+    criteriaDoc: repoFile(criteriaDocPath("passive-income")),
+    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
+    today: "2026-08-04",
+    researcher: "   ",
+  });
+  assert.match(prompt, /\{\{RESEARCHER_LABEL\}\}/);
+  assert.match(prompt, /\{\{RESEARCHER_MODEL\}\}/);
+});
+
+// Приклад назви поруч із плейсхолдером читається моделлю як зразок відповіді:
+// саме так DeepSeek підписався ChatGPT-ом.
+test("у тілі промпта немає назв сторонніх сервісів, які модель могла б скопіювати", () => {
+  const prompt = renderHandoffPrompt({
+    idea,
+    sources,
+    template: repoFile("agents/prompts/deep-research-handoff.md"),
+    criteriaDoc: repoFile(criteriaDocPath("passive-income")),
+    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
+    today: "2026-08-04",
+  });
+  for (const name of ["ChatGPT", "Gemini", "Perplexity", "Grok", "GPT-5"]) {
+    assert.doesNotMatch(prompt, new RegExp(name), `${name} не має траплятись у промпті`);
+  }
+});
