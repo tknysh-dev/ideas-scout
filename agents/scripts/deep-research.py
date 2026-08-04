@@ -159,6 +159,29 @@ def extract_json_block(text: str) -> dict | None:
     return None
 
 
+def align_bulk(rows: list[dict]) -> list[dict]:
+    """Однаковий набір ключів у всіх рядках пакета — вимога PostgREST.
+
+    Пакетний POST з різними наборами ключів відхиляється цілком:
+    HTTP 400, PGRST102 "All object keys must match". Санітизатори ж
+    складають рядки з полів, які модель могла й не заповнити, тож набір
+    ключів залежить від відповіді моделі — тобто пакет ламався не завжди,
+    а лише на певних даних, і завжди в кінці прогону, після години роботи
+    моделей. Вирівнюємо тут, на межі з базою, а не в кожному санітизаторі:
+    обмеження належить транспорту, і додати сюди новий виклик безпечніше,
+    ніж не забути про нього в наступному санітизаторі.
+
+    Відсутні ключі доливаються як None. Нової поломки це не створює: якщо
+    колонка NOT NULL без дефолту, рядок без неї впав би й без вирівнювання.
+    """
+    if len(rows) < 2:
+        return rows
+    all_keys: set[str] = set()
+    for row in rows:
+        all_keys.update(row)
+    return [{key: row.get(key) for key in all_keys} for row in rows]
+
+
 def sanitize_evidence(raw) -> list[dict]:
     result = []
     if not isinstance(raw, list):
@@ -510,7 +533,7 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
                      "criteria_version": criteria_version}
                     for row in synth_rows.values()]
     supersede(f"/criteria_verdicts?idea_id=eq.{quoted_id}&stage=eq.deep&kind=eq.synthesis")
-    db._request("POST", "/criteria_verdicts", verdict_rows)
+    db._request("POST", "/criteria_verdicts", align_bulk(verdict_rows))
     log(f"criteria_verdicts: записано {len(verdict_rows)} рядків синтезу")
 
     updates, failed_fatal = build_idea_updates(track, idea, synth_rows, parsed_a.get("idea_updates"))
@@ -582,7 +605,7 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
         for row in final_competitors:
             row.update({"idea_id": idea_id, "run_id": run_id})
         supersede(f"/competitors?idea_id=eq.{quoted_id}")
-        db._request("POST", "/competitors", final_competitors)
+        db._request("POST", "/competitors", align_bulk(final_competitors))
         log(f"competitors: записано {len(final_competitors)} рядків")
     else:
         log("виклик B не дав жодного конкурента — старий список лишено недоторканим")
