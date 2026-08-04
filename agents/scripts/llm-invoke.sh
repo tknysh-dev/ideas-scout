@@ -3,6 +3,11 @@
 # дослідження (аналог runner.sh-принципу «одне місце знає CLI», але для
 # research-only профілю: модель лише шукає у вебі й повертає текст).
 #
+# Після переходу на ручний handoff (docs/plans/deep-research-handoff.md) конвеєр
+# кличе звідси лише claude — синтезатора. Гілки codex/gemini/deepseek лишаються
+# робочими для ручних викликів і майбутніх сценаріїв, але дослідниками більше
+# не працюють: звіти зовнішніх моделей власник збирає в браузерних UI.
+#
 # Використання:
 #   llm-invoke.sh check [provider ...]        — доступність/авторизація провайдерів
 #   llm-invoke.sh run <provider> [--model X] [--timeout S] [--workdir DIR]
@@ -18,8 +23,8 @@
 #
 # deepseek — опційний і без веб-пошуку (чистий API): для ролі незалежного
 # дослідника непридатний (віддавав би закешовані знання — саме те, чого
-# уникаємо), тож оркестратор може використовувати його лише для крос-допиту
-# вже зібраних доказів. Потребує DEEPSEEK_API_KEY в env-файлі.
+# уникаємо). Конвеєр його більше не кличе; гілка лишається для ручних викликів.
+# Потребує DEEPSEEK_API_KEY в env-файлі.
 
 set -uo pipefail
 
@@ -203,7 +208,7 @@ check_one() {
       echo "gemini: OK ($(gemini --version 2>/dev/null | head -1))"
       ;;
     deepseek)
-      if [ -z "${DEEPSEEK_API_KEY:-}" ]; then echo "deepseek: ВИМКНЕНО (немає DEEPSEEK_API_KEY у $ENV_FILE — опційний, лише крос-допит)"; return 1; fi
+      if [ -z "${DEEPSEEK_API_KEY:-}" ]; then echo "deepseek: ВИМКНЕНО (немає DEEPSEEK_API_KEY у $ENV_FILE — опційний, конвеєр його не кличе)"; return 1; fi
       local code
       code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
         -H "Authorization: Bearer ${DEEPSEEK_API_KEY}" https://api.deepseek.com/models 2>/dev/null)"

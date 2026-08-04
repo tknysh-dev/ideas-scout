@@ -585,7 +585,8 @@ print(json.dumps({
 }
 
 # db_deep_research_health — чи не сиплеться глибоке дослідження мовчки: останні
-# звіти моделей зі статусом error/timeout і скільки джобів дослідження впало.
+# звіти зі статусом error/timeout (у тому числі вставлені власником звіти
+# зовнішніх моделей, позначені як відмова) і скільки джобів синтезу впало.
 # Порожній JSON з нулями означає «нема на що дивитись», а не «нема таблиць» —
 # відсутність таблиць видно окремою помилкою PostgREST у doctor.sh.
 db_deep_research_health() {
@@ -599,7 +600,7 @@ print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
   # долетіти до doctor.sh як окремий стан, а не розчинитись у «даних немає».
   local reports jobs tables_ok=true
   reports="$(_db_get "/research_reports?select=provider,stage,status,created_at&created_at=gte.$(_urlenc "$since")" 2>/dev/null)" || tables_ok=false
-  jobs="$(_db_get "/jobs?select=type,status,last_error,finished_at&type=in.(deep_research,deep_research_competitors)&status=eq.failed&finished_at=gte.$(_urlenc "$since")" 2>/dev/null || echo "[]")"
+  jobs="$(_db_get "/jobs?select=type,status,last_error,finished_at&type=eq.deep_research_synthesis&status=eq.failed&finished_at=gte.$(_urlenc "$since")" 2>/dev/null || echo "[]")"
   python3 -c '
 import json, sys
 

@@ -306,7 +306,7 @@ print(q['due_pending'], q['oldest_due_pending_s'], q['running'], q['stale_runnin
     # за ним стоїть законно й виглядає точно як мертвий воркер. Розрізняє їх
     # живий lease: якщо довгий джоб реально працює, це очікування, не поломка.
     case "$Q_BUSY_TYPE" in
-      deep_research|deep_research_competitors) LONG_JOB_BUSY=1 ;;
+      deep_research_synthesis) LONG_JOB_BUSY=1 ;;
       *) LONG_JOB_BUSY=0 ;;
     esac
 
@@ -510,80 +510,37 @@ print((json.load(open('$CODEX_AUTH')).get('last_refresh') or '')[:19])
 " 2>/dev/null || echo "")"
   ok "логін codex є (оновлений ${CODEX_REFRESH:-?})"
 else
-  # Як провайдер для runner.sh codex і далі вимкнений, але глибоке дослідження
-  # кличе його своїм шляхом (read-only sandbox), тому логін там уже потрібен.
-  note "логіна codex немає — для прогонів агентів це штатно; чи потрібен він глибокому дослідженню, видно в секції нижче"
+  note "логіна codex немає — для прогонів агентів це штатно (як провайдер runner.sh codex вимкнений)"
 fi
 
 # ---------------------------------------------------------------------------
 section "Глибоке дослідження"
 # ---------------------------------------------------------------------------
-# Сенс фічі — кілька НЕЗАЛЕЖНИХ моделей: якщо половина не встановлена, кнопка
-# все одно спрацює, просто вердикт спиратиметься на менше джерел. Мовчазна
-# деградація саме такого типу — те, заради чого цей файл існує.
-RESEARCH_PROVIDERS="codex,gemini"
-if [ -f "$ENV_FILE" ]; then
-  ENV_PROVIDERS="$(grep -E '^IDEAS_SCOUT_RESEARCH_PROVIDERS=.' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' ')"
-  [ -n "$ENV_PROVIDERS" ] && RESEARCH_PROVIDERS="$ENV_PROVIDERS"
+# Дослідників більше не запускає M1: звіти зовнішніх моделей власник збирає
+# руками в браузерних UI за промптом handoff, а тут працює лише синтез Claude.
+# Тому перевіряємо те, без чого ручний цикл мовчки зупиниться: шаблон промпта і
+# сам синтезатор.
+HANDOFF_PROMPT="$REPO_ROOT/agents/prompts/deep-research-handoff.md"
+if [ ! -f "$HANDOFF_PROMPT" ]; then
+  err "немає agents/prompts/deep-research-handoff.md — портал не згенерує промпт, який власник копіює в моделі"
+elif ! grep -q 'DEEP RESEARCH REPORT START' "$HANDOFF_PROMPT"; then
+  err "у шаблоні handoff-промпта немає маркерів звіту — вставлені відповіді неможливо буде розрізати на портал"
+else
+  ok "шаблон промпта для ручного дослідження на місці (з маркерами звіту)"
 fi
 
-RESEARCH_TOTAL=0
-RESEARCH_READY=0
-RESEARCH_MISSING=""
-IFS=',' read -ra RESEARCH_LIST <<<"$RESEARCH_PROVIDERS"
-for provider in "${RESEARCH_LIST[@]}"; do
-  provider="$(printf '%s' "$provider" | tr -d '[:space:]')"
-  [ -n "$provider" ] || continue
-  RESEARCH_TOTAL=$((RESEARCH_TOTAL + 1))
-  case "$provider" in
-    deepseek)
-      if [ -f "$ENV_FILE" ] && grep -q '^DEEPSEEK_API_KEY=.' "$ENV_FILE"; then
-        RESEARCH_READY=$((RESEARCH_READY + 1))
-      else
-        RESEARCH_MISSING="${RESEARCH_MISSING} ${provider}"
-      fi
-      ;;
-    *)
-      if command -v "$provider" >/dev/null 2>&1; then
-        RESEARCH_READY=$((RESEARCH_READY + 1))
-      else
-        RESEARCH_MISSING="${RESEARCH_MISSING} ${provider}"
-      fi
-      ;;
-  esac
-done
-
-if [ "$RESEARCH_TOTAL" -eq 0 ]; then
-  err "у IDEAS_SCOUT_RESEARCH_PROVIDERS не задано жодної моделі — кнопка «Глибоке дослідження» не матиме кого питати"
-elif [ "$RESEARCH_READY" -eq 0 ]; then
-  # Дослідження виконує воркер, тож на машині без нього брак CLI нічого не ламає.
-  if [ "$IS_WORKER_HOST" -eq 1 ]; then
-    err "жодна з дослідницьких моделей (${RESEARCH_PROVIDERS}) не встановлена — глибоке дослідження впаде одразу після запуску"
-    hint "npm i -g @openai/codex @google/gemini-cli   # потім codex login і перший запуск gemini"
-  else
-    note "дослідницьких моделей (${RESEARCH_PROVIDERS}) тут немає — штатно, глибоке дослідження виконує машина з воркером"
-  fi
-elif [ -n "$RESEARCH_MISSING" ]; then
-  if [ "$IS_WORKER_HOST" -eq 1 ]; then
-    warn "з дослідницьких моделей бракує:${RESEARCH_MISSING} — дослідження піде, але незалежних думок буде менше, ніж задумано (${RESEARCH_READY} з ${RESEARCH_TOTAL})"
-    hint "./agents/scripts/llm-invoke.sh check   # покаже, чого саме бракує кожній"
-  else
-    note "тут є ${RESEARCH_READY} з ${RESEARCH_TOTAL} дослідницьких моделей — на машині без воркера це ні на що не впливає"
-  fi
+if command -v claude >/dev/null 2>&1; then
+  ok "claude CLI на місці — синтез глибокого дослідження робить саме він"
+elif [ "$IS_WORKER_HOST" -eq 1 ]; then
+  err "claude CLI не знайдено — job deep_research_synthesis впаде одразу після запуску"
 else
-  ok "усі дослідницькі моделі на місці (${RESEARCH_PROVIDERS})"
-fi
-
-if [ -f "$ENV_FILE" ] && grep -q '^DEEPSEEK_API_KEY=.' "$ENV_FILE"; then
-  ok "ключ DeepSeek є — розбіжності моделей ідуть на крос-допит"
-else
-  note "ключа DeepSeek немає — крос-допиту не буде; нерозв'язані розбіжності по фатальних критеріях підуть у песимістичний вердикт"
+  note "claude CLI тут немає — синтез виконує машина з воркером"
 fi
 
 if [ -x "$REPO_ROOT/agents/scripts/llm-invoke.sh" ]; then
   ok "llm-invoke.sh на місці й виконуваний"
 else
-  err "немає виконуваного agents/scripts/llm-invoke.sh — саме через нього дослідження кличе всі моделі"
+  err "немає виконуваного agents/scripts/llm-invoke.sh — саме через нього синтез кличе claude"
   hint "chmod +x agents/scripts/llm-invoke.sh"
 fi
 
@@ -602,15 +559,15 @@ print(str(d.get('tables_ok', False)).lower(), d.get('reports_failed', 0), d.get(
 " "$DR_JSON" 2>/dev/null || echo "false 0 0 0 -")"
 
     if [ "$DR_TABLES" != "true" ]; then
-      err "таблиць глибокого дослідження немає в базі — міграція не накочена, і дослідження втратить результат уже після того, як моделі відпрацюють"
+      err "таблиць глибокого дослідження немає в базі — міграція не накочена, і вставлені власником звіти нікуди буде записати"
       hint "shared/migrations/apply.sh shared/migrations/2026-07-31-deep-research.sql"
     else
       ok "таблиці глибокого дослідження на місці"
     fi
 
     if [ "${DR_FAILED:-0}" -gt 0 ]; then
-      warn "${DR_FAILED} з ${DR_TOTAL} звітів моделей за тиждень завершились помилкою (${DR_PROVIDERS}) — вердикт спирався на менше джерел, ніж мав"
-      hint "./agents/scripts/llm-invoke.sh check"
+      warn "${DR_FAILED} з ${DR_TOTAL} звітів за тиждень позначені як невдалі (${DR_PROVIDERS}) — це або відмова моделі («SEARCH UNAVAILABLE», нерозібраний JSON), або впалий синтез; вердикт спирався на менше джерел, ніж мав"
+      hint "./agents/scripts/db.sh deep-research-health   # повний стан звітів"
     fi
 
     if [ "${DR_JOBS:-0}" -gt 0 ]; then
@@ -618,7 +575,7 @@ print(str(d.get('tables_ok', False)).lower(), d.get('reports_failed', 0), d.get(
 import json, sys
 print(json.loads(sys.argv[1]).get('last_job_error') or '')
 " "$DR_JSON" 2>/dev/null || echo "")"
-      warn "запусків глибокого дослідження, що впали за тиждень: ${DR_JOBS}${DR_ERROR:+ — остання помилка: ${DR_ERROR}}"
+      warn "синтезів глибокого дослідження, що впали за тиждень: ${DR_JOBS}${DR_ERROR:+ — остання помилка: ${DR_ERROR}}"
     fi
   fi
 fi

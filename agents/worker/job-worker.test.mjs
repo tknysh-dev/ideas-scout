@@ -13,22 +13,22 @@ test("buildRunId includes deterministic timestamp and job prefix", () => {
 
 test("worker only resolves allowlisted job types", () => {
   assert.match(commandForJob({ type: "infrastructure_dry_run" }).executable, /infrastructure-dry-run\.sh$/);
-  const research = commandForJob({
-    type: "deep_research",
+  const synthesis = commandForJob({
+    type: "deep_research_synthesis",
     payload: { idea_id: "PI-0013" },
   });
-  assert.match(research.executable, /deep-research\.sh$/);
-  assert.equal(research.stdin, '{"idea_id":"PI-0013"}');
-  assert.equal(research.successStatus, "ok");
+  assert.match(synthesis.executable, /deep-research\.sh$/);
+  assert.deepEqual(synthesis.args, ["--stage", "synthesis"]);
+  assert.equal(synthesis.stdin, '{"idea_id":"PI-0013"}');
+  assert.equal(synthesis.successStatus, "ok");
 
-  const competitors = commandForJob({
-    type: "deep_research_competitors",
-    payload: { idea_id: "PI-0013" },
-  });
-  assert.match(competitors.executable, /deep-research\.sh$/);
-  assert.deepEqual(competitors.args, ["--stage", "competitors"]);
-  assert.equal(competitors.stdin, '{"idea_id":"PI-0013"}');
-  assert.equal(competitors.successStatus, "ok");
+  // Автоматичний fan-out демонтовано: обидва старі типи job більше не мають
+  // виконавця, тож повторно поставлені в чергу вони впадуть, а не запустяться.
+  assert.throws(() => commandForJob({ type: "deep_research" }), /Непідтримуваний тип job/);
+  assert.throws(
+    () => commandForJob({ type: "deep_research_competitors" }),
+    /Непідтримуваний тип job/,
+  );
 
   const telegram = commandForJob({
     type: "telegram_update",

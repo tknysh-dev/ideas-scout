@@ -26,25 +26,17 @@ const JOB_HANDLERS = Object.freeze({
     successNote: "Інфраструктурний dry run успішно виконано.",
     failureNote: "Інфраструктурний dry run завершився помилкою.",
   }),
-  deep_research: Object.freeze({
-    // Дослідники (до 30 хв паралельно) + крос-допит + синтез — 90 хв стелі
-    // вистачає з запасом; heartbeat воркера продовжує lease кожну хвилину.
+  deep_research_synthesis: Object.freeze({
+    // Два послідовні виклики Claude, перший — із власним веб-пошуком по
+    // d_-блоках; 90 хв стелі вистачає з запасом, heartbeat воркера продовжує
+    // lease кожну хвилину.
     executable: join(REPO_ROOT, "agents/scripts/deep-research.sh"),
-    args: [],
+    args: ["--stage", "synthesis"],
     timeoutMs: 5_400_000,
     passPayload: true,
     successStatus: "ok",
-    successNote: "Глибоке дослідження завершено на M1.",
-    failureNote: "Глибоке дослідження завершилося помилкою.",
-  }),
-  deep_research_competitors: Object.freeze({
-    executable: join(REPO_ROOT, "agents/scripts/deep-research.sh"),
-    args: ["--stage", "competitors"],
-    timeoutMs: 5_400_000,
-    passPayload: true,
-    successStatus: "ok",
-    successNote: "Дослідження конкурентів завершено на M1.",
-    failureNote: "Дослідження конкурентів завершилося помилкою.",
+    successNote: "Синтез глибокого дослідження завершено на M1.",
+    failureNote: "Синтез глибокого дослідження завершився помилкою.",
   }),
   telegram_update: Object.freeze({
     executable: join(REPO_ROOT, "agents/scripts/telegram-bot.py"),
@@ -87,7 +79,7 @@ export function commandForJob(job) {
 }
 
 function publicJobMeta(job) {
-  if (job.type !== "deep_research" && job.type !== "deep_research_competitors") return {};
+  if (job.type !== "deep_research_synthesis") return {};
   const ideaId = job.payload?.idea_id;
   return typeof ideaId === "string" ? { idea_id: ideaId } : {};
 }

@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""deep-research.py — оркестратор глибокого дослідження ідеї.
+"""deep-research.py — синтез глибокого дослідження ідеї.
 
-Запускається воркером через deep-research.sh (stdin: {"idea_id": "PI-0013"}).
+Запускається воркером через deep-research.sh (stdin: {"idea_id": "PI-0013"})
+як job deep_research_synthesis.
 
-Стадія deep_criteria (дефолт): незалежні моделі-дослідники (llm-invoke.sh)
-паралельно перевіряють критерії свіжим веб-пошуком → опційний крос-допит
-розбіжностей DeepSeek-ом → синтез Claude → структуровані вердикти в
-criteria_verdicts, звіти в research_reports, перезапис полів вердикту картки
-ideas. Якщо всі фатальні критерії пройдено — сама ставить у чергу джоб
-deep_research_competitors.
+Дослідників цей скрипт більше не запускає: автоматичний мульти-CLI конвеєр
+виявився неживучим (повноцінний веб-пошук з CLI має лише codex), тому звіти
+зовнішніх моделей власник збирає руками в браузерних deep-research UI за
+промптом agents/prompts/deep-research-handoff.md і вставляє їх на порталі.
+Дашборд кладе вербатим-звіти в research_reports (stage=deep_criteria,
+kind=model) і ставить у чергу job deep_research_synthesis.
 
-Стадія competitors (--stage competitors): ті самі моделі паралельно шукають
-конкурентів ніші → синтез Claude зводить у канонічний список → таблиця
-competitors + розділ «Конкуренти» в body; суперечність щойно пройденому
-критерію насиченості не перевертає вердикт, а піднімає ceiling_flag=review.
+Стадія synthesis читає ці звіти з БД, доповнює їх власним дослідженням Claude
+по d_-блоках і зводить усе в структуровані вердикти (criteria_verdicts),
+конкурентів (competitors) і перезапис полів вердикту картки ideas. Наповнення
+стадії — фаза 4 плану docs/plans/deep-research-handoff.md; поки що вона лише
+перевіряє, що вхідні звіти на місці.
 
 Уся недовірена творчість моделей проходить через санітизацію: у БД потрапляють
 лише значення з білих списків (вердикти, ключі критеріїв, коди відхилення),
@@ -30,7 +32,6 @@ import re
 import subprocess
 import sys
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +46,12 @@ DEEP_KEYS = ["d_demand", "d_unit_econ", "d_channels", "d_graveyard", "d_dependen
 BASE_KEYS_BY_TRACK = {
     "passive-income": [str(n) for n in range(7)],   # 0..6
     "app-ideas": [str(n) for n in range(8)],        # 0..7
+}
+# Ім'я файлу чек-листа не виводиться з назви треку: трек `app-ideas` лежить у
+# criteria-apps.md.
+CRITERIA_DOC_BY_TRACK = {
+    "passive-income": "agents/criteria/criteria-passive-income.md",
+    "app-ideas": "agents/criteria/criteria-apps.md",
 }
 FATAL_KEYS = {str(n) for n in range(6)}             # 0..5 фатальні в обох треках
 VERDICTS = {"passed", "failed", "owner", "skipped", "not_applicable", "noted"}
@@ -64,9 +71,7 @@ OWNER_DECIDABLE = {"approved_pending", "accepted", "rejected"}
 
 LIVENESS = {"active", "stale", "dead"}
 
-RESEARCH_TIMEOUT_S = int(os.environ.get("IDEAS_SCOUT_RESEARCH_TIMEOUT_S", "1800"))
 SYNTHESIS_TIMEOUT_S = int(os.environ.get("IDEAS_SCOUT_SYNTHESIS_TIMEOUT_S", "1800"))
-CROSS_EXAM_TIMEOUT_S = int(os.environ.get("IDEAS_SCOUT_CROSS_EXAM_TIMEOUT_S", "900"))
 
 
 def log(message: str) -> None:
@@ -230,15 +235,11 @@ def render(template: str, mapping: dict[str, str]) -> str:
     return template
 
 
-def find_disputes(model_rows: dict[str, dict[str, dict]]) -> list[str]:
-    """Фатальні базові критерії, де успішні дослідники розійшлись pass/fail."""
-    disputes = []
-    for key in sorted(FATAL_KEYS):
-        verdicts = {rows[key]["verdict"] for rows in model_rows.values()
-                    if key in rows and rows[key]["verdict"] in ("passed", "failed")}
-        if verdicts == {"passed", "failed"}:
-            disputes.append(key)
-    return disputes
+def criteria_doc_path(track: str) -> str:
+    path = CRITERIA_DOC_BY_TRACK.get(track)
+    if not path:
+        raise SystemExit(f"deep-research: трек '{track}' не має чек-листа критеріїв")
+    return os.path.join(REPO_ROOT, path)
 
 
 def load_idea(idea_id: str) -> tuple[dict, str, list[dict]]:
@@ -255,235 +256,8 @@ def load_idea(idea_id: str) -> tuple[dict, str, list[dict]]:
     return idea, track, sources
 
 
-def run_researchers(prompt: str) -> dict[str, tuple[int, str]]:
-    providers = [p.strip() for p in
-                 os.environ.get("IDEAS_SCOUT_RESEARCH_PROVIDERS", "codex,gemini").split(",") if p.strip()]
-    log(f"дослідники: {', '.join(providers)} (таймаут {RESEARCH_TIMEOUT_S}с кожному, паралельно)")
-    with ThreadPoolExecutor(max_workers=len(providers)) as pool:
-        futures = {p: pool.submit(run_llm, p, prompt, RESEARCH_TIMEOUT_S) for p in providers}
-        return {p: f.result() for p, f in futures.items()}
-
-
-def enqueue_competitors(idea_id: str, run_id: str | None) -> None:
-    job = {
-        "type": "deep_research_competitors",
-        "payload": {"idea_id": idea_id},
-        "requested_by": "m1:deep-research",
-        # run_id у ключі: повторне глибоке дослідження має право на новий
-        # конкурентний етап, а повторний клейм того самого прогону — ні.
-        "idempotency_key": f"deep-research-competitors:{idea_id}:"
-                           + (run_id or datetime.now(timezone.utc).strftime("%Y%m%d%H%M")),
-    }
-    try:
-        db._request("POST", "/jobs", job)
-        log("усі фатальні критерії пройдено — етап конкурентів поставлено в чергу")
-    except db.DbError as error:
-        if "409" in str(error) or "23505" in str(error):
-            log("етап конкурентів уже в черзі (idempotency)")
-        else:
-            raise
-
-
-def run_deep_stage(idea_id: str, run_id: str | None, today: str) -> None:
-    idea, track, sources = load_idea(idea_id)
-
-    criteria_doc = read_file(os.path.join(REPO_ROOT, "agents/criteria", f"criteria-{track}.md"))
-    deep_doc = read_file(os.path.join(REPO_ROOT, "agents/criteria/deep-research.md"))
-    base_keys = BASE_KEYS_BY_TRACK[track]
-    allowed_keys = set(base_keys) | set(DEEP_KEYS)
-
-    researcher_template = read_file(os.path.join(REPO_ROOT, "agents/prompts/deep-research-researcher.md"))
-    researcher_prompt = render(researcher_template, {
-        "IDEA_ID": idea_id,
-        "TRACK": track,
-        "TODAY": today,
-        "IDEA_CONTEXT": build_idea_context(idea, sources),
-        "CRITERIA_DOC": criteria_doc,
-        "DEEP_DOC": deep_doc,
-        "MAX_BASE_KEY": base_keys[-1],
-        "EXPECTED_COUNT": str(len(base_keys) + len(DEEP_KEYS)),
-    })
-
-    raw_results = run_researchers(researcher_prompt)
-
-    report_rows: list[dict] = []
-    model_rows: dict[str, dict[str, dict]] = {}
-    for provider, (exit_code, output) in raw_results.items():
-        parsed = extract_json_block(output) if exit_code == 0 else None
-        rows = sanitize_criteria(parsed.get("criteria"), allowed_keys, require_resolution=False) if parsed else {}
-        status = "ok" if rows else ("timeout" if exit_code == 124 else "error")
-        if rows:
-            model_rows[provider] = rows
-        log(f"{provider}: exit={exit_code}, критеріїв розпізнано {len(rows)}, статус {status}")
-        report_rows.append({
-            "idea_id": idea_id, "run_id": run_id, "stage": "deep_criteria",
-            "kind": "model", "provider": provider, "model": None,
-            "status": status, "report_md": output[:200_000],
-        })
-
-    if not model_rows:
-        # Звіти про провал все одно зберігаємо — інакше діагностика лише по stdout-хвосту.
-        db._request("DELETE", f"/research_reports?idea_id=eq.{urllib.parse.quote(idea_id, safe='')}&stage=eq.deep_criteria")
-        db._request("POST", "/research_reports", report_rows)
-        raise SystemExit("deep-research: жоден дослідник не повернув валідних даних — синтез неможливий")
-
-    # Крос-допит: лише для розбіжностей по фатальних критеріях і лише якщо є ключ.
-    cross_exam_text = ""
-    disputes = find_disputes(model_rows)
-    if disputes and os.environ.get("DEEPSEEK_API_KEY"):
-        log(f"розбіжності по критеріях {', '.join(disputes)} — крос-допит deepseek")
-        positions = {
-            provider: {key: rows[key] for key in disputes if key in rows}
-            for provider, rows in model_rows.items()
-        }
-        cross_exam_prompt = (
-            "Ти — арбітр без доступу до вебу. Незалежні дослідники розійшлись у вердиктах "
-            f"по критеріях {', '.join(disputes)} для ідеї заробітку. Нижче їхні позиції з доказами "
-            "(JSON). Оціни СИЛУ ДОКАЗІВ кожної сторони: конкретність, датованість, релевантність "
-            "цитат — і для кожного спірного критерію скажи, чия позиція краще підкріплена і чому. "
-            "Не додавай власних фактів (у тебе немає вебу) — лише аналіз наведених доказів. "
-            "Відповідай українською.\n\n```json\n"
-            + json.dumps(positions, ensure_ascii=False, indent=1) + "\n```"
-        )
-        exit_code, output = run_llm("deepseek", cross_exam_prompt, CROSS_EXAM_TIMEOUT_S)
-        if exit_code == 0 and output.strip():
-            cross_exam_text = output.strip()[:30_000]
-        else:
-            log(f"крос-допит не вдався (exit={exit_code}) — синтез працює без арбітра")
-
-    synthesis_template = read_file(os.path.join(REPO_ROOT, "agents/prompts/deep-research-synthesis.md"))
-    initial_section, _ = split_section(idea.get("body"), "Аналіз за критеріями")
-    snapshot_fields = {k: idea.get(k) for k in (
-        "id", "title", "type", "track", "status", "signal_type", "rejection_code",
-        "rejection_detail", "rejection_codes_extra", "confidence", "ceiling_estimate",
-        "launch_effort_hours", "ceiling_flag", "claimed_revenue", "mechanic_summary",
-        "monetization_hypothesis", "criteria_version")}
-    idea_snapshot = (
-        "Поля картки (початковий вердикт):\n```json\n"
-        + json.dumps(snapshot_fields, ensure_ascii=False, indent=1)
-        + "\n```\n\nПочатковий «Аналіз за критеріями» (проза попереднього аналітика):\n\n"
-        + (initial_section or "(розділ відсутній)")
-    )
-    model_results_md = "\n\n".join(
-        f"### Дослідник: {provider}\n```json\n"
-        + json.dumps({"criteria": list(rows.values())}, ensure_ascii=False, indent=1) + "\n```"
-        for provider, rows in model_rows.items()
-    )
-    synthesis_prompt = render(synthesis_template, {
-        "IDEA_ID": idea_id,
-        "TRACK": track,
-        "TODAY": today,
-        "IDEA_SNAPSHOT": idea_snapshot,
-        "MODEL_RESULTS": model_results_md,
-        "CROSS_EXAM_SECTION": (
-            "## Аналіз арбітра (крос-допит розбіжностей, модель без веб-доступу)\n\n" + cross_exam_text
-            if cross_exam_text else ""
-        ),
-        "CRITERIA_DOC": criteria_doc,
-        "DEEP_DOC": deep_doc,
-        "ALLOWED_CODES": " | ".join(f'"{c}"' for c in sorted(REJECTION_CODES)),
-    })
-
-    log(f"синтез claude (таймаут {SYNTHESIS_TIMEOUT_S}с)")
-    exit_code, output = run_llm("claude", synthesis_prompt, SYNTHESIS_TIMEOUT_S)
-    synthesis = extract_json_block(output) if exit_code == 0 else None
-    synth_rows = sanitize_criteria(synthesis.get("criteria"), allowed_keys, require_resolution=True) if synthesis else {}
-    report_rows.append({
-        "idea_id": idea_id, "run_id": run_id, "stage": "deep_criteria",
-        "kind": "synthesis", "provider": "claude", "model": os.environ.get("RUNNER_CLAUDE_MODEL"),
-        "status": "ok" if synth_rows else "error", "report_md": output[:200_000],
-    })
-
-    quoted_id = urllib.parse.quote(idea_id, safe="")
-    db._request("DELETE", f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.deep_criteria")
-    db._request("POST", "/research_reports", report_rows)
-
-    if not synth_rows:
-        raise SystemExit(f"deep-research: синтез не повернув валідного JSON (exit={exit_code}) — "
-                         "звіти збережено в research_reports, картку не змінено")
-
-    criteria_version = criteria_version_of(criteria_doc)
-    verdict_rows = []
-    for provider, rows in model_rows.items():
-        for row in rows.values():
-            verdict_rows.append({**row, "idea_id": idea_id, "run_id": run_id, "stage": "deep",
-                                 "kind": "model", "provider": provider,
-                                 "criteria_version": criteria_version})
-    for row in synth_rows.values():
-        verdict_rows.append({**row, "idea_id": idea_id, "run_id": run_id, "stage": "deep",
-                             "kind": "synthesis", "provider": "claude",
-                             "criteria_version": criteria_version})
-    db._request("DELETE", f"/criteria_verdicts?idea_id=eq.{quoted_id}&stage=eq.deep")
-    db._request("POST", "/criteria_verdicts", verdict_rows)
-    log(f"criteria_verdicts: записано {len(verdict_rows)} рядків (stage=deep)")
-
-    # ---- Перезапис картки: рішення про статус приймає скрипт, не модель. ----
-    failed_fatal = [k for k in sorted(FATAL_KEYS)
-                    if k in synth_rows and synth_rows[k]["verdict"] == "failed"]
-    all_fatal_passed = not failed_fatal
-
-    updates_raw = synthesis.get("idea_updates") if isinstance(synthesis.get("idea_updates"), dict) else {}
-    updates: dict = {}
-    code = updates_raw.get("rejection_code")
-    if failed_fatal:
-        if code not in REJECTION_CODES:
-            code = CODE_BY_CRITERION[track][failed_fatal[0]]
-        updates["rejection_code"] = code
-        updates["status"] = "rejected"
-    else:
-        updates["rejection_code"] = None
-        updates["rejection_detail"] = None
-        # accepted лишається рішенням власника; rejected після повного проходу
-        # повертається на його ж розгляд.
-        updates["status"] = "accepted" if idea["status"] == "accepted" else "approved_pending"
-    if isinstance(updates_raw.get("rejection_detail"), str) and failed_fatal:
-        updates["rejection_detail"] = updates_raw["rejection_detail"][:5000]
-    extra = updates_raw.get("rejection_codes_extra")
-    if isinstance(extra, list):
-        updates["rejection_codes_extra"] = [c for c in extra if c in REJECTION_CODES and c != updates.get("rejection_code")]
-    if updates_raw.get("confidence") in ("high", "medium", "low"):
-        updates["confidence"] = updates_raw["confidence"]
-    if isinstance(updates_raw.get("ceiling_estimate"), str):
-        updates["ceiling_estimate"] = updates_raw["ceiling_estimate"][:500]
-    if isinstance(updates_raw.get("launch_effort_hours"), (int, float)):
-        updates["launch_effort_hours"] = updates_raw["launch_effort_hours"]
-    updates["ceiling_flag"] = "review" if updates_raw.get("ceiling_flag") == "review" else None
-    if isinstance(updates_raw.get("review_condition"), str):
-        updates["review_condition"] = updates_raw["review_condition"][:2000]
-
-    section_md = synthesis.get("criteria_section_md")
-    if isinstance(section_md, str) and section_md.strip():
-        updates["body"] = replace_section(idea.get("body"), "Аналіз за критеріями", section_md)
-
-    updates.update({
-        "research_depth": "deep",
-        "deep_researched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "deep_research_run_id": run_id,
-        "verdict_provider": "multi",
-        "verdict_model": "synthesis:claude+" + "+".join(sorted(model_rows)),
-        "verdict_run_id": run_id,
-        "criteria_version": criteria_version or idea.get("criteria_version"),
-    })
-    db._request("PATCH", f"/ideas?id=eq.{quoted_id}", updates)
-
-    summary = synthesis.get("summary")
-    summary = summary[:2000] if isinstance(summary, str) else "глибоке дослідження завершено"
-    change = f"research_depth: initial -> deep; status: {idea['status']} -> {updates['status']}"
-    event = {"idea_id": idea_id, "actor": "deep-research", "change": change, "reason": summary}
-    if run_id:
-        event["run_id"] = run_id
-    db._request("POST", "/events", event)
-
-    log(f"картку оновлено: {change}")
-    log(f"підсумок синтезу: {summary}")
-    if all_fatal_passed:
-        enqueue_competitors(idea_id, run_id)
-    else:
-        log(f"фатальні провали: критерії {', '.join(failed_fatal)} (код {updates['rejection_code']})")
-
-
 # ---------------------------------------------------------------------------
-# Стадія competitors
+# Стадія synthesis: звіти зовнішніх моделей з БД → зведення Claude
 # ---------------------------------------------------------------------------
 
 def sanitize_competitors(raw) -> list[dict]:
@@ -508,112 +282,45 @@ def sanitize_competitors(raw) -> list[dict]:
     return result
 
 
-def run_competitors_stage(idea_id: str, run_id: str | None, today: str) -> None:
-    idea, track, sources = load_idea(idea_id)
-    deep_doc = read_file(os.path.join(REPO_ROOT, "agents/criteria/deep-research.md"))
-
-    researcher_template = read_file(os.path.join(REPO_ROOT, "agents/prompts/deep-research-competitors-researcher.md"))
-    researcher_prompt = render(researcher_template, {
-        "IDEA_ID": idea_id,
-        "TRACK": track,
-        "TODAY": today,
-        "IDEA_CONTEXT": build_idea_context(idea, sources),
-    })
-
-    raw_results = run_researchers(researcher_prompt)
-
-    report_rows: list[dict] = []
-    model_lists: dict[str, list[dict]] = {}
-    for provider, (exit_code, output) in raw_results.items():
-        parsed = extract_json_block(output) if exit_code == 0 else None
-        rows = sanitize_competitors(parsed.get("competitors")) if parsed else []
-        status = "ok" if rows else ("timeout" if exit_code == 124 else "error")
-        if rows:
-            model_lists[provider] = rows
-        log(f"{provider}: exit={exit_code}, конкурентів розпізнано {len(rows)}, статус {status}")
-        report_rows.append({
-            "idea_id": idea_id, "run_id": run_id, "stage": "competitors",
-            "kind": "model", "provider": provider, "model": None,
-            "status": status, "report_md": output[:200_000],
-        })
-
+def load_model_reports(idea_id: str) -> list[dict]:
+    """Вербатим-звіти зовнішніх моделей, які власник вставив на порталі."""
     quoted_id = urllib.parse.quote(idea_id, safe="")
-    if not model_lists:
-        db._request("DELETE", f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.competitors")
-        db._request("POST", "/research_reports", report_rows)
-        raise SystemExit("deep-research: жоден дослідник не повернув конкурентів — синтез неможливий")
+    rows = db._request(
+        "GET",
+        f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.deep_criteria&kind=eq.model"
+        "&select=provider,model,status,report_md&order=provider.asc",
+    ) or []
+    return [row for row in rows
+            if row.get("status") == "ok" and isinstance(row.get("report_md"), str)]
 
-    synthesis_template = read_file(os.path.join(REPO_ROOT, "agents/prompts/deep-research-competitors-synthesis.md"))
-    model_results_md = "\n\n".join(
-        f"### Дослідник: {provider}\n```json\n"
-        + json.dumps({"competitors": rows}, ensure_ascii=False, indent=1) + "\n```"
-        for provider, rows in model_lists.items()
+
+def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
+    idea, track, sources = load_idea(idea_id)
+    reports = load_model_reports(idea_id)
+    if not reports:
+        raise SystemExit(
+            "deep-research: у research_reports немає жодного придатного звіту "
+            f"({idea_id}, stage=deep_criteria, kind=model) — спершу вставте відповіді "
+            "моделей на порталі, синтезувати нема з чого"
+        )
+    labels = ", ".join(str(row.get("provider")) for row in reports)
+    log(f"{idea_id} ({track}), звітів моделей у базі: {len(reports)} — {labels}")
+
+    # ---- Межа фази 4 ----------------------------------------------------
+    # Далі — два послідовні виклики Claude (власне дослідження d_-блоків плюс
+    # адʼюдикація чужих звітів; потім текст картки і зведення конкурентів) і
+    # запис результатів у criteria_verdicts/competitors/ideas. Усе, що для цього
+    # потрібно, уже є в цьому файлі: load_idea, звіти вище, sanitize_criteria,
+    # sanitize_competitors, replace_section, run_llm.
+    raise SystemExit(
+        "deep-research: стадію synthesis ще не реалізовано (фаза 4 плану "
+        "docs/plans/deep-research-handoff.md) — звіти лишились у базі, картку не змінено"
     )
-    saturation_context, _ = split_section(idea.get("body"), "Аналіз за критеріями")
-    synthesis_prompt = render(synthesis_template, {
-        "IDEA_ID": idea_id,
-        "TRACK": track,
-        "TODAY": today,
-        "IDEA_CONTEXT": build_idea_context(idea, sources),
-        "CRITERIA_SECTION": saturation_context or "(розділ відсутній)",
-        "MODEL_RESULTS": model_results_md,
-        "DEEP_DOC": deep_doc,
-    })
-
-    log(f"синтез конкурентів claude (таймаут {SYNTHESIS_TIMEOUT_S}с)")
-    exit_code, output = run_llm("claude", synthesis_prompt, SYNTHESIS_TIMEOUT_S)
-    synthesis = extract_json_block(output) if exit_code == 0 else None
-    final_rows = sanitize_competitors(synthesis.get("competitors")) if synthesis else []
-    report_rows.append({
-        "idea_id": idea_id, "run_id": run_id, "stage": "competitors",
-        "kind": "synthesis", "provider": "claude", "model": os.environ.get("RUNNER_CLAUDE_MODEL"),
-        "status": "ok" if final_rows else "error", "report_md": output[:200_000],
-    })
-    db._request("DELETE", f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.competitors")
-    db._request("POST", "/research_reports", report_rows)
-
-    if not final_rows:
-        raise SystemExit(f"deep-research: синтез конкурентів не повернув валідного JSON (exit={exit_code}) — "
-                         "звіти збережено, картку не змінено")
-
-    for row in final_rows:
-        row.update({"idea_id": idea_id, "run_id": run_id})
-    db._request("DELETE", f"/competitors?idea_id=eq.{quoted_id}")
-    db._request("POST", "/competitors", final_rows)
-    log(f"competitors: записано {len(final_rows)} рядків")
-
-    updates: dict = {}
-    section_md = synthesis.get("competitors_section_md")
-    if isinstance(section_md, str) and section_md.strip():
-        updates["body"] = replace_section(idea.get("body"), "Конкуренти", section_md)
-
-    # Насиченість, що суперечить щойно пройденому критерію, не перевертає
-    # вердикт мовчки — лише піднімає прапорець ручного розгляду власником.
-    saturation_alert = synthesis.get("saturation_alert") is True
-    if saturation_alert:
-        updates["ceiling_flag"] = "review"
-        note = synthesis.get("saturation_note")
-        if isinstance(note, str) and note.strip():
-            updates["review_condition"] = note.strip()[:2000]
-
-    if updates:
-        db._request("PATCH", f"/ideas?id=eq.{quoted_id}", updates)
-
-    summary = synthesis.get("summary")
-    summary = summary[:2000] if isinstance(summary, str) else "дослідження конкурентів завершено"
-    change = f"конкуренти: {len(final_rows)} у реєстрі" + ("; ceiling_flag -> review" if saturation_alert else "")
-    event = {"idea_id": idea_id, "actor": "deep-research", "change": change, "reason": summary}
-    if run_id:
-        event["run_id"] = run_id
-    db._request("POST", "/events", event)
-
-    log(f"готово: {change}")
-    log(f"підсумок синтезу: {summary}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", choices=["deep_criteria", "competitors"], default="deep_criteria")
+    parser.add_argument("--stage", choices=["synthesis"], default="synthesis")
     args = parser.parse_args()
 
     idea_id = read_idea_id()
@@ -630,10 +337,7 @@ def main() -> None:
     run_id = os.environ.get("IDEAS_SCOUT_JOB_RUN_ID") or None
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    if args.stage == "competitors":
-        run_competitors_stage(idea_id, run_id, today)
-    else:
-        run_deep_stage(idea_id, run_id, today)
+    run_synthesis_stage(idea_id, run_id, today)
 
 
 if __name__ == "__main__":
