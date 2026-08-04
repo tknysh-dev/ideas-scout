@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { EASE } from "@/components/motion";
 import { decideIdea, type DecisionAction } from "@/lib/actions/decisions";
-import { enqueueDeepResearch } from "@/lib/actions/jobs";
 import { REJECTION_META, statusMeta } from "@/lib/status";
 import type { IdeaStatus, RejectionCode } from "@/lib/types";
 
@@ -41,22 +40,6 @@ function CheckIcon() {
   );
 }
 
-function ResearchIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className="h-4 w-4"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      aria-hidden="true"
-    >
-      <circle cx="7" cy="7" r="3.75" />
-      <path d="m9.9 9.9 3.1 3.1M7 4.9V7l1.45 1" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 export default function DecisionPanel({
   ideaId,
   currentStatus,
@@ -64,24 +47,19 @@ export default function DecisionPanel({
   // Кнопки в шапці картки ідеї — без власної рамки й заголовка, вирівняні
   // праворуч під описом.
   bare = false,
-  deepResearch = false,
   onDecided,
 }: {
   ideaId: string;
   currentStatus: IdeaStatus;
   compact?: boolean;
   bare?: boolean;
-  deepResearch?: boolean;
   onDecided?: () => void;
 }) {
   const router = useRouter();
   const [reason, setReason] = useState("");
   const [rejectionCode, setRejectionCode] = useState<RejectionCode | "">("");
   const [pending, startTransition] = useTransition();
-  const [researchPending, startResearchTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [researchError, setResearchError] = useState<string | null>(null);
-  const [researchQueued, setResearchQueued] = useState(false);
   const [done, setDone] = useState<DecisionAction | null>(null);
   const [dialog, setDialog] = useState<DecisionAction | null>(null);
 
@@ -116,22 +94,6 @@ export default function DecisionPanel({
     submit(action, "", undefined);
   }
 
-  function startDeepResearch() {
-    setResearchError(null);
-    startResearchTransition(async () => {
-      try {
-        const result = await enqueueDeepResearch(ideaId);
-        if (result.error) {
-          setResearchError(result.error);
-          return;
-        }
-        setResearchQueued(true);
-      } catch {
-        setResearchError("Не вдалося зв'язатися з сервером. Онови сторінку і спробуй ще раз.");
-      }
-    });
-  }
-
   function confirmDialog() {
     if (!dialog) return;
     const text = reason.trim();
@@ -156,7 +118,7 @@ export default function DecisionPanel({
     <div
       className={
         bare
-          ? `flex flex-col gap-2 ${deepResearch ? "w-full items-stretch" : "items-end"}`
+          ? "flex flex-col items-end gap-2"
           : `rounded-lg border border-line bg-paper-raised ${compact ? "p-4" : "p-5"}`
       }
     >
@@ -172,13 +134,7 @@ export default function DecisionPanel({
         </p>
       )}
 
-      <div
-        className={
-          deepResearch
-            ? "flex w-full flex-wrap items-center justify-between gap-3"
-            : `flex flex-wrap items-center gap-2 ${bare ? "justify-end" : ""}`
-        }
-      >
+      <div className={`flex flex-wrap items-center gap-2 ${bare ? "justify-end" : ""}`}>
         <div className="flex flex-wrap items-center gap-2">
           {(Object.keys(ACTION_META) as DecisionAction[]).map((action) => {
             const isCurrent = action === currentStatus;
@@ -189,7 +145,7 @@ export default function DecisionPanel({
               <button
                 key={action}
                 type="button"
-                disabled={pending || researchPending || locked}
+                disabled={pending || locked}
                 onClick={() => start(action)}
                 title={
                   isCurrent
@@ -205,33 +161,7 @@ export default function DecisionPanel({
             );
           })}
         </div>
-
-        {deepResearch && (
-          <button
-            type="button"
-            disabled={pending || researchPending || researchQueued}
-            onClick={startDeepResearch}
-            title="Поставити глибоке дослідження цієї ідеї в чергу M1"
-            className="inline-flex items-center gap-2 rounded-md border border-[color:var(--research-btn-border)] bg-[color:var(--research-btn-bg)] px-3.5 py-2 text-sm font-semibold text-[color:var(--research-btn-fg)] shadow-[0_1px_2px_rgba(20,60,100,0.2)] transition-[background-color,box-shadow,transform] hover:-translate-y-px hover:bg-[color:var(--research-btn-hover)] hover:shadow-[0_3px_8px_rgba(20,60,100,0.24)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--research-btn-border)] disabled:translate-y-0 disabled:cursor-default disabled:opacity-55 disabled:shadow-none"
-          >
-            {researchQueued ? <CheckIcon /> : <ResearchIcon />}
-            {researchPending
-              ? "Ставимо в чергу…"
-              : researchQueued
-                ? "Додано в чергу"
-                : "Глибоке дослідження"}
-          </button>
-        )}
       </div>
-
-      {researchError && (
-        <p
-          aria-live="polite"
-          className="text-right text-xs text-[color:var(--status-rejected-fg)]"
-        >
-          {researchError}
-        </p>
-      )}
 
       {error && !dialog && (
         <p

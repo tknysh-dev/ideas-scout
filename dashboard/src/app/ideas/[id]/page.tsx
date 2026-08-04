@@ -8,7 +8,9 @@ import DecisionPanel from "@/components/DecisionPanel";
 import DeepResearchBlocks from "@/components/DeepResearchBlocks";
 import DeepResearchLegend from "@/components/DeepResearchLegend";
 import DeepResearchProviderPanel from "@/components/DeepResearchProviderPanel";
+import DeepResearchStatus, { type ActiveSynthesisJob } from "@/components/DeepResearchStatus";
 import DeepResearchTabs from "@/components/DeepResearchTabs";
+import IdeaOptionsMenu from "@/components/IdeaOptionsMenu";
 import { Field, FieldGroup } from "@/components/FieldGroup";
 import Prose from "@/components/Prose";
 import StatusBadge from "@/components/StatusBadge";
@@ -28,7 +30,9 @@ import { groupByProvider, groupVerdicts, VERDICT_TONE } from "@/lib/deep-researc
 import type { CompetitorRow, CriteriaVerdictRow, EventRow, Idea, SourceRow } from "@/lib/types";
 import { formatDate, formatDateTime } from "@/lib/dates";
 
-
+// Сторінка показує хід синтезу і оновлюється сама, поки він іде, — запечений
+// рендер показував би застиглий лоадер.
+export const dynamic = "force-dynamic";
 
 export default async function IdeaPage({
   params,
@@ -55,12 +59,21 @@ export default async function IdeaPage({
     { data: events },
     { data: verdictRows },
     { data: competitorRows },
+    { data: activeJobs },
   ] = await Promise.all([
     supabase.from("ideas").select("*").eq("id", id).maybeSingle(),
     supabase.from("sources").select("*").eq("idea_id", id).order("id"),
     supabase.from("events").select("*").eq("idea_id", id).order("happened_at"),
     supabase.from("criteria_verdicts").select("*").eq("idea_id", id).eq("stage", "deep"),
     supabase.from("competitors").select("*").eq("idea_id", id).order("created_at"),
+    supabase
+      .from("jobs")
+      .select("status,created_at,run_id")
+      .eq("type", "deep_research_synthesis")
+      .filter("payload->>idea_id", "eq", id)
+      .in("status", ["pending", "running"])
+      .order("created_at", { ascending: false })
+      .limit(1),
   ]);
 
   if (!idea) notFound();
@@ -79,6 +92,7 @@ export default async function IdeaPage({
   const deep = groupVerdicts((verdictRows ?? []) as CriteriaVerdictRow[]);
   const providerGroups = groupByProvider((verdictRows ?? []) as CriteriaVerdictRow[], record.track);
   const competitors = (competitorRows ?? []) as CompetitorRow[];
+  const activeJob = (activeJobs?.[0] ?? null) as ActiveSynthesisJob | null;
 
   // Після глибокого дослідження вердикт критерію існує як дані, тож розбір
   // прози лишається лише джерелом пояснювального тексту, а не вердикту.
@@ -135,16 +149,14 @@ export default async function IdeaPage({
           <p className="mt-2 max-w-2xl text-ink-dim">{record.mechanic_summary}</p>
         )}
         {OWNER_DECIDABLE_STATUSES.includes(record.status) && (
-          <div className="mt-4">
-            <DecisionPanel
-              ideaId={record.id}
-              currentStatus={record.status}
-              bare
-              deepResearch
-            />
+          <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
+            <DecisionPanel ideaId={record.id} currentStatus={record.status} bare />
+            <IdeaOptionsMenu ideaId={record.id} />
           </div>
         )}
       </Card>
+
+      {activeJob && <DeepResearchStatus job={activeJob} />}
 
       <div className="grid gap-5">
         <FieldGroup title="Сигнал" index={0} exclude={record.id}>

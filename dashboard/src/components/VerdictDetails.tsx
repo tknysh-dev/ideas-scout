@@ -1,4 +1,5 @@
 import CollapsibleBody from "@/components/CollapsibleBody";
+import Pill from "@/components/Pill";
 import Prose from "@/components/Prose";
 import { formatDate } from "@/lib/dates";
 import {
@@ -13,29 +14,7 @@ import {
 } from "@/lib/deep-research";
 import type { CriteriaVerdictRow } from "@/lib/types";
 
-export function Pill({
-  label,
-  token,
-  title,
-}: {
-  label: string;
-  token: string;
-  title?: string;
-}) {
-  return (
-    <span
-      title={title}
-      className="inline-flex w-fit items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 font-mono text-[11px] font-medium uppercase tracking-wide"
-      style={{
-        color: `var(--status-${token}-fg)`,
-        backgroundColor: `var(--status-${token}-bg)`,
-      }}
-    >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: `var(--status-${token}-fg)` }} />
-      {label}
-    </span>
-  );
-}
+export { default as Pill } from "@/components/Pill";
 
 // Список доказів (лінк + дата + цитата) — спільна розмітка для синтезу
 // (VerdictDetails) і для окремого рядка моделі (VerdictRowDetails).
