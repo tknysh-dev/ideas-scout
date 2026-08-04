@@ -598,9 +598,12 @@ print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
   # Запит до research_reports служить і перевіркою, що міграція глибокого
   # дослідження накочена: без таблиці PostgREST відповідає помилкою, і це має
   # долетіти до doctor.sh як окремий стан, а не розчинитись у «даних немає».
-  local reports jobs tables_ok=true
+  local reports jobs legacy tables_ok=true
   reports="$(_db_get "/research_reports?select=provider,stage,status,created_at&created_at=gte.$(_urlenc "$since")" 2>/dev/null)" || tables_ok=false
   jobs="$(_db_get "/jobs?select=type,status,last_error,finished_at&type=eq.deep_research_synthesis&status=eq.failed&finished_at=gte.$(_urlenc "$since")" 2>/dev/null || echo "[]")"
+  # Типи скасованого конвеєра: воркер їх більше не знає, тож рядок такого типу
+  # в черзі не виконається ніколи — його треба скасувати руками.
+  legacy="$(_db_get "/jobs?select=type,status&type=in.(deep_research,deep_research_competitors)&status=in.(pending,running)" 2>/dev/null || echo "[]")"
   python3 -c '
 import json, sys
 
@@ -617,6 +620,12 @@ if not isinstance(reports, list):
     reports = []
 if not isinstance(jobs, list):
     jobs = []
+try:
+    legacy = json.loads(sys.argv[4] or "[]")
+except json.JSONDecodeError:
+    legacy = []
+if not isinstance(legacy, list):
+    legacy = []
 
 bad = [r for r in reports if r.get("status") in ("error", "timeout")]
 providers = sorted({r.get("provider") or "?" for r in bad})
@@ -632,8 +641,9 @@ print(json.dumps({
     "failed_providers": providers,
     "jobs_failed": len(jobs),
     "last_job_error": last_error,
+    "legacy_jobs_queued": len(legacy),
 }))
-' "$reports" "$jobs" "$tables_ok"
+' "$reports" "$jobs" "$tables_ok" "$legacy"
 }
 
 # ---------------------------------------------------------------------------

@@ -516,9 +516,9 @@ if [ -f "$CODEX_AUTH" ]; then
 import json
 print((json.load(open('$CODEX_AUTH')).get('last_refresh') or '')[:19])
 " 2>/dev/null || echo "")"
-  ok "логін codex є (оновлений ${CODEX_REFRESH:-?})"
+  note "логін codex є (оновлений ${CODEX_REFRESH:-?}) — жоден автоматичний прогін його вже не кличе, лишається для ручних викликів llm-invoke.sh"
 else
-  note "логіна codex немає — для прогонів агентів це штатно (як провайдер runner.sh codex вимкнений)"
+  note "логіна codex немає — це штатно: як провайдер runner.sh він вимкнений, а дослідників M1 більше не запускає"
 fi
 
 # ---------------------------------------------------------------------------
@@ -528,24 +528,18 @@ section "Глибоке дослідження"
 # руками в браузерних UI за промптом handoff, а тут працює лише синтез Claude.
 # Тому перевіряємо те, без чого ручний цикл мовчки зупиниться: шаблон промпта і
 # сам синтезатор.
-HANDOFF_PROMPT="$REPO_ROOT/agents/prompts/deep-research-handoff.md"
-if [ ! -f "$HANDOFF_PROMPT" ]; then
-  err "немає agents/prompts/deep-research-handoff.md — портал не згенерує промпт, який власник копіює в моделі"
-elif ! grep -q 'DEEP RESEARCH REPORT START' "$HANDOFF_PROMPT"; then
-  err "у шаблоні handoff-промпта немає маркерів звіту — вставлені відповіді неможливо буде розрізати на портал"
-else
-  ok "шаблон промпта для ручного дослідження на місці (з маркерами звіту)"
-fi
-
-MISSING_SYNTH_PROMPTS=""
-for prompt_file in deep-research-synthesis.md deep-research-card.md; do
-  [ -f "$REPO_ROOT/agents/prompts/$prompt_file" ] || MISSING_SYNTH_PROMPTS="$MISSING_SYNTH_PROMPTS $prompt_file"
-done
-if [ -n "$MISSING_SYNTH_PROMPTS" ]; then
-  err "немає промптів синтезу:${MISSING_SYNTH_PROMPTS} — job deep_research_synthesis впаде на читанні шаблона"
-else
-  ok "обидва промпти синтезу на місці (адʼюдикація і текст картки)"
-fi
+# Промпти й документи, які підставляються в них, тепер редагуються руками, а
+# їхній контракт розподілений між трьома файлами: шаблон, підставляч і
+# розбирач відповіді. Кожен розсинхрон тут тихий — власник дізнається про нього
+# аж коли скопіює зіпсований промпт у чуже вікно й витратить годину.
+PROMPT_CONTRACT="$(python3 "$SCRIPT_DIR/doctor_prompt_contract.py")"
+while IFS=$'\t' read -r level message; do
+  case "$level" in
+    ok) ok "$message" ;;
+    warn) warn "$message" ;;
+    err) err "$message" ;;
+  esac
+done <<< "$PROMPT_CONTRACT"
 
 if command -v claude >/dev/null 2>&1; then
   ok "claude CLI на місці — синтез глибокого дослідження робить саме він"
@@ -595,12 +589,13 @@ else
   if [ -z "$DR_JSON" ]; then
     note "стан глибокого дослідження перевірити не вдалось — Supabase не відповіла вище"
   else
-    read -r DR_TABLES DR_FAILED DR_TOTAL DR_JOBS DR_PROVIDERS <<<"$(python3 -c "
+    read -r DR_TABLES DR_FAILED DR_TOTAL DR_JOBS DR_LEGACY DR_PROVIDERS <<<"$(python3 -c "
 import json, sys
 d = json.loads(sys.argv[1])
 print(str(d.get('tables_ok', False)).lower(), d.get('reports_failed', 0), d.get('reports_total', 0),
-      d.get('jobs_failed', 0), ','.join(d.get('failed_providers') or []) or '-')
-" "$DR_JSON" 2>/dev/null || echo "false 0 0 0 -")"
+      d.get('jobs_failed', 0), d.get('legacy_jobs_queued', 0),
+      ','.join(d.get('failed_providers') or []) or '-')
+" "$DR_JSON" 2>/dev/null || echo "false 0 0 0 0 -")"
 
     if [ "$DR_TABLES" != "true" ]; then
       err "таблиць глибокого дослідження немає в базі — міграція не накочена, і вставлені власником звіти нікуди буде записати"
@@ -620,6 +615,13 @@ import json, sys
 print(json.loads(sys.argv[1]).get('last_job_error') or '')
 " "$DR_JSON" 2>/dev/null || echo "")"
       warn "синтезів глибокого дослідження, що впали за тиждень: ${DR_JOBS}${DR_ERROR:+ — остання помилка: ${DR_ERROR}}"
+    fi
+
+    # Типи скасованого конвеєра воркер більше не знає. Рядок, що застряг у черзі
+    # з тих часів, він відхилятиме як непідтримуваний щоразу, коли візьме його.
+    if [ "${DR_LEGACY:-0}" -gt 0 ]; then
+      warn "у черзі ${DR_LEGACY} завдань скасованих типів (deep_research, deep_research_competitors) — конвеєра, який їх виконував, більше немає, тож воркер відхилятиме їх нескінченно"
+      hint "скасуй їх у базі: update jobs set status='cancelled' where type in ('deep_research','deep_research_competitors') and status in ('pending','running')"
     fi
   fi
 fi
