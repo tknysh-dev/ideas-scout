@@ -139,3 +139,81 @@ test("мітка провайдера чиститься від керівних
   assert.equal(sanitizeLabel(" Chat\nGPT "), "Chat GPT");
   assert.equal(sanitizeLabel("x".repeat(300)).length, 100);
 });
+
+// Поломки форматування передбачувані, і кожна з них раніше коштувала цілої
+// вкладки з вердиктами, хоча дані в блоці були.
+const criteriaJson = JSON.stringify(goodPayload, null, 2);
+
+test("огорожа з іншим регістром або пробілом усе одно читається", () => {
+  for (const fence of ["```JSON", "``` json", "```Json"]) {
+    const result = parse([{ provider: "ChatGPT", text: `Текст.\n\n${fence}\n${criteriaJson}\n\`\`\`` }]);
+    assert.equal(result.reports[0].status, "ok", fence);
+    assert.equal(result.reports[0].criteria.length, 2);
+  }
+});
+
+test("огорожа без назви мови теж читається", () => {
+  const result = parse([{ provider: "ChatGPT", text: "Текст.\n\n```\n" + criteriaJson + "\n```" }]);
+  assert.equal(result.reports[0].status, "ok");
+});
+
+test("незакрита огорожа не втрачає блок", () => {
+  const result = parse([{ provider: "ChatGPT", text: "Текст.\n\n```json\n" + criteriaJson }]);
+  const report = result.reports[0];
+  assert.equal(report.status, "ok");
+  assert.ok(report.notes.some((n) => /не була закрита/.test(n)), "про ремонт сказано власнику");
+});
+
+test("зайва кома перед дужкою лагодиться", () => {
+  const broken = criteriaJson.replace(/\}\s*\]/, "},\n  ]");
+  const result = parse([{ provider: "ChatGPT", text: "```json\n" + broken + "\n```" }]);
+  assert.equal(result.reports[0].status, "ok");
+  assert.ok(result.reports[0].notes.some((n) => /зайві коми/.test(n)));
+});
+
+test("проза всередині блоку не заважає", () => {
+  const result = parse([
+    { provider: "ChatGPT", text: "```json\nОсь підсумок:\n" + criteriaJson + "\nСподіваюсь, допоміг.\n```" },
+  ]);
+  assert.equal(result.reports[0].status, "ok");
+  assert.ok(result.reports[0].notes.some((n) => /зайва проза/.test(n)));
+});
+
+test("блок, обірваний на середині, дає те, що встигло дійти", () => {
+  const truncated = criteriaJson.slice(0, criteriaJson.indexOf('"d_demand"') + 40);
+  const result = parse([{ provider: "ChatGPT", text: "```json\n" + truncated }]);
+  const report = result.reports[0];
+  assert.equal(report.status, "ok");
+  assert.ok(report.criteria.length >= 1, "перший критерій уцілів");
+  assert.ok(report.notes.some((n) => /обірвався/.test(n)));
+});
+
+// Межа поблажливості: лагодимо форму, ніколи не зміст.
+test("вигаданий вердикт ремонт не рятує — такий запис відкидається", () => {
+  const result = parse([
+    {
+      provider: "ChatGPT",
+      text: "```json\n" + JSON.stringify({
+        criteria: [{ criterion_key: "1", verdict: "майже пройдено", summary: "-", detail: "-", evidence: [] }],
+        competitors: [],
+      }) + "\n```",
+    },
+  ]);
+  assert.equal(result.reports[0].status, "prose", "у синтез іде прозою, а не вигаданим вердиктом");
+});
+
+test("текст без жодного обʼєкта лишається прозою", () => {
+  const result = parse([{ provider: "ChatGPT", text: "Просто звіт без будь-якої структури." }]);
+  assert.equal(result.reports[0].status, "prose");
+});
+
+// Помітка про ремонт має з'являтись лише тоді, коли ремонт справді був:
+// інакше вона знецінюється й перестає привертати увагу там, де потрібна.
+test("цілий блок не отримує помітки про ремонт", () => {
+  const result = parse([{ provider: "ChatGPT", text: `Звіт.\n\n${jsonBlock(goodPayload)}` }]);
+  assert.equal(result.reports[0].status, "ok");
+  assert.ok(
+    !result.reports[0].notes.some((n) => /полагодити/.test(n)),
+    "нічого не ламалось — нема про що попереджати",
+  );
+});

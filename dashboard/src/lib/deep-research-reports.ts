@@ -176,24 +176,139 @@ export function sanitizeCompetitors(raw: unknown): SanitizedCompetitor[] {
 
 export interface JsonBlockResult {
   data: Record<string, unknown> | null;
-  /** Скільки fenced-блоків ```json взагалі трапилось у тексті. */
+  /** Скільки ```json-огорож знайдено — розрізняє «немає блоку» і «блок битий». */
   blocks: number;
+  /** Що довелось полагодити, людською мовою; порожньо — блок був цілий. */
+  repairs: string[];
 }
 
-/** Останній валідний fenced ```json-блок — той самий вибір, що в Python. */
+// Моделі ламають JSON передбачувано: міняють регістр огорожі, обривають її на
+// півслові, лишають кому перед закривальною дужкою, вставляють коментар. Кожна
+// така дрібниця раніше коштувала цілої вкладки з вердиктами, хоча дані в блоці
+// були. Лагодимо лише форму, ніколи не зміст: якщо після ремонту в блоці не
+// виявиться впізнаних ключів критеріїв, санітизація його однаково відкине, і
+// звіт піде в синтез прозою — як і без ремонту.
+const SMART_QUOTES = /[\u201C\u201D\u201E\u00AB\u00BB]/g;
+
+function balanceBrackets(raw: string): string {
+  let depthCurly = 0;
+  let depthSquare = 0;
+  let inString = false;
+  let escaped = false;
+  for (const char of raw) {
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\") { escaped = true; continue; }
+    if (char === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (char === "{") depthCurly += 1;
+    else if (char === "}") depthCurly -= 1;
+    else if (char === "[") depthSquare += 1;
+    else if (char === "]") depthSquare -= 1;
+  }
+  if (depthCurly <= 0 && depthSquare <= 0) return raw;
+  // Обрив стався всередині рядка або запису — відрізаємо хвіст до останньої
+  // цілої коми, щоб не дозакривати напівнаписане значення.
+  let text = raw;
+  if (inString) {
+    const lastComma = text.lastIndexOf(",");
+    if (lastComma > 0) text = text.slice(0, lastComma);
+  }
+  return text + "]".repeat(Math.max(0, depthSquare)) + "}".repeat(Math.max(0, depthCurly));
+}
+
+function asObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// Найзовнішній {...}, що містить очікуване поле: рятує, коли модель домішала
+// прозу до вмісту огорожі.
+function sliceObject(raw: string): string | null {
+  const first = raw.indexOf("{");
+  const last = raw.lastIndexOf("}");
+  if (first === -1 || last <= first) return null;
+  const slice = raw.slice(first, last + 1);
+  return /"(criteria|competitors)"/.test(slice) ? slice : null;
+}
+
+function parseCandidate(raw: string): { data: Record<string, unknown> | null; repairs: string[] } {
+  const direct = asObject(raw);
+  if (direct) return { data: direct, repairs: [] };
+
+  const repairs: string[] = [];
+  let text = raw;
+
+  const sliced = sliceObject(text);
+  if (sliced && sliced !== text) {
+    text = sliced;
+    repairs.push("у блоці була зайва проза — узято сам обʼєкт");
+    const data = asObject(text);
+    if (data) return { data, repairs };
+  }
+
+  if (SMART_QUOTES.test(text)) {
+    text = text.replace(SMART_QUOTES, '"');
+    repairs.push("типографські лапки замінено на звичайні");
+    const data = asObject(text);
+    if (data) return { data, repairs };
+  }
+
+  if (/^\s*\/\//m.test(text)) {
+    text = text.replace(/^\s*\/\/.*$/gm, "");
+    repairs.push("прибрано рядки-коментарі");
+    const data = asObject(text);
+    if (data) return { data, repairs };
+  }
+
+  if (/,\s*[}\]]/.test(text)) {
+    text = text.replace(/,(\s*[}\]])/g, "$1");
+    repairs.push("прибрано зайві коми перед дужками");
+    const data = asObject(text);
+    if (data) return { data, repairs };
+  }
+
+  const balanced = balanceBrackets(text);
+  if (balanced !== text) {
+    repairs.push("блок обірвався на півслові — дозакрито дужки, хвіст міг загубитись");
+    const data = asObject(balanced);
+    if (data) return { data, repairs };
+  }
+
+  return { data: null, repairs: [] };
+}
+
 export function extractJsonBlock(text: string): JsonBlockResult {
-  const blocks = [...text.matchAll(/```json\s*\n([\s\S]*?)```/g)].map((match) => match[1]);
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    try {
-      const parsed: unknown = JSON.parse(blocks[index]);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return { data: parsed as Record<string, unknown>, blocks: blocks.length };
-      }
-    } catch {
-      continue;
+  const fenced = [...text.matchAll(/```[ \t]*json[ \t]*\r?\n([\s\S]*?)```/gi)].map((m) => m[1]);
+  const notes: string[] = [];
+  // Порядок пошуку — від найнадійнішого джерела до найвідчайдушнішого:
+  // правильна огорожа, потім незакрита, потім огорожа без мови, і лише в кінці
+  // весь текст. Інакше цілий блок «лагодився» б через сирий текст і власник
+  // бачив би помітку про ремонт там, де ремонтувати нічого.
+  const candidates = [...fenced].reverse();
+
+  if (fenced.length === 0) {
+    const open = text.match(/```[ \t]*json[ \t]*\r?\n([\s\S]*)$/i);
+    if (open) {
+      candidates.push(open[1]);
+      notes.push("огорожа блоку не була закрита");
     }
   }
-  return { data: null, blocks: blocks.length };
+  candidates.push(
+    ...[...text.matchAll(/```[ \t]*[a-z]*[ \t]*\r?\n([\s\S]*?)```/gi)].map((m) => m[1]).reverse(),
+  );
+  candidates.push(text);
+
+  for (const candidate of candidates) {
+    const { data, repairs } = parseCandidate(candidate);
+    if (data) return { data, blocks: fenced.length, repairs: [...notes, ...repairs] };
+  }
+  return { data: null, blocks: fenced.length, repairs: [] };
 }
 
 export type ReportStatus = "ok" | "prose" | "refused" | "empty";
@@ -268,7 +383,7 @@ export function parseReport(
   // Звіт без придатного json-блоку більше не пропадає: прозу читає синтез, і
   // година роботи власника не згорає через одну кому. Втрачається лише
   // структура — вкладка цього провайдера лишиться без вердиктів по критеріях.
-  const { data: json, blocks } = extractJsonBlock(text);
+  const { data: json, blocks, repairs } = extractJsonBlock(text);
   if (!json) {
     report.status = "prose";
     report.problem =
@@ -279,6 +394,13 @@ export function parseReport(
       "по цій моделі не буде. Щоб вона зʼявилась, попросіть модель повторити " +
       "підсумковий блок одним шматком.";
     return report;
+  }
+
+  if (repairs.length > 0) {
+    notes.push(
+      `Машиночитний блок довелось полагодити: ${repairs.join("; ")}. ` +
+        "Вердикти варто звірити очима.",
+    );
   }
 
   const { criteria, dropped } = sanitizeCriteria(json.criteria, allowed);

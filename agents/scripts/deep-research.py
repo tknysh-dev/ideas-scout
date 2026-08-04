@@ -146,40 +146,135 @@ def replace_section(body: str | None, title: str, new_section: str) -> str:
     return (body[:start] + block + "\n\n" + body[end:]).strip()
 
 
-def extract_json_block(text: str) -> dict | None:
-    """Останній fenced ```json блок відповіді моделі."""
-    blocks = re.findall(r"```json\s*\n(.*?)```", text, re.DOTALL)
-    for raw in reversed(blocks):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
+SMART_QUOTES = str.maketrans({"\u201c": '"', "\u201d": '"', "\u201e": '"', "\u00ab": '"', "\u00bb": '"'})
+
+
+def _as_object(raw: str) -> dict | None:
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _balance_brackets(raw: str) -> str:
+    """Дозакриває дужки блока, обірваного на півслові."""
+    curly = square = 0
+    in_string = escaped = False
+    for char in raw:
+        if escaped:
+            escaped = False
             continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        curly += char == "{"
+        curly -= char == "}"
+        square += char == "["
+        square -= char == "]"
+    if curly <= 0 and square <= 0:
+        return raw
+    text = raw
+    if in_string:
+        # Обрив усередині значення: відрізаємо недописаний запис цілком.
+        comma = text.rfind(",")
+        if comma > 0:
+            text = text[:comma]
+    return text + "]" * max(0, square) + "}" * max(0, curly)
 
 
-def align_bulk(rows: list[dict]) -> list[dict]:
-    """Однаковий набір ключів у всіх рядках пакета — вимога PostgREST.
+def _slice_object(raw: str) -> str | None:
+    first, last = raw.find("{"), raw.rfind("}")
+    if first == -1 or last <= first:
+        return None
+    sliced = raw[first:last + 1]
+    return sliced if re.search(r'"(criteria|competitors|idea_updates)"', sliced) else None
 
-    Пакетний POST з різними наборами ключів відхиляється цілком:
-    HTTP 400, PGRST102 "All object keys must match". Санітизатори ж
-    складають рядки з полів, які модель могла й не заповнити, тож набір
-    ключів залежить від відповіді моделі — тобто пакет ламався не завжди,
-    а лише на певних даних, і завжди в кінці прогону, після години роботи
-    моделей. Вирівнюємо тут, на межі з базою, а не в кожному санітизаторі:
-    обмеження належить транспорту, і додати сюди новий виклик безпечніше,
-    ніж не забути про нього в наступному санітизаторі.
 
-    Відсутні ключі доливаються як None. Нової поломки це не створює: якщо
-    колонка NOT NULL без дефолту, рядок без неї впав би й без вирівнювання.
+def _parse_candidate(raw: str) -> tuple[dict | None, list[str]]:
+    data = _as_object(raw)
+    if data is not None:
+        return data, []
+
+    repairs: list[str] = []
+    text = raw
+
+    sliced = _slice_object(text)
+    if sliced and sliced != text:
+        text = sliced
+        repairs.append("зайва проза в блоці")
+        data = _as_object(text)
+        if data is not None:
+            return data, repairs
+
+    if any(q in text for q in "\u201c\u201d\u201e\u00ab\u00bb"):
+        text = text.translate(SMART_QUOTES)
+        repairs.append("типографські лапки")
+        data = _as_object(text)
+        if data is not None:
+            return data, repairs
+
+    if re.search(r"^\s*//", text, re.MULTILINE):
+        text = re.sub(r"^\s*//.*$", "", text, flags=re.MULTILINE)
+        repairs.append("рядки-коментарі")
+        data = _as_object(text)
+        if data is not None:
+            return data, repairs
+
+    if re.search(r",\s*[}\]]", text):
+        text = re.sub(r",(\s*[}\]])", r"\1", text)
+        repairs.append("зайві коми")
+        data = _as_object(text)
+        if data is not None:
+            return data, repairs
+
+    balanced = _balance_brackets(text)
+    if balanced != text:
+        repairs.append("обрив на півслові")
+        data = _as_object(balanced)
+        if data is not None:
+            return data, repairs
+
+    return None, []
+
+
+def extract_json_block(text: str) -> dict | None:
+    """Машиночитний підсумок із відповіді моделі, з поблажливістю до форми.
+
+    Моделі ламають JSON передбачувано: інший регістр огорожі, обрив на
+    півслові, кома перед дужкою, коментар, проза всередині блока. Лагодимо
+    лише форму, ніколи не зміст: якщо після ремонту в блоці не виявиться
+    впізнаних ключів, санітизація його однаково відкине — тобто ремонт не може
+    протягти в базу те, чого модель не казала. Дзеркалить extractJsonBlock()
+    у dashboard/src/lib/deep-research-reports.ts.
     """
-    if len(rows) < 2:
-        return rows
-    all_keys: set[str] = set()
-    for row in rows:
-        all_keys.update(row)
-    return [{key: row.get(key) for key in all_keys} for row in rows]
+    fenced = re.findall(r"```[ \t]*json[ \t]*\r?\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    notes: list[str] = []
+    # Порядок пошуку — від найнадійнішого джерела до найвідчайдушнішого:
+    # правильна огорожа, потім незакрита, потім огорожа без мови, і лише в
+    # кінці — весь текст. Інакше цілий блок «лагодився» б через сирий текст.
+    candidates = list(reversed(fenced))
+    if not fenced:
+        unclosed = re.search(r"```[ \t]*json[ \t]*\r?\n(.*)$", text, re.DOTALL | re.IGNORECASE)
+        if unclosed:
+            candidates.append(unclosed.group(1))
+            notes.append("незакрита огорожа")
+    candidates += list(reversed(
+        re.findall(r"```[ \t]*[a-z]*[ \t]*\r?\n(.*?)```", text, re.DOTALL | re.IGNORECASE)))
+    candidates.append(text)
+
+    for raw in candidates:
+        data, repairs = _parse_candidate(raw)
+        if data is not None:
+            if notes or repairs:
+                log(f"json-блок прочитано з ремонтом: {', '.join(notes + repairs)}")
+            return data
+    return None
 
 
 def sanitize_evidence(raw) -> list[dict]:
