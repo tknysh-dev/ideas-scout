@@ -564,19 +564,29 @@ if [ "$PROBE_WEBSEARCH" -eq 1 ] && [ "$SKIP_NETWORK" -eq 0 ]; then
   WEBSEARCH_PROMPT='Скористайся веб-пошуком і знайди будь-яку новину, опубліковану за останні 7 днів.
 Відповідь — РІВНО один рядок формату: <URL> | <РРРР-ММ-ДД> | <заголовок>.
 Жодних пояснень, вступів і підсумків. Якщо веб-пошук тобі зараз недоступний — відповідай рівно: NO_SEARCH'
+  # Єдина перевірка доктора, яка чекає на живу модель кілька хвилин. Без цього
+  # рядка вона виглядає як зависання: секція вже надрукована, а далі тиша.
+  WS_TIMEOUT_S="${IDEAS_SCOUT_WEBSEARCH_PROBE_TIMEOUT_S:-240}"
+  note "питаю claude про свіжу новину — це живий виклик, чекаю до $((WS_TIMEOUT_S / 60)) хв…"
+  WS_START="$(date +%s)"
   WS_OUT="$(printf '%s' "$WEBSEARCH_PROMPT" \
-    | "$REPO_ROOT/agents/scripts/llm-invoke.sh" run claude --timeout 240 2>&1)"
+    | "$REPO_ROOT/agents/scripts/llm-invoke.sh" run claude --timeout "$WS_TIMEOUT_S" 2>&1)"
+  WS_ELAPSED=$(( $(date +%s) - WS_START ))
   WS_TAIL="$(printf '%s' "$WS_OUT" | tr '\n' ' ' | head -c 200)"
   # Модель, яка не змогла автентифікуватись, теж не поверне URL — але це зовсім
   # інша поломка з іншим лікуванням. Не розрізнивши їх, доктор відправляв би
   # шукати проблему з веб-пошуком там, де просто протух логін.
-  if printf '%s' "$WS_OUT" | grep -Eqi 'oauth|authenticat|401|invalid api key|credit balance'; then
+  if [ "$WS_ELAPSED" -ge "$WS_TIMEOUT_S" ] && [ -z "${WS_OUT//[[:space:]]/}" ]; then
+    err "claude не відповів за $((WS_TIMEOUT_S / 60)) хв і був знятий за таймаутом — чи є веб-пошук, лишилось невідомим"
+    hint "той самий виклик руками покаже, на чому він стоїть:"
+    hint "printf 'Назви одну новину за останні 7 днів: <URL> | <дата>' | ./agents/scripts/llm-invoke.sh run claude --timeout 120"
+  elif printf '%s' "$WS_OUT" | grep -Eqi 'oauth|authenticat|401|invalid api key|credit balance'; then
     err "claude не автентифікувався — виклик навіть не дійшов до моделі, тож ні синтезу, ні перевірки пошуку зараз не буде"
     hint "відповідь: ${WS_TAIL:-（порожньо）}"
     hint "залогінься під агентським юзером: claude"
   elif printf '%s' "$WS_OUT" | grep -Eq 'https?://[^[:space:]]+' \
      && printf '%s' "$WS_OUT" | grep -Eq '[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
-    ok "claude через llm-invoke.sh реально шукає у вебі (повернув URL з датою: ${WS_TAIL})"
+    ok "claude через llm-invoke.sh реально шукає у вебі (за ${WS_ELAPSED} с: ${WS_TAIL})"
   else
     err "claude через llm-invoke.sh не повернув URL з датою — веб-пошук недоступний, і синтез робитиме кешовані d_-блоки замість живого дослідження"
     hint "відповідь моделі: ${WS_TAIL:-（порожньо）}"
