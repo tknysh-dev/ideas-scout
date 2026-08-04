@@ -13,11 +13,7 @@ import {
   DEEP_RESEARCH_KEYS,
 } from "./deep-research-prompt.ts";
 
-export const REPORT_START_MARK = "DEEP RESEARCH REPORT START";
-export const REPORT_END_MARK = "DEEP RESEARCH REPORT END";
 export const SEARCH_UNAVAILABLE = "SEARCH UNAVAILABLE";
-export const RESEARCHER_LABEL_PLACEHOLDER = "{{RESEARCHER_LABEL}}";
-export const RESEARCHER_MODEL_PLACEHOLDER = "{{RESEARCHER_MODEL}}";
 
 export const VERDICTS = new Set([
   "passed",
@@ -63,43 +59,6 @@ export interface SanitizedCompetitor {
   evidence: EvidenceEntry[];
 }
 
-/**
- * `ok` — звіт піде в базу і в синтез; `refused` — модель чесно відмовилась
- * (SEARCH UNAVAILABLE), рядок зберігається як слід відмови; `invalid` —
- * маркери є, але машиночитної частини немає; `foreign` — звіт про іншу ідею,
- * у базу не потрапляє взагалі.
- */
-export type ReportStatus = "ok" | "refused" | "invalid" | "foreign";
-
-export interface ParsedReport {
-  label: string;
-  /** Конкретна модель сервісу — з маркера, інакше з самоназви у звіті. */
-  model: string | null;
-  status: ReportStatus;
-  /** Вербатим текст звіту без маркерів — джерело правди для синтезу. */
-  reportMd: string;
-  criteria: SanitizedCriterion[];
-  competitors: SanitizedCompetitor[];
-  /** Чому звіт не годиться — пояснення для власника, а не код помилки. */
-  problem?: string;
-  /** Мʼякі зауваження: розбір відбувся, але щось варто знати. */
-  notes: string[];
-  markerIdeaId: string | null;
-}
-
-export interface ParseReportsInput {
-  ideaId: string;
-  track: string;
-  blob: string;
-}
-
-export interface ParseReportsResult {
-  reports: ParsedReport[];
-  /** Скільки звітів придатні до консолідації (status === 'ok'). */
-  validCount: number;
-  /** Помилка рівня всього блоба — коли розбирати нічого. */
-  error?: string;
-}
 
 function truncate(value: unknown, limit: number): string | null {
   return typeof value === "string" ? value.slice(0, limit) : null;
@@ -237,229 +196,147 @@ export function extractJsonBlock(text: string): JsonBlockResult {
   return { data: null, blocks: blocks.length };
 }
 
-interface MarkerLine {
-  kind: "start" | "end";
-  label: string;
+export type ReportStatus = "ok" | "prose" | "refused" | "empty";
+
+export interface ParsedReport {
+  provider: string;
   model: string | null;
-  ideaId: string | null;
+  status: ReportStatus;
+  /** Вербатим-текст відповіді — джерело правди для синтезу. */
+  reportMd: string;
+  criteria: SanitizedCriterion[];
+  competitors: SanitizedCompetitor[];
+  /** Чому звіт не дав структури — пояснення для власника, а не код помилки. */
+  problem?: string;
+  /** Мʼякі зауваження: розбір відбувся, але щось варто знати. */
+  notes: string[];
 }
 
-// Маркер приймаємо трохи вільніше, ніж він описаний у промпті: моделі люблять
-// загортати його в бектики або міняти кількість знаків «=». Жорсткою лишається
-// тільки сама фраза маркера.
-function readMarker(line: string): MarkerLine | null {
-  const trimmed = line.trim().replace(/^[`\s]+/, "").replace(/[`\s]+$/, "");
-  if (!trimmed.startsWith("=")) return null;
-  const inner = trimmed.replace(/^=+\s*/, "").replace(/\s*=+$/, "");
-  const parts = inner.split("|").map((part) => part.trim());
-  const head = parts[0].toUpperCase();
-  if (head === REPORT_END_MARK) return { kind: "end", label: "", model: null, ideaId: null };
-  if (head !== REPORT_START_MARK) return null;
-  // Проміжні поля між міткою та id — це модель. Промпт, згенерований до появи
-  // моделі в маркері, дає три частини; читаємо і такий, щоб старий скопійований
-  // текст не ламався мовчки.
-  if (parts.length >= 4) {
-    return {
-      kind: "start",
-      label: parts[1] ?? "",
-      model: parts.slice(2, -1).join(" | ") || null,
-      ideaId: parts[parts.length - 1] || null,
-    };
-  }
-  if (parts.length === 3) {
-    return { kind: "start", label: parts[1] ?? "", model: null, ideaId: parts[2] || null };
-  }
-  return { kind: "start", label: parts[1] ?? "", model: null, ideaId: null };
+export interface ReportInput {
+  provider: string;
+  model?: string | null;
+  text: string;
 }
 
-interface Segment {
-  marker: MarkerLine;
-  body: string;
-  terminated: boolean;
+export interface ParseReportsInput {
+  track: string;
+  reports: ReportInput[];
 }
 
-function splitSegments(blob: string): Segment[] {
-  const lines = blob.split(/\r?\n/);
-  const markers = lines.map(readMarker);
-  const segments: Segment[] = [];
+export interface ParseReportsResult {
+  reports: ParsedReport[];
+  /** Скільки звітів дійдуть до синтезу — зі структурою чи бодай прозою. */
+  usableCount: number;
+  error?: string;
+}
 
-  for (let i = 0; i < lines.length; i += 1) {
-    const marker = markers[i];
-    if (marker?.kind !== "start") continue;
-    let end = lines.length;
-    let terminated = false;
-    for (let j = i + 1; j < lines.length; j += 1) {
-      if (markers[j]?.kind === "end") {
-        end = j;
-        terminated = true;
-        break;
-      }
-      if (markers[j]?.kind === "start") {
-        end = j;
-        break;
-      }
-    }
-    segments.push({ marker, body: lines.slice(i + 1, end).join("\n").trim(), terminated });
-    i = terminated ? end : end - 1;
+// Відповідь однієї моделі. Раніше звіти різались із суцільного тексту по
+// маркерах, які мала поставити сама модель, — і кожна невдача форматування
+// коштувала цілого прогону. Тепер провайдера називає власник у формі, а текст
+// приходить окремим полем, тож розбирати лишається тільки вміст.
+export function parseReport(
+  input: ReportInput,
+  allowed: Set<string>,
+): ParsedReport {
+  const notes: string[] = [];
+  const text = input.text.trim();
+  const report: ParsedReport = {
+    provider: sanitizeLabel(input.provider),
+    model: sanitizeLabel(input.model, MAX_MODEL) || null,
+    status: "ok",
+    reportMd: text.slice(0, MAX_REPORT_MD),
+    criteria: [],
+    competitors: [],
+    notes,
+  };
+
+  if (!text) {
+    report.status = "empty";
+    report.problem = "Поле порожнє — вставте сюди відповідь моделі.";
+    return report;
   }
 
-  return segments;
-}
-
-function resolveLabel(
-  marker: MarkerLine,
-  json: Record<string, unknown> | null,
-  index: number,
-): string {
-  const fromMarker = sanitizeLabel(marker.label);
-  if (fromMarker && fromMarker !== RESEARCHER_LABEL_PLACEHOLDER) return fromMarker;
-  const fromJson = sanitizeLabel(json?.researcher);
-  if (fromJson && fromJson !== RESEARCHER_LABEL_PLACEHOLDER) return fromJson;
-  const fromModel = sanitizeLabel(json?.self_reported_model);
-  if (fromModel) return fromModel;
-  return `unknown-${index}`;
-}
-
-// Модель із маркера авторитетніша за самоназву: власник знає, у якому вікні
-// працював, а моделі часто не знають власної версії й вигадують її.
-function resolveModel(marker: MarkerLine, json: Record<string, unknown> | null): string | null {
-  for (const raw of [marker.model, json?.researcher_model, json?.self_reported_model]) {
-    const value = sanitizeLabel(raw, MAX_MODEL);
-    if (value && value !== RESEARCHER_MODEL_PLACEHOLDER) return value;
+  if (new RegExp(`^\\s*${SEARCH_UNAVAILABLE}\\s*$`, "m").test(text)) {
+    report.status = "refused";
+    report.problem =
+      "Модель відповіла SEARCH UNAVAILABLE — у неї не було живого веб-пошуку, тому вона " +
+      "свідомо не стала відповідати з памʼяті. Це коректна відповідь: у синтез такий звіт " +
+      "не піде, але слід про відмову збережеться.";
+    return report;
   }
-  return null;
+
+  // Звіт без придатного json-блоку більше не пропадає: прозу читає синтез, і
+  // година роботи власника не згорає через одну кому. Втрачається лише
+  // структура — вкладка цього провайдера лишиться без вердиктів по критеріях.
+  const { data: json, blocks } = extractJsonBlock(text);
+  if (!json) {
+    report.status = "prose";
+    report.problem =
+      (blocks === 0
+        ? "У відповіді немає машиночитного блоку ```json"
+        : "Блок ```json є, але не розбирається як JSON") +
+      " — звіт усе одно піде в синтез як текст, але окремої вкладки з вердиктами " +
+      "по цій моделі не буде. Щоб вона зʼявилась, попросіть модель повторити " +
+      "підсумковий блок одним шматком.";
+    return report;
+  }
+
+  const { criteria, dropped } = sanitizeCriteria(json.criteria, allowed);
+  report.criteria = criteria;
+  report.competitors = sanitizeCompetitors(json.competitors);
+
+  if (criteria.length === 0 && report.competitors.length === 0) {
+    report.status = "prose";
+    report.problem =
+      "json-блок розібрався, але в ньому немає жодного критерію з відомим ключем і жодного " +
+      "конкурента — схоже, модель відповіла за власною схемою. Текст піде в синтез, " +
+      "структурованих вердиктів по цій моделі не буде.";
+    return report;
+  }
+
+  if (dropped > 0) {
+    notes.push(
+      `${plural(dropped, ["запис", "записи", "записів"])} у json-блоці відкинуто: невідомий ` +
+        "ключ критерію або вердикт поза переліком. Решта звіту збережеться.",
+    );
+  }
+  if (criteria.length > 0 && criteria.length < allowed.size) {
+    notes.push(
+      `Модель оцінила ${plural(criteria.length, ["критерій", "критерії", "критерії"])} ` +
+        `із ${allowed.size} — синтез зведе те, що є, але повнішу картину дала б повторна ` +
+        "відповідь.",
+    );
+  }
+  return report;
 }
 
-export function parseReportsBlob(input: ParseReportsInput): ParseReportsResult {
+export function parseReports(input: ParseReportsInput): ParseReportsResult {
   const allowed = allowedCriteriaKeys(input.track);
   if (!allowed) {
-    return { reports: [], validCount: 0, error: `Трек «${input.track}» не має чек-листа критеріїв.` };
+    return { reports: [], usableCount: 0, error: `Трек «${input.track}» не має чек-листа критеріїв.` };
   }
 
-  const segments = splitSegments(input.blob);
-  if (segments.length === 0) {
-    return {
-      reports: [],
-      validCount: 0,
-      error:
-        input.blob.trim().length === 0
-          ? "Поле порожнє — вставте сюди відповіді моделей."
-          : `У вставленому тексті немає жодного рядка «===== ${REPORT_START_MARK} | … | … =====». ` +
-            "Портал розрізняє звіти лише за цими маркерами, тому копіювати відповідь треба " +
-            "цілком, разом із першим і останнім рядками. Якщо модель їх не поставила — " +
-            "допишіть їх руками навколо її тексту.",
-    };
+  const seen = new Set<string>();
+  for (const entry of input.reports) {
+    const provider = sanitizeLabel(entry.provider);
+    if (!provider) {
+      return { reports: [], usableCount: 0, error: "У кожної відповіді має бути обраний провайдер." };
+    }
+    // Провайдер — частина ключа в базі, тож два звіти від одного сервісу
+    // перезаписали б один одного.
+    if (seen.has(provider)) {
+      return {
+        reports: [],
+        usableCount: 0,
+        error: `Провайдер «${provider}» обраний двічі — одна консолідація приймає по одному звіту від кожного.`,
+      };
+    }
+    seen.add(provider);
   }
 
-  const reports: ParsedReport[] = [];
-  const usedLabels = new Set<string>();
-
-  segments.forEach((segment, index) => {
-    const notes: string[] = [];
-    if (!segment.terminated) {
-      notes.push(
-        `Модель не поставила закривальний рядок «===== ${REPORT_END_MARK} =====», ` +
-          "тому за звіт узято весь текст до наступного маркера.",
-      );
-    }
-
-    const { data: json, blocks } = extractJsonBlock(segment.body);
-    let label = resolveLabel(segment.marker, json, index + 1);
-    if (usedLabels.has(label)) {
-      let suffix = 2;
-      while (usedLabels.has(`${label} (${suffix})`)) suffix += 1;
-      const unique = `${label} (${suffix})`;
-      notes.push(
-        `Мітка «${label}» вже зайнята іншим звітом у цьому ж тексті, тому цей збережеться ` +
-          `як «${unique}». Якщо це справді одна модель — приберіть зайвий звіт і вставте текст знову.`,
-      );
-      label = unique;
-    }
-    usedLabels.add(label);
-
-    const model = resolveModel(segment.marker, json);
-    const report: ParsedReport = {
-      label,
-      model,
-      status: "ok",
-      reportMd: segment.body.slice(0, MAX_REPORT_MD),
-      criteria: [],
-      competitors: [],
-      notes,
-      markerIdeaId: segment.marker.ideaId,
-    };
-
-    if (segment.marker.ideaId && segment.marker.ideaId !== input.ideaId) {
-      report.status = "foreign";
-      report.problem =
-        `У маркері стоїть ідея «${segment.marker.ideaId}», а ця сторінка — «${input.ideaId}». ` +
-        "Схоже, у текст потрапила відповідь для іншої ідеї: цей звіт не буде записано. " +
-        "Перенесіть його на сторінку тієї ідеї.";
-      reports.push(report);
-      return;
-    }
-    if (!segment.marker.ideaId) {
-      notes.push(
-        `У маркері немає ID ідеї — звіт віднесено до ${input.ideaId}, бо саме її сторінка відкрита.`,
-      );
-    }
-
-    if (new RegExp(`^\\s*${SEARCH_UNAVAILABLE}\\s*$`, "m").test(segment.body)) {
-      report.status = "refused";
-      report.problem =
-        "Модель відповіла SEARCH UNAVAILABLE — у неї не було живого веб-пошуку, тому вона " +
-        "свідомо не стала відповідати з памʼяті. Це коректна відповідь: у синтез такий звіт " +
-        "не піде, але слід про відмову збережеться.";
-      reports.push(report);
-      return;
-    }
-
-    if (!json) {
-      report.status = "invalid";
-      report.problem =
-        blocks === 0
-          ? "У звіті немає машиночитного блоку ```json — саме з нього портал бере вердикти " +
-            "й конкурентів. Найчастіше причина в тому, що при копіюванні загубився хвіст " +
-            "відповіді: попросіть модель повторити підсумковий json-блок і вставте текст знову."
-          : "Блок ```json у звіті є, але він не розбирається як JSON — найчастіше через " +
-            "обрив на середині або зайвий текст усередині блоку. Попросіть модель " +
-            "повторити блок цілком і одним шматком.";
-      reports.push(report);
-      return;
-    }
-
-    const { criteria, dropped } = sanitizeCriteria(json.criteria, allowed);
-    const competitors = sanitizeCompetitors(json.competitors);
-    report.criteria = criteria;
-    report.competitors = competitors;
-
-    if (criteria.length === 0 && competitors.length === 0) {
-      report.status = "invalid";
-      report.problem =
-        "json-блок розібрався, але в ньому немає жодного критерію з відомим ключем і жодного " +
-        "конкурента. Схоже, модель відповіла за власною схемою: ключі критеріїв мають бути " +
-        `рівно «${[...allowed].join("», «")}», а вердикти — одним зі значень passed / failed / ` +
-        "owner / noted / not_applicable / skipped.";
-      reports.push(report);
-      return;
-    }
-
-    if (dropped > 0) {
-      notes.push(
-        `${plural(dropped, ["запис", "записи", "записів"])} у json-блоці відкинуто: невідомий ` +
-          "ключ критерію або вердикт поза переліком. Решта звіту збережеться.",
-      );
-    }
-    if (criteria.length > 0 && criteria.length < allowed.size) {
-      notes.push(
-        `Модель оцінила ${plural(criteria.length, ["критерій", "критерії", "критерії"])} ` +
-          `із ${allowed.size} — синтез зведе те, що є, але повнішу картину дала б повторна ` +
-          "відповідь.",
-      );
-    }
-
-    reports.push(report);
-  });
-
-  return { reports, validCount: reports.filter((r) => r.status === "ok").length };
+  const reports = input.reports.map((entry) => parseReport(entry, allowed));
+  return {
+    reports,
+    usableCount: reports.filter((r) => r.status === "ok" || r.status === "prose").length,
+  };
 }

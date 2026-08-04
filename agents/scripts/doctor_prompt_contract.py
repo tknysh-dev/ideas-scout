@@ -24,9 +24,9 @@ RENDERED_BY = {
     "deep-research-synthesis.md": ("agents/scripts/deep-research.py", "синтез, виклик A"),
     "deep-research-card.md": ("agents/scripts/deep-research.py", "синтез, виклик B"),
 }
-# Плейсхолдери, які лишаються в тексті навмисно: їх вписує власник перед
-# вставкою — сервіс і конкретна модель у ньому.
-OWNER_PLACEHOLDERS = {"RESEARCHER_LABEL", "RESEARCHER_MODEL"}
+# Промпт однаковий для всіх провайдерів: чия це відповідь, власник позначає
+# на порталі при консолідації, тож незаповнених плейсхолдерів у ньому немає.
+OWNER_PLACEHOLDERS: set[str] = set()
 PARSER = "dashboard/src/lib/deep-research-reports.ts"
 SYNTH = "agents/scripts/deep-research.py"
 # Промпти нічних агентів: усі чотири рендерить runner.sh перед викликом CLI.
@@ -139,37 +139,23 @@ else:
 
 handoff = texts.get("deep-research-handoff.md")
 if handoff is not None:
-    absent_owner = sorted(k for k in OWNER_PLACEHOLDERS if k not in handoff)
-    if absent_owner:
-        say("err", "у handoff-промпті немає " + ", ".join("{{" + k + "}}" for k in absent_owner)
-            + " — власнику ніде вписати сервіс і модель, а без них звіти не розрізнити"
-            " й не порівняти прогони між версіями моделей")
+    # Маркерів у промпті більше немає — звіти приходять окремими полями форми.
+    # Лишилось одне спільне слово: ним модель повідомляє, що пошуку не було, і
+    # його мають однаково знати розбирач на порталі й синтез.
     parser = read(PARSER)
     synth = read(SYNTH)
-    if parser is None:
-        say("err", f"немає {PARSER} — портал не розбере вставлені звіти")
+    drift = []
+    if "SEARCH UNAVAILABLE" not in handoff:
+        drift.append("«SEARCH UNAVAILABLE» немає в шаблоні")
     else:
-        # Маркери й слово-відмова — це протокол між шаблоном, парсером порталу
-        # і синтезом. Розходження ловиться лише тут: усі три файли валідні самі
-        # по собі, але разом уже не працюють.
-        drift = []
-        for token in ("DEEP RESEARCH REPORT START", "DEEP RESEARCH REPORT END"):
-            if token not in handoff:
-                drift.append(f"«{token}» немає в шаблоні")
-            elif token not in parser:
-                drift.append(f"«{token}» є в шаблоні, але не в розбирачі")
-        if "SEARCH UNAVAILABLE" not in handoff:
-            drift.append("«SEARCH UNAVAILABLE» немає в шаблоні")
-        else:
-            for path, blob in ((PARSER, parser), (SYNTH, synth or "")):
-                if "SEARCH UNAVAILABLE" not in blob:
-                    drift.append(f"«SEARCH UNAVAILABLE» не знає {path}")
-        if drift:
-            say("err", "протокол звіту розійшовся: " + "; ".join(drift)
-                + " — вставлені відповіді або не розріжуться на звіти, або відмова моделі"
-                " буде прийнята за справжнє дослідження")
-        else:
-            say("ok", "протокол звіту збігається в шаблоні, розбирачі порталу і синтезі")
+        for path, blob in ((PARSER, parser or ""), (SYNTH, synth or "")):
+            if "SEARCH UNAVAILABLE" not in blob:
+                drift.append(f"«SEARCH UNAVAILABLE» не знає {path}")
+    if drift:
+        say("err", "слово відмови розійшлося: " + "; ".join(drift)
+            + " — чесна відмова моделі буде прийнята за справжнє дослідження")
+    else:
+        say("ok", "слово відмови збігається в шаблоні, розбирачі порталу і синтезі")
 
 # ---------------------------------------------------------------------------
 # Зовнішні брифи. Критерії існують у двох виглядах: внутрішній регламент для

@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { buildDeepResearchPrompt } from "@/lib/deep-research-prompt.server";
 import {
-  parseReportsBlob,
+  parseReports,
   type ParsedReport,
+  type ReportInput,
   type ReportStatus,
 } from "@/lib/deep-research-reports";
 import { ownerLogin } from "@/lib/owner.server";
@@ -20,19 +21,15 @@ const IDEA_ID_RE = /^[A-Z]{2,10}-\d{3,8}$/;
 // одразу, ніж отримати обрив запиту без пояснення.
 const MAX_BLOB_CHARS = 800_000;
 
-// Мітка їде в маркер звіту, де роздільник — вертикальна риска, і далі в базу.
-// Зайві символи зламали б розбір вставленої відповіді.
-function sanitizeLabelInput(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value.replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
-}
-
 // Статус рядка research_reports: відмова моделі — не помилка порталу, тому
 // SEARCH UNAVAILABLE зберігається як 'skipped', а не 'error'.
-const REPORT_ROW_STATUS: Record<Exclude<ReportStatus, "foreign">, string> = {
+// Звіт без структури все одно йде в синтез як текст, тому для бази він 'ok':
+// саме за цим статусом deep-research.py відбирає, що читати. Відмова моделі —
+// не поломка порталу, тому 'skipped'.
+const REPORT_ROW_STATUS: Record<Exclude<ReportStatus, "empty">, string> = {
   ok: "ok",
+  prose: "ok",
   refused: "skipped",
-  invalid: "error",
 };
 
 export interface DeepResearchPromptActionResult {
@@ -42,7 +39,7 @@ export interface DeepResearchPromptActionResult {
 
 /** Підсумок одного звіту для показу власнику ДО будь-якого запису в базу. */
 export interface ReportSummary {
-  label: string;
+  provider: string;
   status: ReportStatus;
   model: string | null;
   criteriaCount: number;
@@ -92,12 +89,10 @@ async function loadResearchableIdea(ideaId: string): Promise<LoadedIdea> {
   return { track: idea.track as string };
 }
 
-// Мітки приходять із форми копіювання: підставити їх тут надійніше, ніж
-// просити людину правити два плейсхолдери в двадцяти тисячах символів.
+// Промпт однаковий для всіх провайдерів: чия це відповідь, власник позначає
+// вже при консолідації, коли вставляє її в поле відповідного провайдера.
 export async function fetchDeepResearchPrompt(
   ideaId: string,
-  researcher: string,
-  researcherModel: string,
 ): Promise<DeepResearchPromptActionResult> {
   const owner = await ownerLogin();
   if (owner.error) return { error: owner.error };
@@ -105,18 +100,12 @@ export async function fetchDeepResearchPrompt(
   const idea = await loadResearchableIdea(ideaId);
   if (idea.error) return { error: idea.error };
 
-  const label = sanitizeLabelInput(researcher);
-  if (!label) return { error: "Вкажи сервіс, у вікно якого вставлятимеш промпт." };
-
-  return buildDeepResearchPrompt(ideaId, {
-    researcher: label,
-    researcherModel: sanitizeLabelInput(researcherModel),
-  });
+  return buildDeepResearchPrompt(ideaId);
 }
 
 function summarize(report: ParsedReport): ReportSummary {
   return {
-    label: report.label,
+    provider: report.provider,
     status: report.status,
     model: report.model,
     criteriaCount: report.criteria.length,
@@ -126,11 +115,17 @@ function summarize(report: ParsedReport): ReportSummary {
   };
 }
 
-function checkBlob(blob: unknown): string | null {
-  if (typeof blob !== "string") return "Порожній запит — вставте текст звітів у поле.";
-  if (blob.length > MAX_BLOB_CHARS) {
+function checkReports(reports: unknown): string | null {
+  if (!Array.isArray(reports) || reports.length === 0) {
+    return "Додайте хоча б одну відповідь моделі.";
+  }
+  const total = reports.reduce(
+    (sum, entry) => sum + (typeof entry?.text === "string" ? entry.text.length : 0),
+    0,
+  );
+  if (total > MAX_BLOB_CHARS) {
     return (
-      `Вставлений текст завеликий (${blob.length.toLocaleString("uk-UA")} символів). ` +
+      `Вставлені відповіді разом завеликі (${total.toLocaleString("uk-UA")} символів). ` +
       "Портал приймає до 800 тисяч — це приблизно вдесятеро більше за пʼять повних звітів. " +
       "Схоже, разом зі звітами скопіювалось щось стороннє."
     );
@@ -140,31 +135,31 @@ function checkBlob(blob: unknown): string | null {
 
 export async function previewDeepResearchReports(
   ideaId: string,
-  blob: string,
+  reports: ReportInput[],
 ): Promise<PreviewReportsResult> {
   const owner = await ownerLogin();
   if (owner.error) return { error: owner.error };
 
-  const blobError = checkBlob(blob);
-  if (blobError) return { error: blobError };
+  const inputError = checkReports(reports);
+  if (inputError) return { error: inputError };
 
   const idea = await loadResearchableIdea(ideaId);
   if (idea.error) return { error: idea.error };
 
-  const parsed = parseReportsBlob({ ideaId, track: idea.track!, blob });
+  const parsed = parseReports({ track: idea.track!, reports });
   if (parsed.error) return { error: parsed.error };
-  return { reports: parsed.reports.map(summarize), validCount: parsed.validCount };
+  return { reports: parsed.reports.map(summarize), validCount: parsed.usableCount };
 }
 
 export async function commitDeepResearchReports(
   ideaId: string,
-  blob: string,
+  reports: ReportInput[],
 ): Promise<CommitReportsResult> {
   const owner = await ownerLogin();
   if (owner.error) return { error: owner.error };
 
-  const blobError = checkBlob(blob);
-  if (blobError) return { error: blobError };
+  const inputError = checkReports(reports);
+  if (inputError) return { error: inputError };
 
   const idea = await loadResearchableIdea(ideaId);
   if (idea.error) return { error: idea.error };
@@ -172,9 +167,9 @@ export async function commitDeepResearchReports(
   // Розбираємо ще раз на сервері, а не приймаємо результат кроку 1 з клієнта:
   // між кроками нічого не заважає підмінити payload, а санітизація — єдиний
   // бар'єр між чужим текстом і базою.
-  const parsed = parseReportsBlob({ ideaId, track: idea.track!, blob });
+  const parsed = parseReports({ track: idea.track!, reports });
   if (parsed.error) return { error: parsed.error };
-  if (parsed.validCount === 0) {
+  if (parsed.usableCount === 0) {
     return {
       error:
         "Серед розібраних звітів немає жодного придатного до консолідації — " +
@@ -185,7 +180,7 @@ export async function commitDeepResearchReports(
   const supabase = getServiceClient();
   if (!supabase) return { error: "Немає доступу до бази." };
 
-  const writable = parsed.reports.filter((report) => report.status !== "foreign");
+  const writable = parsed.reports.filter((report) => report.status !== "empty");
 
   // Повна заміна замість точкового upsert-у: інакше мітки попередньої
   // консолідації, яких цього разу не було, лишились би в базі привидами —
@@ -223,9 +218,9 @@ export async function commitDeepResearchReports(
       idea_id: ideaId,
       stage: "deep_criteria",
       kind: "model",
-      provider: report.label,
+      provider: report.provider,
       model: report.model,
-      status: REPORT_ROW_STATUS[report.status as Exclude<ReportStatus, "foreign">],
+      status: REPORT_ROW_STATUS[report.status as Exclude<ReportStatus, "empty">],
       report_md: report.reportMd,
     })),
   );
@@ -238,7 +233,7 @@ export async function commitDeepResearchReports(
         idea_id: ideaId,
         stage: "deep",
         kind: "model",
-        provider: report.label,
+        provider: report.provider,
         model: report.model,
         criterion_key: criterion.criterion_key,
         verdict: criterion.verdict,
@@ -275,8 +270,8 @@ export async function commitDeepResearchReports(
     .single();
 
   const saved = {
-    savedCount: writable.filter((report) => report.status === "ok").length,
-    refusedCount: writable.filter((report) => report.status !== "ok").length,
+    savedCount: writable.filter((r) => r.status === "ok" || r.status === "prose").length,
+    refusedCount: writable.filter((r) => r.status === "refused").length,
     verdictCount: verdictRows.length,
   };
 
@@ -301,4 +296,35 @@ export async function commitDeepResearchReports(
   }
 
   return { ...saved, jobId: job.id };
+}
+
+/** Моделі, які вже використовувались для кожного провайдера. */
+export type KnownModels = Record<string, string[]>;
+
+// Список моделей ніде не взяти автоматично: API провайдерів віддають
+// ідентифікатори API-моделей, а не назви з чат-інтерфейсу. Тому він
+// самопідтримний — те, що власник вписав хоч раз, далі пропонується вибором.
+export async function fetchKnownResearcherModels(): Promise<KnownModels> {
+  const owner = await ownerLogin();
+  if (owner.error) return {};
+
+  const supabase = getServiceClient();
+  if (!supabase) return {};
+
+  const { data } = await supabase
+    .from("research_reports")
+    .select("provider,model")
+    .not("model", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  const byProvider: KnownModels = {};
+  for (const row of data ?? []) {
+    const provider = String(row.provider ?? "").trim();
+    const model = String(row.model ?? "").trim();
+    if (!provider || !model) continue;
+    const list = (byProvider[provider] ??= []);
+    if (!list.includes(model)) list.push(model);
+  }
+  return byProvider;
 }

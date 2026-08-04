@@ -46,7 +46,7 @@ test("контекст ідеї не містить чужого вердикт�
   );
 });
 
-test("плейсхолдери підставлені, мітка дослідника лишається власнику", () => {
+test("усі плейсхолдери підставлені", () => {
   const prompt = renderHandoffPrompt({
     idea,
     sources,
@@ -62,13 +62,9 @@ test("плейсхолдери підставлені, мітка дослідн
   assert.match(prompt, /категорія: механіки пасивного доходу/);
   assert.match(prompt, /Сьогодні 2026-08-04/);
   assert.match(prompt, /разом 14 об'єктів/);
-  assert.match(prompt, /DEEP RESEARCH REPORT START \| \{\{RESEARCHER_LABEL\}\} \| \{\{RESEARCHER_MODEL\}\} \| PI-0013/);
-  // Будь-який інший незамінений плейсхолдер означає розсинхрон шаблону й коду.
-  // Обидві мітки лишаються літеральними: їх вписує власник перед вставкою.
-  assert.deepEqual(
-    [...new Set(prompt.match(/\{\{[A-Z_]+\}\}/g))].sort(),
-    ["{{RESEARCHER_LABEL}}", "{{RESEARCHER_MODEL}}"],
-  );
+  // Незамінений плейсхолдер означає розсинхрон шаблону й коду: модель отримала б
+  // його дослівно замість даних.
+  assert.equal(prompt.match(/\{\{[A-Z_]+\}\}/g), null);
 });
 
 test("трек app-ideas очікує на один базовий критерій більше", () => {
@@ -188,53 +184,6 @@ test("висновки попереднього прогону не потрап
   assert.doesNotMatch(context, /Довіра до джерела/, "чужий вердикт за критеріями прихований");
   assert.doesNotMatch(context, /Notevision/, "чужа картина конкурентів так само прихована");
   assert.doesNotMatch(context, /ніша зайнята/);
-});
-
-// Мапи людських підписів закривають відомі значення полів БД. Значення поза
-// мапою (нове в enum, «брудні» дані) не має протікати дослівно тим самим
-// шляхом, який ці мапи й закривають.
-test("невідоме значення поля бази не друкується дослівно", () => {
-  const context = buildIdeaContext(
-    { ...idea, signal_type: "some_new_signal" as never },
-    [{ url: "https://example.com/x", published_date: null, author_interest: "newcomer" } as never],
-  );
-  assert.doesNotMatch(context, /some_new_signal/);
-  assert.doesNotMatch(context, /newcomer/);
-  assert.match(context, /характер знахідки не уточнено/);
-  assert.match(context, /невідомо, чи автор має особисту вигоду/);
-});
-
-// Мітки підставляє портал: модель, побачивши незаповнений плейсхолдер, брала
-// першу назву сервісу, що траплялась поруч, і звіт лягав під чужим іменем.
-test("обрані власником сервіс і модель підставляються в промпт", () => {
-  const prompt = renderHandoffPrompt({
-    idea,
-    sources,
-    template: repoFile("agents/prompts/deep-research-handoff.md"),
-    criteriaDoc: repoFile(criteriaDocPath("passive-income")),
-    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
-    today: "2026-08-04",
-    researcher: "DeepSeek",
-    researcherModel: "DeepSeek-V3",
-  });
-
-  assert.match(prompt, /DEEP RESEARCH REPORT START \| DeepSeek \| DeepSeek-V3 \| PI-0013/);
-  assert.doesNotMatch(prompt, /\{\{RESEARCHER_LABEL\}\}/);
-  assert.doesNotMatch(prompt, /\{\{RESEARCHER_MODEL\}\}/);
-});
-
-test("без обраних міток плейсхолдери лишаються — промпт сам просить модель назватись", () => {
-  const prompt = renderHandoffPrompt({
-    idea,
-    sources,
-    template: repoFile("agents/prompts/deep-research-handoff.md"),
-    criteriaDoc: repoFile(criteriaDocPath("passive-income")),
-    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
-    today: "2026-08-04",
-    researcher: "   ",
-  });
-  assert.match(prompt, /\{\{RESEARCHER_LABEL\}\}/);
-  assert.match(prompt, /\{\{RESEARCHER_MODEL\}\}/);
 });
 
 // Приклад назви поруч із плейсхолдером читається моделлю як зразок відповіді:

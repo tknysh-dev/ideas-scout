@@ -346,15 +346,18 @@ def load_model_reports(idea_id: str) -> list[dict]:
             if row.get("status") == "ok" and isinstance(row.get("report_md"), str)]
 
 
-def parse_model_reports(reports: list[dict], allowed_keys: set[str]) -> tuple[dict, dict]:
-    """({provider: {ключ критерію: рядок}}, {provider: [конкуренти]}) зі звітів.
+def parse_model_reports(reports: list[dict], allowed_keys: set[str]) -> tuple[dict, dict, dict]:
+    """({provider: критерії}, {provider: конкуренти}, {provider: проза}).
 
-    Звіт без валідного json-блока або з відмовою SEARCH UNAVAILABLE у синтез не
-    йде — але про кожен такий пропуск лишається рядок у лозі, інакше зникнення
-    цілої моделі з вердикту неможливо помітити.
+    Звіт без валідного json-блока більше не пропадає: його текст іде в синтез
+    прозою — година ручної роботи власника не має згорати через одну кому.
+    Втрачається лише структура: у вкладці такого провайдера не буде вердиктів
+    по критеріях. Відмова SEARCH UNAVAILABLE у синтез не йде взагалі, бо це
+    свідома відповідь «пошуку не було», а не дані.
     """
     criteria_by_provider: dict[str, dict[str, dict]] = {}
     competitors_by_provider: dict[str, list[dict]] = {}
+    prose_by_provider: dict[str, str] = {}
     for row in reports:
         provider = str(row.get("provider") or "unknown").strip()[:100] or "unknown"
         report_md = row.get("report_md") or ""
@@ -362,20 +365,19 @@ def parse_model_reports(reports: list[dict], allowed_keys: set[str]) -> tuple[di
             log(f"звіт «{provider}»: модель відповіла {SEARCH_UNAVAILABLE} — у синтез не йде")
             continue
         parsed = extract_json_block(report_md)
-        if parsed is None:
-            log(f"звіт «{provider}»: json-блок відсутній або невалідний — у синтез не йде")
-            continue
-        rows = sanitize_criteria(parsed.get("criteria"), allowed_keys, require_resolution=False)
-        competitors = sanitize_competitors(parsed.get("competitors"))
-        if not rows and not competitors:
-            log(f"звіт «{provider}»: у json-блоці немає ні критеріїв, ні конкурентів — у синтез не йде")
-            continue
+        rows = sanitize_criteria(parsed.get("criteria"), allowed_keys,
+                                 require_resolution=False) if parsed else {}
+        competitors = sanitize_competitors(parsed.get("competitors")) if parsed else []
         if rows:
             criteria_by_provider[provider] = rows
         if competitors:
             competitors_by_provider[provider] = competitors
-        log(f"звіт «{provider}»: критеріїв {len(rows)}, конкурентів {len(competitors)}")
-    return criteria_by_provider, competitors_by_provider
+        if not rows and not competitors:
+            prose_by_provider[provider] = report_md
+            log(f"звіт «{provider}»: без структурованих даних — іде в синтез прозою")
+        else:
+            log(f"звіт «{provider}»: критеріїв {len(rows)}, конкурентів {len(competitors)}")
+    return criteria_by_provider, competitors_by_provider, prose_by_provider
 
 
 def save_synthesis_report(idea_id: str, run_id: str | None, status: str, report_md: str,
@@ -468,13 +470,13 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
     criteria_doc = read_file(criteria_doc_path(track))
     deep_doc = read_file(os.path.join(REPO_ROOT, "agents/criteria/deep-research.md"))
 
-    model_criteria, model_competitors = parse_model_reports(reports, allowed_keys)
-    if not model_criteria and not model_competitors:
+    model_criteria, model_competitors, model_prose = parse_model_reports(reports, allowed_keys)
+    if not model_criteria and not model_competitors and not model_prose:
         raise SystemExit(
             "deep-research: жоден зі збережених звітів не дав придатних даних "
             "(див. рядки вище) — картку не змінено"
         )
-    contributors = sorted(set(model_criteria) | set(model_competitors))
+    contributors = sorted(set(model_criteria) | set(model_competitors) | set(model_prose))
 
     quoted_id = urllib.parse.quote(idea_id, safe="")
     criteria_version = criteria_version_of(criteria_doc)
@@ -496,7 +498,13 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
         f"### Модель: {provider}\n```json\n"
         + json.dumps({"criteria": list(rows.values())}, ensure_ascii=False, indent=1) + "\n```"
         for provider, rows in model_criteria.items()
-    ) or "(жодна модель не дала розібраних вердиктів по критеріях)"
+    )
+    prose_md = "\n\n".join(
+        f"### Модель: {provider} (без машиночитного підсумку — читай прозою)\n\n{text[:60000]}"
+        for provider, text in model_prose.items()
+    )
+    model_results_md = "\n\n".join(x for x in (model_results_md, prose_md) if x) \
+        or "(жодна модель не дала придатних результатів)"
 
     prompt_a = render(read_prompt("deep-research-synthesis.md"), {
         "IDEA_ID": idea_id,

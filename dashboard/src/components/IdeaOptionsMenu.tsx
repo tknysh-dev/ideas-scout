@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useId, useRef, useState, useTransition } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import ConsolidateReportsDialog from "@/components/ConsolidateReportsDialog";
-import ResearcherLabelDialog from "@/components/ResearcherLabelDialog";
 import { EASE } from "@/components/motion";
 import { fetchDeepResearchPrompt } from "@/lib/actions/deep-research";
 
@@ -40,7 +39,6 @@ export default function IdeaOptionsMenu({ ideaId }: { ideaId: string }) {
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [open, setOpen] = useState(false);
   const [dialog, setDialog] = useState(false);
-  const [labelForm, setLabelForm] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [pending, startTransition] = useTransition();
 
@@ -78,24 +76,23 @@ export default function IdeaOptionsMenu({ ideaId }: { ideaId: string }) {
     itemRefs.current[next]?.focus();
   }
 
-  function copyPrompt(researcher: string, model: string) {
+  function copyPrompt() {
+    close();
     setFeedback(null);
     startTransition(async () => {
       try {
-        const result = await fetchDeepResearchPrompt(ideaId, researcher, model);
+        const result = await fetchDeepResearchPrompt(ideaId);
         if (result.error || !result.prompt) {
           setFeedback({ tone: "error", text: result.error ?? "Промпт не сформувався." });
           return;
         }
         await navigator.clipboard.writeText(result.prompt);
-        setLabelForm(false);
-        trigger.current?.focus();
         setFeedback({
           tone: "ok",
           text:
-            `Промпт скопійовано для «${researcher}» — ` +
-            `${result.prompt.length.toLocaleString("uk-UA")} символів. Підписи вже підставлені, ` +
-            "правити текст перед вставкою не треба.",
+            `Промпт скопійовано — ${result.prompt.length.toLocaleString("uk-UA")} символів. ` +
+            "Вставляй як є: він однаковий для всіх провайдерів, а чия це відповідь — " +
+            "вкажеш при консолідації.",
         });
       } catch {
         setFeedback({
@@ -152,7 +149,7 @@ export default function IdeaOptionsMenu({ ideaId }: { ideaId: string }) {
                 type="button"
                 role="menuitem"
                 tabIndex={-1}
-                onClick={() => (close(false), item.key === "prompt" ? setLabelForm(true) : setDialog(true))}
+                onClick={() => (item.key === "prompt" ? copyPrompt() : (close(false), setDialog(true)))}
                 onKeyDown={(event) => {
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
@@ -184,19 +181,6 @@ export default function IdeaOptionsMenu({ ideaId }: { ideaId: string }) {
           {feedback.text}
         </p>
       )}
-
-      <AnimatePresence>
-        {labelForm && (
-          <ResearcherLabelDialog
-            pending={pending}
-            onCancel={() => {
-              setLabelForm(false);
-              trigger.current?.focus();
-            }}
-            onSubmit={copyPrompt}
-          />
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {dialog && (
