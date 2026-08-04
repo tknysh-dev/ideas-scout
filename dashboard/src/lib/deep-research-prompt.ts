@@ -6,7 +6,7 @@
 // олюднений: критерії й ідея приходять зовнішній моделі без згадок таксономії
 // бази, шляхів репозиторію чи внутрішнього процесу.
 
-import { splitCriteriaSection } from "./criteria.ts";
+import { splitSection } from "./criteria.ts";
 import type { Idea, SourceRow } from "./types";
 
 export const DEEP_RESEARCH_KEYS = [
@@ -79,14 +79,20 @@ const SIGNAL_TYPE_LABELS: Record<IdeaContextInput["signal_type"], string> = {
   automation_report: "автор описує саморобну автоматизацію без платників",
 };
 
-// Розділ «Аналіз за критеріями» з тіла картки навмисно вирізається: дослідник
-// не має бачити чужий вердикт, інакше його оцінка підлаштується під уже
-// ухвалену (те саме анти-заякорення, що в deep-research.py).
+// Висновки попередніх прогонів вирізаються з тіла картки: і вердикти за
+// критеріями, і готова картина конкурентів. Дослідник, який їх побачить,
+// перевірятиме чужу відповідь замість того, щоб шукати самостійно, — а сенс
+// у тому, щоб кілька моделей дійшли висновків незалежно одна від одної.
+const ANCHORING_SECTIONS = ["Аналіз за критеріями", "Конкуренти"];
+
 export function buildIdeaContext(
   idea: IdeaContextInput,
   sources: SourceContextInput[],
 ): string {
-  const { rest } = splitCriteriaSection(idea.body);
+  const rest = ANCHORING_SECTIONS.reduce(
+    (body, title) => splitSection(body, title).rest,
+    idea.body ?? "",
+  );
   const lines = [
     `- id: ${idea.id}, назва: ${idea.title}`,
     `- категорія: ${TRACK_LABELS[idea.track] ?? idea.track}`,
