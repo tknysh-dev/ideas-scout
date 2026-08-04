@@ -40,7 +40,10 @@ test("контекст ідеї не містить чужого вердикт�
   assert.match(context, /id: PI-0013/);
   assert.match(context, /опис механіки/);
   assert.doesNotMatch(context, /Довіра до джерела/);
-  assert.match(context, /https:\/\/example\.com\/post \(дата: 2026-01-15/);
+  assert.match(
+    context,
+    /https:\/\/example\.com\/post \(дата: 2026-01-15, автор отримує партнерську комісію з посилань на продукт\)/,
+  );
 });
 
 test("плейсхолдери підставлені, мітка дослідника лишається власнику", () => {
@@ -126,6 +129,12 @@ test("згенерований промпт не містить внутрішн
     "app-ideas",
     "automation_report",
     "income_claim",
+    // author_interest (shared/schema.sql, таблиця sources) — так само поле БД,
+    // сирі значення якого не мають потрапляти у чуже вікно моделі.
+    "author_interest",
+    "affiliate",
+    "course_seller",
+    "tool_vendor",
   ];
   for (const word of forbidden) {
     assert.doesNotMatch(prompt, new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -179,4 +188,18 @@ test("висновки попереднього прогону не потрап
   assert.doesNotMatch(context, /Довіра до джерела/, "чужий вердикт за критеріями прихований");
   assert.doesNotMatch(context, /Notevision/, "чужа картина конкурентів так само прихована");
   assert.doesNotMatch(context, /ніша зайнята/);
+});
+
+// Мапи людських підписів закривають відомі значення полів БД. Значення поза
+// мапою (нове в enum, «брудні» дані) не має протікати дослівно тим самим
+// шляхом, який ці мапи й закривають.
+test("невідоме значення поля бази не друкується дослівно", () => {
+  const context = buildIdeaContext(
+    { ...idea, signal_type: "some_new_signal" as never },
+    [{ url: "https://example.com/x", published_date: null, author_interest: "newcomer" } as never],
+  );
+  assert.doesNotMatch(context, /some_new_signal/);
+  assert.doesNotMatch(context, /newcomer/);
+  assert.match(context, /характер знахідки не уточнено/);
+  assert.match(context, /невідомо, чи автор має особисту вигоду/);
 });

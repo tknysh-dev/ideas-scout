@@ -79,6 +79,24 @@ const SIGNAL_TYPE_LABELS: Record<IdeaContextInput["signal_type"], string> = {
   automation_report: "автор описує саморобну автоматизацію без платників",
 };
 
+// Значення `author_interest` (shared/schema.sql, таблиця sources) — теж поле
+// БД, тому виводимо людською фразою. Суть поля: чи має автор особисту вигоду
+// від того, що розповідає про знахідку — це впливає на довіру до джерела
+// (критерій 1 чек-листа), тому фразу підбираємо так, щоб цей зв'язок був явним.
+// Значення поза мапою не друкуємо дослівно: нове значення enum інакше протекло
+// б у чуже вікно тим самим шляхом, який ці мапи й закривають.
+const UNKNOWN_AUTHOR_INTEREST = "невідомо, чи автор має особисту вигоду";
+
+const AUTHOR_INTEREST_LABELS: Record<
+  NonNullable<SourceContextInput["author_interest"]>,
+  string
+> = {
+  none: "вигоди автора в цій згадці не помітно",
+  affiliate: "автор отримує партнерську комісію з посилань на продукт",
+  course_seller: "автор продає власний курс на цю тему",
+  tool_vendor: "автор продає власний інструмент чи сервіс на цю тему",
+};
+
 // Висновки попередніх прогонів вирізаються з тіла картки: і вердикти за
 // критеріями, і готова картина конкурентів. Дослідник, який їх побачить,
 // перевірятиме чужу відповідь замість того, щоб шукати самостійно, — а сенс
@@ -95,8 +113,8 @@ export function buildIdeaContext(
   );
   const lines = [
     `- id: ${idea.id}, назва: ${idea.title}`,
-    `- категорія: ${TRACK_LABELS[idea.track] ?? idea.track}`,
-    `- ${SIGNAL_TYPE_LABELS[idea.signal_type] ?? idea.signal_type}`,
+    `- категорія: ${TRACK_LABELS[idea.track] ?? "інша"}`,
+    `- ${SIGNAL_TYPE_LABELS[idea.signal_type] ?? "характер знахідки не уточнено"}`,
     `- заявлений дохід: ${idea.claimed_revenue || "не заявлено"}`,
     `- суть механіки: ${idea.mechanic_summary || "—"}`,
     `- гіпотеза монетизації: ${idea.monetization_hypothesis || "—"}`,
@@ -104,9 +122,11 @@ export function buildIdeaContext(
   if (sources.length > 0) {
     lines.push("- джерела знахідки:");
     for (const source of sources.slice(0, 10)) {
+      const authorInterestLabel = source.author_interest
+        ? (AUTHOR_INTEREST_LABELS[source.author_interest] ?? UNKNOWN_AUTHOR_INTEREST)
+        : UNKNOWN_AUTHOR_INTEREST;
       lines.push(
-        `  - ${source.url} (дата: ${source.published_date || "?"}, ` +
-          `інтерес автора: ${source.author_interest || "?"})`,
+        `  - ${source.url} (дата: ${source.published_date || "?"}, ${authorInterestLabel})`,
       );
     }
   }
@@ -143,7 +163,6 @@ export function renderHandoffPrompt(input: HandoffPromptInput): string {
   }
   const values: Record<string, string> = {
     IDEA_ID: input.idea.id,
-    TRACK: input.idea.track,
     TODAY: input.today,
     IDEA_CONTEXT: buildIdeaContext(input.idea, input.sources),
     CRITERIA_DOC: stripMaintainerHeader(input.criteriaDoc),
