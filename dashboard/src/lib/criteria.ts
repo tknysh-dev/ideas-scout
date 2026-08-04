@@ -61,17 +61,16 @@ export interface CriterionResult {
   structured?: boolean;
 }
 
-const SECTION_HEADING = /^##\s+Аналіз за критеріями\s*$/m;
-
-// Тіло ідеї — це Markdown із реєстру; секцію критеріїв показуємо окремим
-// блоком, а решту прози віддаємо як є.
-export function splitCriteriaSection(body: string | null): {
-  section: string | null;
-  rest: string;
-} {
+// Тіло ідеї — це Markdown із реєстру; розділи, які сторінка показує окремим
+// структурованим блоком, вирізаються з прози, щоб не рендеритись двічі.
+export function splitSection(
+  body: string | null,
+  title: string,
+): { section: string | null; rest: string } {
   if (!body) return { section: null, rest: "" };
 
-  const match = SECTION_HEADING.exec(body);
+  const heading = new RegExp(`^##\\s+${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m");
+  const match = heading.exec(body);
   if (!match) return { section: null, rest: body };
 
   const start = match.index;
@@ -83,6 +82,10 @@ export function splitCriteriaSection(body: string | null): {
     section: body.slice(afterHeading, end).trim(),
     rest: (body.slice(0, start) + "\n\n" + body.slice(end)).trim(),
   };
+}
+
+export function splitCriteriaSection(body: string | null) {
+  return splitSection(body, "Аналіз за критеріями");
 }
 
 function toneOf(lead: string): CriterionTone {

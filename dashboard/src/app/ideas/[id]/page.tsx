@@ -24,7 +24,7 @@ import {
   SIGNAL_TYPE_META,
   trackLabel,
 } from "@/lib/status";
-import { analyzeCriteria, splitCriteriaSection } from "@/lib/criteria";
+import { analyzeCriteria, splitCriteriaSection, splitSection } from "@/lib/criteria";
 import type { StructuredVerdict } from "@/lib/criteria";
 import { groupByProvider, groupVerdicts, VERDICT_TONE } from "@/lib/deep-research";
 import type { CompetitorRow, CriteriaVerdictRow, EventRow, Idea, SourceRow } from "@/lib/types";
@@ -106,8 +106,15 @@ export default async function IdeaPage({
     }
   }
 
-  const { section: criteriaSection, rest: bodyRest } = splitCriteriaSection(record.body);
+  const { section: criteriaSection, rest: withoutCriteria } = splitCriteriaSection(record.body);
   const criteria = analyzeCriteria(record, criteriaSection, structured);
+
+  // Синтез пише конкурентів і в реєстр, і прозою в тіло картки (тіло лишається
+  // людською випискою для .md у registries). На сторінці показуємо лише
+  // структурований список — інакше той самий десяток продуктів іде двічі.
+  const bodyRest = competitors.length > 0
+    ? splitSection(withoutCriteria, "Конкуренти").rest
+    : withoutCriteria;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-8 sm:py-10">

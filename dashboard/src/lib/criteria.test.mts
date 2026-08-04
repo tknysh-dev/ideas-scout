@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { analyzeCriteria, splitCriteriaSection } from "./criteria.ts";
+import { analyzeCriteria, splitCriteriaSection, splitSection } from "./criteria.ts";
 
 const idea: any = {
   id: "PI-0001",
@@ -74,4 +74,33 @@ test("порожній summary синтезу не стирає вердикт �
   const result = analyzeCriteria(idea, section, structured)!;
   const c1 = result.results.find((r) => r.spec.n === 1)!;
   assert.match(c1.verdict, /пройдено/, "фолбек на текст аналітика, а не порожній рядок");
+});
+
+test("розділ конкурентів вирізається з прози так само, як критерії", () => {
+  const card = [
+    "## Механіка",
+    "",
+    "опис механіки",
+    "",
+    "## Конкуренти",
+    "",
+    "Notevision — живий, $3.99 разово.",
+    "",
+    "## Джерела",
+    "",
+    "посилання",
+  ].join("\n");
+
+  const { section, rest } = splitSection(card, "Конкуренти");
+  assert.match(section!, /Notevision/);
+  assert.doesNotMatch(rest, /Notevision/, "сторінка показує конкурентів структурованим списком, не прозою");
+  assert.match(rest, /опис механіки/, "решта картки лишається недоторканою");
+  assert.match(rest, /посилання/);
+});
+
+test("картка без розділу конкурентів лишається як була", () => {
+  const card = "## Механіка\n\nопис механіки";
+  const { section, rest } = splitSection(card, "Конкуренти");
+  assert.equal(section, null);
+  assert.equal(rest, card);
 });
