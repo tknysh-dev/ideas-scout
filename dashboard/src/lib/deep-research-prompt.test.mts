@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
+  DEEP_CRITERIA_DOC_PATH,
   buildIdeaContext,
   criteriaDocPath,
   renderHandoffPrompt,
@@ -48,13 +49,14 @@ test("плейсхолдери підставлені, мітка дослідн
     sources,
     template: repoFile("agents/prompts/deep-research-handoff.md"),
     criteriaDoc: repoFile(criteriaDocPath("passive-income")),
-    deepDoc: repoFile("agents/criteria/deep-research.md"),
+    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
     today: "2026-08-04",
   });
 
   assert.doesNotMatch(prompt, /Цей файл — шаблон/);
   assert.match(prompt, /^## Хто ти в цьому завданні/m);
-  assert.match(prompt, /заробітку `PI-0013` \(трек `passive-income`\)/);
+  assert.match(prompt, /заробітку `PI-0013`/);
+  assert.match(prompt, /категорія: механіки пасивного доходу/);
   assert.match(prompt, /Сьогодні 2026-08-04/);
   assert.match(prompt, /разом 14 об'єктів/);
   assert.match(prompt, /DEEP RESEARCH REPORT START \| \{\{RESEARCHER_LABEL\}\} \| PI-0013/);
@@ -71,7 +73,7 @@ test("трек app-ideas очікує на один базовий критер�
     sources: [],
     template: repoFile("agents/prompts/deep-research-handoff.md"),
     criteriaDoc: repoFile(criteriaDocPath("app-ideas")),
-    deepDoc: repoFile("agents/criteria/deep-research.md"),
+    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
     today: "2026-08-04",
   });
   assert.match(prompt, /разом 15 об'єктів/);
@@ -91,4 +93,61 @@ test("трек без чек-листа критеріїв не дає пром�
       }),
     /чек-листа критеріїв/,
   );
+});
+
+// Зовнішня модель не має бачити внутрішню кухню проєкту: шляхи репозиторію,
+// назви полів бази й коди відхилення, якими оперує лише синтезатор.
+test("згенерований промпт не містить внутрішньої кухні бази й репозиторію", () => {
+  const prompt = renderHandoffPrompt({
+    idea,
+    sources,
+    template: repoFile("agents/prompts/deep-research-handoff.md"),
+    criteriaDoc: repoFile(criteriaDocPath("passive-income")),
+    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
+    today: "2026-08-04",
+  });
+
+  const forbidden = [
+    "agents/",
+    "shared/",
+    "dashboard/",
+    "PLAN.md",
+    "rejection_code",
+    "signal_type",
+    "ceiling_flag",
+    "research_depth",
+    "NO_MONETIZATION",
+    "SATURATED",
+    "CAPABILITY_GAP",
+    // Назви треків — теж значення поля БД: шаблон колись підставляв їх у
+    // перший же рядок повз усе олюднення контексту.
+    "passive-income",
+    "app-ideas",
+    "automation_report",
+    "income_claim",
+  ];
+  for (const word of forbidden) {
+    assert.doesNotMatch(prompt, new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("службова шапка зовнішнього брифа не потрапляє у згенерований промпт", () => {
+  const rawCriteriaDoc = repoFile(criteriaDocPath("passive-income"));
+  const separator = rawCriteriaDoc.match(/^---\s*$/m);
+  assert.ok(separator, "зовнішній бриф має службову шапку, відокремлену `---`");
+  const header = rawCriteriaDoc.slice(0, separator!.index).trim();
+  const body = rawCriteriaDoc.slice(separator!.index! + separator![0].length).trimStart();
+  assert.ok(header.length > 0, "шапка не порожня — інакше перевірка нічого не варта");
+
+  const prompt = renderHandoffPrompt({
+    idea,
+    sources,
+    template: repoFile("agents/prompts/deep-research-handoff.md"),
+    criteriaDoc: rawCriteriaDoc,
+    deepDoc: repoFile(DEEP_CRITERIA_DOC_PATH),
+    today: "2026-08-04",
+  });
+
+  assert.ok(!prompt.includes(header), "шапка брифа не має потрапити в промпт");
+  assert.ok(prompt.includes(body.split("\n")[0]), "тіло брифа має потрапити в промпт");
 });
