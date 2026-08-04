@@ -11,11 +11,12 @@
 Дашборд кладе вербатим-звіти в research_reports (stage=deep_criteria,
 kind=model) і ставить у чергу job deep_research_synthesis.
 
-Стадія synthesis читає ці звіти з БД, доповнює їх власним дослідженням Claude
-по d_-блоках і зводить усе в структуровані вердикти (criteria_verdicts),
-конкурентів (competitors) і перезапис полів вердикту картки ideas. Наповнення
-стадії — фаза 4 плану docs/plans/deep-research-handoff.md; поки що вона лише
-перевіряє, що вхідні звіти на місці.
+Стадія synthesis читає ці звіти з БД і робить два послідовні виклики Claude:
+A — власне веб-дослідження d_-блоків (початковий аналіз їх не покривав) плюс
+адʼюдикація чужих вердиктів по базових критеріях; B — повний текст розділів
+картки і зведення конкурентів у канонічний список. Розділено на два виклики
+тому, що одна відповідь із дослідженням, вердиктами, прозою картки і
+конкурентами обривається на півслові.
 
 Уся недовірена творчість моделей проходить через санітизацію: у БД потрапляють
 лише значення з білих списків (вердикти, ключі критеріїв, коди відхилення),
@@ -55,7 +56,9 @@ CRITERIA_DOC_BY_TRACK = {
 }
 FATAL_KEYS = {str(n) for n in range(6)}             # 0..5 фатальні в обох треках
 VERDICTS = {"passed", "failed", "owner", "skipped", "not_applicable", "noted"}
-RESOLUTIONS = {"consensus", "evidence", "cross_exam", "pessimistic_default"}
+# cross_exam лишився в CHECK бази заради історичних рядків, але окремого
+# арбітра-крос-допиту в ручному циклі немає — нові прогони його не ставлять.
+RESOLUTIONS = {"consensus", "evidence", "pessimistic_default"}
 REJECTION_CODES = {
     "NO_MONETIZATION", "SOURCE_SUSPECT", "LEGAL", "CAPABILITY_GAP",
     "CAPITAL", "AUTONOMY", "SATURATED", "NO_MARKET",
@@ -71,7 +74,12 @@ OWNER_DECIDABLE = {"approved_pending", "accepted", "rejected"}
 
 LIVENESS = {"active", "stale", "dead"}
 
-SYNTHESIS_TIMEOUT_S = int(os.environ.get("IDEAS_SCOUT_SYNTHESIS_TIMEOUT_S", "1800"))
+# Виклик A сам ходить у веб по семи d_-блоках, тому його дефолт більший за
+# виклик B, який лише переписує вже готові дані в прозу.
+SYNTHESIS_TIMEOUT_S = int(os.environ.get("IDEAS_SCOUT_SYNTHESIS_TIMEOUT_S", "2700"))
+CARD_TIMEOUT_S = int(os.environ.get("IDEAS_SCOUT_SYNTHESIS_CARD_TIMEOUT_S", "1800"))
+
+SEARCH_UNAVAILABLE = "SEARCH UNAVAILABLE"
 
 
 def log(message: str) -> None:
@@ -92,6 +100,14 @@ def read_idea_id() -> str:
 def read_file(path: str) -> str:
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def read_prompt(name: str) -> str:
+    """Шаблон промпта без шапки до першого `---`: вона адресована супровіднику
+    репозиторію і в контексті моделі читалась би як частина завдання."""
+    text = read_file(os.path.join(REPO_ROOT, "agents/prompts", name))
+    match = re.search(r"^---\s*$", text, re.MULTILINE)
+    return text[match.end():].lstrip() if match else text
 
 
 def criteria_version_of(doc: str) -> str | None:
@@ -294,6 +310,101 @@ def load_model_reports(idea_id: str) -> list[dict]:
             if row.get("status") == "ok" and isinstance(row.get("report_md"), str)]
 
 
+def parse_model_reports(reports: list[dict], allowed_keys: set[str]) -> tuple[dict, dict]:
+    """({provider: {ключ критерію: рядок}}, {provider: [конкуренти]}) зі звітів.
+
+    Звіт без валідного json-блока або з відмовою SEARCH UNAVAILABLE у синтез не
+    йде — але про кожен такий пропуск лишається рядок у лозі, інакше зникнення
+    цілої моделі з вердикту неможливо помітити.
+    """
+    criteria_by_provider: dict[str, dict[str, dict]] = {}
+    competitors_by_provider: dict[str, list[dict]] = {}
+    for row in reports:
+        provider = str(row.get("provider") or "unknown").strip()[:100] or "unknown"
+        report_md = row.get("report_md") or ""
+        if re.search(rf"^\s*{SEARCH_UNAVAILABLE}\s*$", report_md, re.MULTILINE):
+            log(f"звіт «{provider}»: модель відповіла {SEARCH_UNAVAILABLE} — у синтез не йде")
+            continue
+        parsed = extract_json_block(report_md)
+        if parsed is None:
+            log(f"звіт «{provider}»: json-блок відсутній або невалідний — у синтез не йде")
+            continue
+        rows = sanitize_criteria(parsed.get("criteria"), allowed_keys, require_resolution=False)
+        competitors = sanitize_competitors(parsed.get("competitors"))
+        if not rows and not competitors:
+            log(f"звіт «{provider}»: у json-блоці немає ні критеріїв, ні конкурентів — у синтез не йде")
+            continue
+        if rows:
+            criteria_by_provider[provider] = rows
+        if competitors:
+            competitors_by_provider[provider] = competitors
+        log(f"звіт «{provider}»: критеріїв {len(rows)}, конкурентів {len(competitors)}")
+    return criteria_by_provider, competitors_by_provider
+
+
+def save_synthesis_report(idea_id: str, run_id: str | None, status: str, report_md: str) -> None:
+    """Обидва виклики синтезу — в одному рядку research_reports: unique-ключ
+    таблиці (idea_id, stage, kind, provider) не дає завести два рядки claude."""
+    quoted_id = urllib.parse.quote(idea_id, safe="")
+    db._request(
+        "DELETE",
+        f"/research_reports?idea_id=eq.{quoted_id}&stage=eq.deep_criteria&kind=eq.synthesis",
+    )
+    db._request("POST", "/research_reports", [{
+        "idea_id": idea_id, "run_id": run_id, "stage": "deep_criteria",
+        "kind": "synthesis", "provider": "claude",
+        "model": os.environ.get("RUNNER_CLAUDE_MODEL"),
+        "status": status, "report_md": report_md[:200_000],
+    }])
+
+
+def build_idea_updates(track: str, idea: dict, synth_rows: dict, updates_raw) -> tuple[dict, list[str]]:
+    """Поля картки за вердиктами синтезу. Статус і код відхилення вирішує цей
+    код, а не модель: її `idea_updates` — лише пропозиція, звірена з білими
+    списками."""
+    if not isinstance(updates_raw, dict):
+        updates_raw = {}
+    failed_fatal = [k for k in sorted(FATAL_KEYS)
+                    if k in synth_rows and synth_rows[k]["verdict"] == "failed"]
+
+    updates: dict = {}
+    code = updates_raw.get("rejection_code")
+    if failed_fatal:
+        if code not in REJECTION_CODES:
+            code = CODE_BY_CRITERION[track][failed_fatal[0]]
+        updates["rejection_code"] = code
+        updates["status"] = "rejected"
+        if isinstance(updates_raw.get("rejection_detail"), str):
+            updates["rejection_detail"] = updates_raw["rejection_detail"][:5000]
+    else:
+        updates["rejection_code"] = None
+        updates["rejection_detail"] = None
+        # accepted лишається рішенням власника; rejected після повного проходу
+        # повертається на його ж розгляд.
+        updates["status"] = "accepted" if idea["status"] == "accepted" else "approved_pending"
+    extra = updates_raw.get("rejection_codes_extra")
+    if isinstance(extra, list):
+        updates["rejection_codes_extra"] = [c for c in extra
+                                            if c in REJECTION_CODES and c != updates.get("rejection_code")]
+    if updates_raw.get("confidence") in ("high", "medium", "low"):
+        updates["confidence"] = updates_raw["confidence"]
+    if isinstance(updates_raw.get("ceiling_estimate"), str):
+        updates["ceiling_estimate"] = updates_raw["ceiling_estimate"][:500]
+    if isinstance(updates_raw.get("launch_effort_hours"), (int, float)):
+        updates["launch_effort_hours"] = updates_raw["launch_effort_hours"]
+    updates["ceiling_flag"] = "review" if updates_raw.get("ceiling_flag") == "review" else None
+    if isinstance(updates_raw.get("review_condition"), str):
+        updates["review_condition"] = updates_raw["review_condition"][:2000]
+    return updates, failed_fatal
+
+
+def write_event(idea_id: str, run_id: str | None, change: str, reason: str) -> None:
+    event = {"idea_id": idea_id, "actor": "deep-research", "change": change, "reason": reason[:2000]}
+    if run_id:
+        event["run_id"] = run_id
+    db._request("POST", "/events", event)
+
+
 def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
     idea, track, sources = load_idea(idea_id)
     reports = load_model_reports(idea_id)
@@ -306,16 +417,182 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
     labels = ", ".join(str(row.get("provider")) for row in reports)
     log(f"{idea_id} ({track}), звітів моделей у базі: {len(reports)} — {labels}")
 
-    # ---- Межа фази 4 ----------------------------------------------------
-    # Далі — два послідовні виклики Claude (власне дослідження d_-блоків плюс
-    # адʼюдикація чужих звітів; потім текст картки і зведення конкурентів) і
-    # запис результатів у criteria_verdicts/competitors/ideas. Усе, що для цього
-    # потрібно, уже є в цьому файлі: load_idea, звіти вище, sanitize_criteria,
-    # sanitize_competitors, replace_section, run_llm.
-    raise SystemExit(
-        "deep-research: стадію synthesis ще не реалізовано (фаза 4 плану "
-        "docs/plans/deep-research-handoff.md) — звіти лишились у базі, картку не змінено"
+    base_keys = BASE_KEYS_BY_TRACK[track]
+    allowed_keys = set(base_keys) | set(DEEP_KEYS)
+    criteria_doc = read_file(criteria_doc_path(track))
+    deep_doc = read_file(os.path.join(REPO_ROOT, "agents/criteria/deep-research.md"))
+
+    model_criteria, model_competitors = parse_model_reports(reports, allowed_keys)
+    if not model_criteria and not model_competitors:
+        raise SystemExit(
+            "deep-research: жоден зі збережених звітів не дав придатних даних "
+            "(див. рядки вище) — картку не змінено"
+        )
+    contributors = sorted(set(model_criteria) | set(model_competitors))
+
+    quoted_id = urllib.parse.quote(idea_id, safe="")
+    criteria_version = criteria_version_of(criteria_doc)
+
+    # ---- Виклик A: власне дослідження d_-блоків + адʼюдикація критеріїв ----
+    initial_section, _ = split_section(idea.get("body"), "Аналіз за критеріями")
+    snapshot_fields = {k: idea.get(k) for k in (
+        "id", "title", "type", "track", "status", "signal_type", "rejection_code",
+        "rejection_detail", "rejection_codes_extra", "confidence", "ceiling_estimate",
+        "launch_effort_hours", "ceiling_flag", "claimed_revenue", "mechanic_summary",
+        "monetization_hypothesis", "criteria_version")}
+    idea_snapshot = (
+        "Поля картки (початковий вердикт):\n```json\n"
+        + json.dumps(snapshot_fields, ensure_ascii=False, indent=1)
+        + "\n```\n\nПочатковий «Аналіз за критеріями» (проза попереднього аналітика):\n\n"
+        + (initial_section or "(розділ відсутній)")
     )
+    model_results_md = "\n\n".join(
+        f"### Модель: {provider}\n```json\n"
+        + json.dumps({"criteria": list(rows.values())}, ensure_ascii=False, indent=1) + "\n```"
+        for provider, rows in model_criteria.items()
+    ) or "(жодна модель не дала розібраних вердиктів по критеріях)"
+
+    prompt_a = render(read_prompt("deep-research-synthesis.md"), {
+        "IDEA_ID": idea_id,
+        "TRACK": track,
+        "TODAY": today,
+        "IDEA_SNAPSHOT": idea_snapshot,
+        "MODEL_RESULTS": model_results_md,
+        "CRITERIA_DOC": criteria_doc,
+        "DEEP_DOC": deep_doc,
+        "MAX_BASE_KEY": base_keys[-1],
+        "EXPECTED_COUNT": str(len(base_keys) + len(DEEP_KEYS)),
+        "ALLOWED_CODES": " | ".join(f'"{c}"' for c in sorted(REJECTION_CODES)),
+    })
+
+    log(f"виклик A (прогалини + адʼюдикація), таймаут {SYNTHESIS_TIMEOUT_S}с")
+    exit_a, output_a = run_llm("claude", prompt_a, SYNTHESIS_TIMEOUT_S)
+    parsed_a = extract_json_block(output_a) if exit_a == 0 else None
+    synth_rows = sanitize_criteria(parsed_a.get("criteria"), allowed_keys,
+                                   require_resolution=True) if parsed_a else {}
+    if not synth_rows:
+        save_synthesis_report(idea_id, run_id, "timeout" if exit_a == 124 else "error", output_a)
+        raise SystemExit(
+            f"deep-research: виклик A не повернув валідних вердиктів (exit={exit_a}) — "
+            "повний вивід збережено в research_reports, картку не змінено"
+        )
+    save_synthesis_report(idea_id, run_id, "ok", output_a)
+    missing = sorted(allowed_keys - set(synth_rows))
+    log(f"виклик A: вердиктів {len(synth_rows)} з {len(allowed_keys)}"
+        + (f"; без вердикту лишились: {', '.join(missing)}" if missing else ""))
+
+    verdict_rows = [{**row, "idea_id": idea_id, "run_id": run_id, "stage": "deep",
+                     "kind": "synthesis", "provider": "claude",
+                     "model": os.environ.get("RUNNER_CLAUDE_MODEL"),
+                     "criteria_version": criteria_version}
+                    for row in synth_rows.values()]
+    db._request("DELETE", f"/criteria_verdicts?idea_id=eq.{quoted_id}&stage=eq.deep&kind=eq.synthesis")
+    db._request("POST", "/criteria_verdicts", verdict_rows)
+    log(f"criteria_verdicts: записано {len(verdict_rows)} рядків синтезу")
+
+    updates, failed_fatal = build_idea_updates(track, idea, synth_rows, parsed_a.get("idea_updates"))
+    updates.update({
+        "research_depth": "deep",
+        "deep_researched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "deep_research_run_id": run_id,
+        "verdict_provider": "multi",
+        "verdict_model": ("synthesis:claude+" + "+".join(contributors))[:200],
+        "verdict_run_id": run_id,
+        "criteria_version": criteria_version or idea.get("criteria_version"),
+    })
+    db._request("PATCH", f"/ideas?id=eq.{quoted_id}", updates)
+
+    change = f"research_depth: {idea.get('research_depth') or 'initial'} -> deep; " \
+             f"status: {idea['status']} -> {updates['status']}"
+    if failed_fatal:
+        reason = (f"Провалено фатальні критерії {', '.join(failed_fatal)} "
+                  f"(код {updates['rejection_code']}); зведено звіти: {', '.join(contributors)}.")
+        log(f"фатальні провали: критерії {', '.join(failed_fatal)} (код {updates['rejection_code']})")
+    else:
+        reason = f"Усі фатальні критерії пройдено; зведено звіти: {', '.join(contributors)}."
+    write_event(idea_id, run_id, change, reason)
+    log(f"картку оновлено: {change}")
+
+    # ---- Виклик B: текст картки + конкуренти ------------------------------
+    # Виконується завжди, навіть після провалу фатальних критеріїв: власнику
+    # потрібен повний пакет (конкуренти, економіка), а не лише код відхилення.
+    competitors_md = "\n\n".join(
+        f"### Модель: {provider}\n```json\n"
+        + json.dumps({"competitors": rows}, ensure_ascii=False, indent=1) + "\n```"
+        for provider, rows in model_competitors.items()
+    ) or "(жодна модель не дала розібраного списку конкурентів)"
+    current_competitors, _ = split_section(idea.get("body"), "Конкуренти")
+
+    prompt_b = render(read_prompt("deep-research-card.md"), {
+        "IDEA_ID": idea_id,
+        "TRACK": track,
+        "TODAY": today,
+        "IDEA_CONTEXT": build_idea_context(idea, sources),
+        "SYNTHESIS_CRITERIA": "```json\n" + json.dumps(
+            {"criteria": list(synth_rows.values()), "idea_updates": {
+                "rejection_code": updates.get("rejection_code"),
+                "confidence": updates.get("confidence"),
+                "ceiling_estimate": updates.get("ceiling_estimate"),
+            }}, ensure_ascii=False, indent=1) + "\n```",
+        "MODEL_COMPETITORS": competitors_md,
+        "CURRENT_CRITERIA_SECTION": initial_section or "(розділ відсутній)",
+        "CURRENT_COMPETITORS_SECTION": current_competitors or "(розділ відсутній)",
+    })
+
+    log(f"виклик B (текст картки + конкуренти), таймаут {CARD_TIMEOUT_S}с")
+    exit_b, output_b = run_llm("claude", prompt_b, CARD_TIMEOUT_S)
+    parsed_b = extract_json_block(output_b) if exit_b == 0 else None
+    save_synthesis_report(
+        idea_id, run_id, "ok" if parsed_b else ("timeout" if exit_b == 124 else "error"),
+        "## Виклик A: прогалини та адʼюдикація\n\n" + output_a
+        + "\n\n## Виклик B: текст картки та конкуренти\n\n" + output_b,
+    )
+    if not parsed_b:
+        raise SystemExit(
+            f"deep-research: виклик B не повернув валідного JSON (exit={exit_b}) — "
+            "вердикти синтезу вже записані, але текст картки і конкуренти лишились старими"
+        )
+
+    final_competitors = sanitize_competitors(parsed_b.get("competitors"))
+    if final_competitors:
+        for row in final_competitors:
+            row.update({"idea_id": idea_id, "run_id": run_id})
+        db._request("DELETE", f"/competitors?idea_id=eq.{quoted_id}")
+        db._request("POST", "/competitors", final_competitors)
+        log(f"competitors: записано {len(final_competitors)} рядків")
+    else:
+        log("виклик B не дав жодного конкурента — старий список лишено недоторканим")
+
+    card_updates: dict = {}
+    body = idea.get("body")
+    criteria_section = parsed_b.get("criteria_section_md")
+    if isinstance(criteria_section, str) and criteria_section.strip():
+        body = replace_section(body, "Аналіз за критеріями", criteria_section)
+    competitors_section = parsed_b.get("competitors_section_md")
+    if isinstance(competitors_section, str) and competitors_section.strip():
+        body = replace_section(body, "Конкуренти", competitors_section)
+    if body != idea.get("body"):
+        card_updates["body"] = body
+
+    # Картина конкурентів, що суперечить щойно винесеному вердикту насиченості,
+    # не перевертає його мовчки — лише піднімає прапорець ручного розгляду.
+    saturation_alert = parsed_b.get("saturation_alert") is True
+    if saturation_alert:
+        card_updates["ceiling_flag"] = "review"
+        note = parsed_b.get("saturation_note")
+        if isinstance(note, str) and note.strip():
+            card_updates["review_condition"] = note.strip()[:2000]
+
+    if card_updates:
+        db._request("PATCH", f"/ideas?id=eq.{quoted_id}", card_updates)
+
+    summary = parsed_b.get("summary")
+    summary = summary[:2000] if isinstance(summary, str) else "глибоке дослідження завершено"
+    change_b = (f"конкуренти: {len(final_competitors)} у реєстрі; текст картки переписано"
+                + ("; ceiling_flag -> review" if saturation_alert else ""))
+    write_event(idea_id, run_id, change_b, summary)
+    log(f"готово: {change_b}")
+    log(f"підсумок синтезу: {summary}")
 
 
 def main() -> None:

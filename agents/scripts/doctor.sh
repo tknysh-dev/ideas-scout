@@ -32,10 +32,12 @@ CLAMSHELL_BASELINE_FILE="${IDEAS_SCOUT_CLAMSHELL_BASELINE:-$HOME/.config/ideas-s
 
 SKIP_NETWORK=0
 PROBE_LLM=0
+PROBE_WEBSEARCH=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --offline) SKIP_NETWORK=1 ;;
     --llm) PROBE_LLM=1 ;;
+    --websearch) PROBE_WEBSEARCH=1 ;;
     --baseline-clamshell)
       mkdir -p "$(dirname "$CLAMSHELL_BASELINE_FILE")" || exit 2
       date '+%Y-%m-%d %H:%M:%S' > "$CLAMSHELL_BASELINE_FILE" || exit 2
@@ -44,12 +46,18 @@ while [ $# -gt 0 ]; do
       exit 0 ;;
     -h|--help)
       cat <<'EOF'
-Використання: doctor.sh [--offline] [--llm] [--baseline-clamshell]
+Використання: doctor.sh [--offline] [--llm] [--websearch] [--baseline-clamshell]
 
   --offline  без мережевих перевірок (Supabase, Telegram, LLM)
   --llm      додатково зробити реальний виклик claude -p, щоб переконатись,
              що логін живий — єдина по-справжньому надійна перевірка, але
              вона витрачає ліміт підписки
+  --websearch
+             перевірити, що claude через llm-invoke.sh справді ходить у веб:
+             мінімальний запит на свіжий факт із URL і датою. Повільно
+             (до кількох хвилин) і витрачає ліміт підписки, тому окремим
+             прапорцем — без пошуку синтез глибокого дослідження мовчки
+             робитиме d_-блоки з памʼяті.
   --baseline-clamshell
              запам'ятати поточний момент як «сон полагоджено» і вийти. Далі
              doctor рахує лише засинання від кришки ПІСЛЯ цієї позначки, тож
@@ -529,6 +537,16 @@ else
   ok "шаблон промпта для ручного дослідження на місці (з маркерами звіту)"
 fi
 
+MISSING_SYNTH_PROMPTS=""
+for prompt_file in deep-research-synthesis.md deep-research-card.md; do
+  [ -f "$REPO_ROOT/agents/prompts/$prompt_file" ] || MISSING_SYNTH_PROMPTS="$MISSING_SYNTH_PROMPTS $prompt_file"
+done
+if [ -n "$MISSING_SYNTH_PROMPTS" ]; then
+  err "немає промптів синтезу:${MISSING_SYNTH_PROMPTS} — job deep_research_synthesis впаде на читанні шаблона"
+else
+  ok "обидва промпти синтезу на місці (адʼюдикація і текст картки)"
+fi
+
 if command -v claude >/dev/null 2>&1; then
   ok "claude CLI на місці — синтез глибокого дослідження робить саме він"
 elif [ "$IS_WORKER_HOST" -eq 1 ]; then
@@ -542,6 +560,32 @@ if [ -x "$REPO_ROOT/agents/scripts/llm-invoke.sh" ]; then
 else
   err "немає виконуваного agents/scripts/llm-invoke.sh — саме через нього синтез кличе claude"
   hint "chmod +x agents/scripts/llm-invoke.sh"
+fi
+
+# Веб-пошук у claude — тиха точка відмови: без нього синтез усе одно відпрацює
+# і випише вердикти, але d_-блоки заповнить із тренувальних даних, тобто рівно
+# тим кешем, заради відмови від якого весь ручний цикл і затіяно. Перевірка
+# коштує виклику моделі й кількох хвилин, тому живе за окремим прапорцем.
+if [ "$PROBE_WEBSEARCH" -eq 1 ] && [ "$SKIP_NETWORK" -eq 0 ]; then
+  WEBSEARCH_PROMPT='Скористайся веб-пошуком і знайди будь-яку новину, опубліковану за останні 7 днів.
+Відповідь — РІВНО один рядок формату: <URL> | <РРРР-ММ-ДД> | <заголовок>.
+Жодних пояснень, вступів і підсумків. Якщо веб-пошук тобі зараз недоступний — відповідай рівно: NO_SEARCH'
+  WS_OUT="$(printf '%s' "$WEBSEARCH_PROMPT" \
+    | "$REPO_ROOT/agents/scripts/llm-invoke.sh" run claude --timeout 240 2>&1)"
+  WS_TAIL="$(printf '%s' "$WS_OUT" | tr '\n' ' ' | head -c 200)"
+  if printf '%s' "$WS_OUT" | grep -Eq 'https?://[^[:space:]]+' \
+     && printf '%s' "$WS_OUT" | grep -Eq '[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
+    ok "claude через llm-invoke.sh реально шукає у вебі (повернув URL з датою: ${WS_TAIL})"
+  else
+    err "claude через llm-invoke.sh не повернув URL з датою — веб-пошук недоступний, і синтез робитиме кешовані d_-блоки замість живого дослідження"
+    hint "відповідь моделі: ${WS_TAIL:-（порожньо）}"
+    hint "перевір, що claude CLI бачить WebSearch/WebFetch: ./agents/scripts/llm-invoke.sh check claude"
+  fi
+  unset WS_OUT
+elif [ "$PROBE_WEBSEARCH" -eq 1 ]; then
+  note "перевірку веб-пошуку claude пропущено (--offline)"
+else
+  note "веб-пошук claude не перевірявся — це повільний виклик моделі, вмикається прапорцем --websearch"
 fi
 
 if [ "$SKIP_NETWORK" -eq 1 ]; then
