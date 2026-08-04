@@ -10,12 +10,7 @@ import {
 import type { SynthesisResolution } from "@/lib/types";
 
 const TONE_ORDER: CriterionTone[] = ["passed", "failed", "owner", "noted", "skipped"];
-const RESOLUTION_ORDER: SynthesisResolution[] = [
-  "consensus",
-  "evidence",
-  "cross_exam",
-  "pessimistic_default",
-];
+const RESOLUTION_ORDER: SynthesisResolution[] = ["consensus", "evidence", "pessimistic_default"];
 
 // Одна легенда на сторінку ідеї: пояснює всі плашки глибокого дослідження,
 // щоб не покладатись на title-hover (недоступний на мобільному).

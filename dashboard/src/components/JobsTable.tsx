@@ -10,13 +10,8 @@ const STATUS_META: Record<JobRow["status"], { label: string; tone: string }> = {
   cancelled: { label: "Скасовано", tone: "text-ink-dim" },
 };
 
-// Два перші типи більше не створюються (автоматичний конвеєр демонтовано), але
-// їхні рядки лишились в історії черги — без підписів вони читались би як сирі
-// ідентифікатори.
 const JOB_TYPE_LABELS: Record<string, string> = {
   deep_research_synthesis: "Синтез глибокого дослідження",
-  deep_research: "Глибоке дослідження",
-  deep_research_competitors: "Дослідження конкурентів",
 };
 
 function jobLabel(job: JobRow) {

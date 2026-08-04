@@ -116,7 +116,6 @@ export type CriterionVerdict =
 export type SynthesisResolution =
   | "consensus"
   | "evidence"
-  | "cross_exam"
   | "pessimistic_default";
 
 export interface CriteriaVerdictRow {

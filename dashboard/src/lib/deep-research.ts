@@ -67,7 +67,6 @@ export const DISAGREEMENT_META = {
 export const RESOLUTION_TOKEN: Record<SynthesisResolution, string> = {
   consensus: "transferred",
   evidence: "analyzing",
-  cross_exam: "analyzing",
   pessimistic_default: "rejected",
 };
 
@@ -90,10 +89,6 @@ export const RESOLUTION_META: Record<SynthesisResolution, { label: string; hint:
   evidence: {
     label: "Вирішено перевіркою джерел",
     hint: "Моделі дали різні вердикти — перемогла та сторона, чиї джерела (посилання з датою) підтвердились при перевірці.",
-  },
-  cross_exam: {
-    label: "Вирішив арбітражний раунд",
-    hint: "Моделі розійшлись, тому їхні докази додатково звірили в окремому раунді перевірки.",
   },
   pessimistic_default: {
     label: "Взято найгірший варіант",

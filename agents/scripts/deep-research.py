@@ -56,8 +56,6 @@ CRITERIA_DOC_BY_TRACK = {
 }
 FATAL_KEYS = {str(n) for n in range(6)}             # 0..5 фатальні в обох треках
 VERDICTS = {"passed", "failed", "owner", "skipped", "not_applicable", "noted"}
-# cross_exam лишився в CHECK бази заради історичних рядків, але окремого
-# арбітра-крос-допиту в ручному циклі немає — нові прогони його не ставлять.
 RESOLUTIONS = {"consensus", "evidence", "pessimistic_default"}
 REJECTION_CODES = {
     "NO_MONETIZATION", "SOURCE_SUSPECT", "LEGAL", "CAPABILITY_GAP",

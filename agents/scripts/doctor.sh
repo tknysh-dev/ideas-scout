@@ -589,13 +589,13 @@ else
   if [ -z "$DR_JSON" ]; then
     note "стан глибокого дослідження перевірити не вдалось — Supabase не відповіла вище"
   else
-    read -r DR_TABLES DR_FAILED DR_TOTAL DR_JOBS DR_LEGACY DR_PROVIDERS <<<"$(python3 -c "
+    read -r DR_TABLES DR_FAILED DR_TOTAL DR_JOBS DR_PROVIDERS <<<"$(python3 -c "
 import json, sys
 d = json.loads(sys.argv[1])
 print(str(d.get('tables_ok', False)).lower(), d.get('reports_failed', 0), d.get('reports_total', 0),
-      d.get('jobs_failed', 0), d.get('legacy_jobs_queued', 0),
+      d.get('jobs_failed', 0),
       ','.join(d.get('failed_providers') or []) or '-')
-" "$DR_JSON" 2>/dev/null || echo "false 0 0 0 0 -")"
+" "$DR_JSON" 2>/dev/null || echo "false 0 0 0 -")"
 
     if [ "$DR_TABLES" != "true" ]; then
       err "таблиць глибокого дослідження немає в базі — міграція не накочена, і вставлені власником звіти нікуди буде записати"
@@ -615,13 +615,6 @@ import json, sys
 print(json.loads(sys.argv[1]).get('last_job_error') or '')
 " "$DR_JSON" 2>/dev/null || echo "")"
       warn "синтезів глибокого дослідження, що впали за тиждень: ${DR_JOBS}${DR_ERROR:+ — остання помилка: ${DR_ERROR}}"
-    fi
-
-    # Типи скасованого конвеєра воркер більше не знає. Рядок, що застряг у черзі
-    # з тих часів, він відхилятиме як непідтримуваний щоразу, коли візьме його.
-    if [ "${DR_LEGACY:-0}" -gt 0 ]; then
-      warn "у черзі ${DR_LEGACY} завдань скасованих типів (deep_research, deep_research_competitors) — конвеєра, який їх виконував, більше немає, тож воркер відхилятиме їх нескінченно"
-      hint "скасуй їх у базі: update jobs set status='cancelled' where type in ('deep_research','deep_research_competitors') and status in ('pending','running')"
     fi
   fi
 fi

@@ -261,7 +261,7 @@ create table criteria_verdicts (
   detail text,                     -- обґрунтування прозою
   evidence jsonb not null default '[]'::jsonb,  -- [{url, published_date, quote}]; факти без датованого url синтез не враховує
   resolution text check (
-    resolution in ('consensus', 'evidence', 'cross_exam', 'pessimistic_default')
+    resolution in ('consensus', 'evidence', 'pessimistic_default')
   ),                               -- лише для kind='synthesis': як розвʼязано розбіжність моделей
   criteria_version text,
   created_at timestamptz not null default now(),
@@ -271,7 +271,7 @@ create table criteria_verdicts (
 );
 
 comment on column criteria_verdicts.resolution is
-  'consensus = моделі зійшлись; evidence = перемогла сторона з верифікованими джерелами; cross_exam = історичне значення, нові прогони його більше не ставлять (окремого арбітра-крос-допиту в ручному циклі немає), лишається дозволеним заради вже збережених рядків; pessimistic_default = докази не розвʼязали суперечку, взято найгірший вердикт.';
+  'consensus = моделі зійшлись; evidence = перемогла сторона з верифікованими джерелами; pessimistic_default = докази не розвʼязали суперечку, взято найгірший вердикт.';
 
 -- ============================================================================
 -- RESEARCH_REPORTS — повні Markdown-звіти прогонів глибокого дослідження
@@ -283,7 +283,7 @@ create table research_reports (
   id uuid primary key default gen_random_uuid(),
   idea_id text not null references ideas(id) on delete cascade,
   run_id text references runs(run_id),
-  stage text not null check (stage in ('deep_criteria', 'competitors')),
+  stage text not null check (stage in ('deep_criteria')),
   kind text not null check (kind in ('model', 'synthesis')),
   provider text not null,
   model text,
