@@ -24,8 +24,9 @@ RENDERED_BY = {
     "deep-research-synthesis.md": ("agents/scripts/deep-research.py", "синтез, виклик A"),
     "deep-research-card.md": ("agents/scripts/deep-research.py", "синтез, виклик B"),
 }
-# Єдиний плейсхолдер, який лишається в тексті навмисно: його вписує власник.
-OWNER_PLACEHOLDER = "RESEARCHER_LABEL"
+# Плейсхолдери, які лишаються в тексті навмисно: їх вписує власник перед
+# вставкою — сервіс і конкретна модель у ньому.
+OWNER_PLACEHOLDERS = {"RESEARCHER_LABEL", "RESEARCHER_MODEL"}
 PARSER = "dashboard/src/lib/deep-research-reports.ts"
 SYNTH = "agents/scripts/deep-research.py"
 # Промпти нічних агентів: усі чотири рендерить runner.sh перед викликом CLI.
@@ -76,7 +77,7 @@ for name, text in texts.items():
     # Ключ шукаємо як окреме слово: у Python це рядок у словнику, у TypeScript —
     # ім'я властивості без лапок.
     orphans = sorted(k for k in found
-                     if k != OWNER_PLACEHOLDER and not re.search(rf"\b{k}\b", renderer))
+                     if k not in OWNER_PLACEHOLDERS and not re.search(rf"\b{k}\b", renderer))
     if orphans:
         say("err", f"{name}: плейсхолдери {', '.join('{{' + o + '}}' for o in orphans)}"
             f" ніхто не підставляє ({role}) — модель отримає їх дослівно замість даних")
@@ -138,9 +139,11 @@ else:
 
 handoff = texts.get("deep-research-handoff.md")
 if handoff is not None:
-    if OWNER_PLACEHOLDER not in handoff:
-        say("err", f"у handoff-промпті немає {{{{{OWNER_PLACEHOLDER}}}}}"
-            " — власнику ніде вписати назву моделі, і звіти неможливо буде розрізнити")
+    absent_owner = sorted(k for k in OWNER_PLACEHOLDERS if k not in handoff)
+    if absent_owner:
+        say("err", "у handoff-промпті немає " + ", ".join("{{" + k + "}}" for k in absent_owner)
+            + " — власнику ніде вписати сервіс і модель, а без них звіти не розрізнити"
+            " й не порівняти прогони між версіями моделей")
     parser = read(PARSER)
     synth = read(SYNTH)
     if parser is None:

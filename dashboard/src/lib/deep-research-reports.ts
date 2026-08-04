@@ -17,6 +17,7 @@ export const REPORT_START_MARK = "DEEP RESEARCH REPORT START";
 export const REPORT_END_MARK = "DEEP RESEARCH REPORT END";
 export const SEARCH_UNAVAILABLE = "SEARCH UNAVAILABLE";
 export const RESEARCHER_LABEL_PLACEHOLDER = "{{RESEARCHER_LABEL}}";
+export const RESEARCHER_MODEL_PLACEHOLDER = "{{RESEARCHER_MODEL}}";
 
 export const VERDICTS = new Set([
   "passed",
@@ -72,7 +73,8 @@ export type ReportStatus = "ok" | "refused" | "invalid" | "foreign";
 
 export interface ParsedReport {
   label: string;
-  selfReportedModel: string | null;
+  /** Конкретна модель сервісу — з маркера, інакше з самоназви у звіті. */
+  model: string | null;
   status: ReportStatus;
   /** Вербатим текст звіту без маркерів — джерело правди для синтезу. */
   reportMd: string;
@@ -238,6 +240,7 @@ export function extractJsonBlock(text: string): JsonBlockResult {
 interface MarkerLine {
   kind: "start" | "end";
   label: string;
+  model: string | null;
   ideaId: string | null;
 }
 
@@ -250,16 +253,23 @@ function readMarker(line: string): MarkerLine | null {
   const inner = trimmed.replace(/^=+\s*/, "").replace(/\s*=+$/, "");
   const parts = inner.split("|").map((part) => part.trim());
   const head = parts[0].toUpperCase();
-  if (head === REPORT_END_MARK) return { kind: "end", label: "", ideaId: null };
+  if (head === REPORT_END_MARK) return { kind: "end", label: "", model: null, ideaId: null };
   if (head !== REPORT_START_MARK) return null;
-  if (parts.length >= 3) {
+  // Проміжні поля між міткою та id — це модель. Промпт, згенерований до появи
+  // моделі в маркері, дає три частини; читаємо і такий, щоб старий скопійований
+  // текст не ламався мовчки.
+  if (parts.length >= 4) {
     return {
       kind: "start",
-      label: parts.slice(1, -1).join(" | "),
+      label: parts[1] ?? "",
+      model: parts.slice(2, -1).join(" | ") || null,
       ideaId: parts[parts.length - 1] || null,
     };
   }
-  return { kind: "start", label: parts[1] ?? "", ideaId: null };
+  if (parts.length === 3) {
+    return { kind: "start", label: parts[1] ?? "", model: null, ideaId: parts[2] || null };
+  }
+  return { kind: "start", label: parts[1] ?? "", model: null, ideaId: null };
 }
 
 interface Segment {
@@ -310,6 +320,16 @@ function resolveLabel(
   return `unknown-${index}`;
 }
 
+// Модель із маркера авторитетніша за самоназву: власник знає, у якому вікні
+// працював, а моделі часто не знають власної версії й вигадують її.
+function resolveModel(marker: MarkerLine, json: Record<string, unknown> | null): string | null {
+  for (const raw of [marker.model, json?.researcher_model, json?.self_reported_model]) {
+    const value = sanitizeLabel(raw, MAX_MODEL);
+    if (value && value !== RESEARCHER_MODEL_PLACEHOLDER) return value;
+  }
+  return null;
+}
+
 export function parseReportsBlob(input: ParseReportsInput): ParseReportsResult {
   const allowed = allowedCriteriaKeys(input.track);
   if (!allowed) {
@@ -357,10 +377,10 @@ export function parseReportsBlob(input: ParseReportsInput): ParseReportsResult {
     }
     usedLabels.add(label);
 
-    const selfReportedModel = sanitizeLabel(json?.self_reported_model, MAX_MODEL) || null;
+    const model = resolveModel(segment.marker, json);
     const report: ParsedReport = {
       label,
-      selfReportedModel,
+      model,
       status: "ok",
       reportMd: segment.body.slice(0, MAX_REPORT_MD),
       criteria: [],

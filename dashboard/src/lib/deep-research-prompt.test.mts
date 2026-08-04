@@ -59,11 +59,12 @@ test("плейсхолдери підставлені, мітка дослідн
   assert.match(prompt, /категорія: механіки пасивного доходу/);
   assert.match(prompt, /Сьогодні 2026-08-04/);
   assert.match(prompt, /разом 14 об'єктів/);
-  assert.match(prompt, /DEEP RESEARCH REPORT START \| \{\{RESEARCHER_LABEL\}\} \| PI-0013/);
+  assert.match(prompt, /DEEP RESEARCH REPORT START \| \{\{RESEARCHER_LABEL\}\} \| \{\{RESEARCHER_MODEL\}\} \| PI-0013/);
   // Будь-який інший незамінений плейсхолдер означає розсинхрон шаблону й коду.
+  // Обидві мітки лишаються літеральними: їх вписує власник перед вставкою.
   assert.deepEqual(
-    [...new Set(prompt.match(/\{\{[A-Z_]+\}\}/g))],
-    ["{{RESEARCHER_LABEL}}"],
+    [...new Set(prompt.match(/\{\{[A-Z_]+\}\}/g))].sort(),
+    ["{{RESEARCHER_LABEL}}", "{{RESEARCHER_MODEL}}"],
   );
 });
 

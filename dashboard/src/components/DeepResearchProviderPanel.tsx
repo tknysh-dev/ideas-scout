@@ -14,7 +14,15 @@ export default async function DeepResearchProviderPanel({
   ideaId?: string;
 }) {
   return (
-    <ul className="space-y-3">
+    <>
+      {group.model && (
+        <p className="mb-3 text-sm text-ink-dim">
+          Дослідження виконала модель{" "}
+          <span className="font-mono text-xs text-ink">{group.model}</span> — за нею можна
+          порівнювати якість прогонів, зроблених у різний час.
+        </p>
+      )}
+      <ul className="space-y-3">
       {group.items.map(({ key, title, row }, index) => (
         <Card as="li" key={key} index={index} padding="sm" exclude={ideaId}>
           <span className="inline-flex items-center gap-2 rounded-full border border-line bg-paper px-3 py-1">
@@ -22,7 +30,8 @@ export default async function DeepResearchProviderPanel({
           </span>
           <VerdictRowDetails row={row} />
         </Card>
-      ))}
-    </ul>
+        ))}
+      </ul>
+    </>
   );
 }

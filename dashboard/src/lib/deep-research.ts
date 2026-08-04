@@ -179,6 +179,8 @@ export interface ProviderVerdictItem {
 
 export interface ProviderGroup {
   provider: string;
+  /** Конкретна модель сервісу — щоб було видно, чим саме зроблено цей прогін. */
+  model: string | null;
   items: ProviderVerdictItem[];
 }
 
@@ -203,19 +205,21 @@ function criterionOrder(key: string): number {
 // відміну від groupVerdicts (за критерієм, для консолідованого блоку).
 export function groupByProvider(rows: CriteriaVerdictRow[], track: string): ProviderGroup[] {
   const checklist = getChecklist(track);
-  const byProvider = new Map<string, ProviderVerdictItem[]>();
+  const byProvider = new Map<string, { model: string | null; items: ProviderVerdictItem[] }>();
 
   for (const row of rows) {
     if (row.kind !== "model") continue;
-    const items = byProvider.get(row.provider) ?? [];
-    items.push({ key: row.criterion_key, title: criterionTitle(checklist, row.criterion_key), row });
-    byProvider.set(row.provider, items);
+    const entry = byProvider.get(row.provider) ?? { model: null, items: [] };
+    entry.model = entry.model ?? row.model ?? null;
+    entry.items.push({ key: row.criterion_key, title: criterionTitle(checklist, row.criterion_key), row });
+    byProvider.set(row.provider, entry);
   }
 
   return [...byProvider.entries()]
-    .map(([provider, items]) => ({
+    .map(([provider, entry]) => ({
       provider,
-      items: items.sort((a, b) => criterionOrder(a.key) - criterionOrder(b.key)),
+      model: entry.model,
+      items: entry.items.sort((a, b) => criterionOrder(a.key) - criterionOrder(b.key)),
     }))
     .sort((a, b) => a.provider.localeCompare(b.provider));
 }

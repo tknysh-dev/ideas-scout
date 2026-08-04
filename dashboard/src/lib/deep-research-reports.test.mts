@@ -5,9 +5,10 @@ import { parseReportsBlob, sanitizeLabel } from "./deep-research-reports.ts";
 const IDEA_ID = "PI-0013";
 const TRACK = "passive-income";
 
-function wrap(label: string, ideaId: string, body: string) {
+function wrap(label: string, ideaId: string, body: string, model?: string) {
+  const head = model ? `${label} | ${model}` : label;
   return [
-    `===== DEEP RESEARCH REPORT START | ${label} | ${ideaId} =====`,
+    `===== DEEP RESEARCH REPORT START | ${head} | ${ideaId} =====`,
     body,
     "===== DEEP RESEARCH REPORT END =====",
   ].join("\n");
@@ -67,7 +68,7 @@ test("кілька звітів в одному блобі розбирають�
   assert.deepEqual(result.reports.map((r) => r.label), ["ChatGPT", "Perplexity"]);
   assert.equal(result.reports[0].criteria.length, 2);
   assert.equal(result.reports[0].competitors.length, 1);
-  assert.equal(result.reports[0].selfReportedModel, "GPT-5.4");
+  assert.equal(result.reports[0].model, "GPT-5.4");
   // Вербатим-текст лишається без маркерів, але з json-блоком: саме його читає
   // синтез на M1.
   assert.match(result.reports[0].reportMd, /Прозовий звіт/);
@@ -242,4 +243,39 @@ test("трек без чек-листа критеріїв не розбирає
   });
   assert.equal(result.reports.length, 0);
   assert.match(result.error ?? "", /чек-листа критеріїв/);
+});
+
+test("модель із маркера потрапляє в розбір окремо від сервісу", () => {
+  const blob = wrap("ChatGPT", IDEA_ID, `Звіт.\n\n${jsonBlock(goodPayload)}`, "GPT-5.2 Thinking");
+  const report = parse(blob).reports[0];
+  assert.equal(report.label, "ChatGPT", "вкладки групуються за сервісом, тому мітка лишається чистою");
+  assert.equal(report.model, "GPT-5.2 Thinking");
+});
+
+test("модель із маркера важливіша за самоназву моделі у звіті", () => {
+  // Власник знає, у якому вікні працював; модель часто не знає власної версії.
+  const blob = wrap(
+    "ChatGPT",
+    IDEA_ID,
+    `Звіт.\n\n${jsonBlock({ ...goodPayload, self_reported_model: "GPT-4" })}`,
+    "GPT-5.2 Thinking",
+  );
+  assert.equal(parse(blob).reports[0].model, "GPT-5.2 Thinking");
+});
+
+test("незаповнений плейсхолдер моделі не вважається назвою моделі", () => {
+  const blob = wrap(
+    "ChatGPT",
+    IDEA_ID,
+    `Звіт.\n\n${jsonBlock({ ...goodPayload, self_reported_model: null })}`,
+    "{{RESEARCHER_MODEL}}",
+  );
+  assert.equal(parse(blob).reports[0].model, null);
+});
+
+test("маркер без моделі і далі читається — промпт до цієї зміни не ламається", () => {
+  const blob = wrap("Gemini", IDEA_ID, `Звіт.\n\n${jsonBlock(goodPayload)}`);
+  const report = parse(blob).reports[0];
+  assert.equal(report.label, "Gemini");
+  assert.equal(report.model, "GPT-5.4", "падає назад на самоназву моделі зі звіту");
 });
