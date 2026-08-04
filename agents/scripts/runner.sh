@@ -453,6 +453,45 @@ fi
 git_lock_release
 
 # ---------------------------------------------------------------------------
+# Документи треку: {{CRITERIA_DOC}} і {{SEARCH_QUERIES_DOC}}.
+#
+# Імена цих файлів НЕ виводяться з назви треку: трек `app-ideas` лежить у
+# criteria-apps.md, а пакети запитів passive-income — у search-queries.md без
+# суфікса. Той самий явний мапінг тримають agents/scripts/deep-research.py і
+# dashboard/src/lib/deep-research-prompt.ts; тут третє його місце, бо саме цей
+# скрипт рендерить промпти нічних агентів. Промпти раніше складали ім'я самі
+# ("criteria-{{TRACK}}.md") і на треку app-ideas просили неіснуючий файл —
+# агент не падав, а мовчки працював без чек-листа й без пакетів запитів.
+# ---------------------------------------------------------------------------
+
+case "$TRACK" in
+  passive-income)
+    CRITERIA_DOC="agents/criteria/criteria-passive-income.md"
+    SEARCH_QUERIES_DOC="agents/criteria/search-queries.md"
+    ;;
+  app-ideas)
+    CRITERIA_DOC="agents/criteria/criteria-apps.md"
+    # Пакетів запитів під застосунки ще не написано — див. розділ «Що затвердити
+    # власнику перед увімкненням треку» в agents/criteria/criteria-apps.md.
+    SEARCH_QUERIES_DOC=""
+    ;;
+esac
+
+if [ ! -f "$REPO_ROOT/$CRITERIA_DOC" ]; then
+  echo "runner.sh: чек-лист треку не знайдено: $CRITERIA_DOC" >&2
+  write_status "error" "skipped" "чек-лист треку не знайдено: $CRITERIA_DOC"
+  exit 0
+fi
+
+if [ -n "$SEARCH_QUERIES_DOC" ] && [ ! -f "$REPO_ROOT/$SEARCH_QUERIES_DOC" ]; then
+  echo "runner.sh: ПОПЕРЕДЖЕННЯ — файл пакетів запитів не знайдено: $SEARCH_QUERIES_DOC — збирач працюватиме без каліброваних пакетів" >&2
+  SEARCH_QUERIES_DOC=""
+fi
+# Порожній шлях у промпт не підставляємо: агент має прочитати явне слово, а не
+# порожні лапки, інакше відсутність пакетів знову виглядатиме як норма.
+[ -n "$SEARCH_QUERIES_DOC" ] || SEARCH_QUERIES_DOC="НЕМАЄ"
+
+# ---------------------------------------------------------------------------
 # --dry-run: усе вище виконується по-справжньому (локи + git-гігієна). Далі —
 # лише echo команд замість реального виклику CLI/commit/push.
 # ---------------------------------------------------------------------------
@@ -463,6 +502,7 @@ if [ "$DRY_RUN" = "1" ]; then
   elif [ "$AGENT" = "collector" ]; then
     echo "--- DRY RUN: reddit-fetch.sh НЕ викликається для треку $TRACK (сабреддіти в скрипті специфічні для passive-income) ---"
   fi
+  echo "--- DRY RUN: документи треку $TRACK: чек-лист $CRITERIA_DOC, пакети запитів $SEARCH_QUERIES_DOC ---"
   echo "--- DRY RUN: далі йшов би виклик CLI провайдера '$PROVIDER' з промптом agents/prompts/${AGENT}.md ---"
   echo "--- DRY RUN: далі йшов би git add/commit/push (або quarantine-гілка при помилці CLI) ---"
   write_status "dry_run" "skipped" "" "null" "[]" "$( [ "$OFFLINE" = 1 ] && echo true || echo false )"
@@ -505,8 +545,10 @@ elif [ "$AGENT" = "collector" ]; then
   echo "runner.sh: трек $TRACK — reddit-fetch.sh пропущено (сабреддіти в ньому специфічні для passive-income, для $TRACK окремого набору ще нема)"
 fi
 
+
 # ---------------------------------------------------------------------------
-# Промпт: agents/prompts/<agent>.md з підстановкою {{RUN_ID}} і {{TRACK}}
+# Промпт: agents/prompts/<agent>.md з підстановкою {{RUN_ID}}, {{TRACK}},
+# {{CRITERIA_DOC}} і {{SEARCH_QUERIES_DOC}}
 # (для triage додатково {{INBOX_DIR}} і {{DRAFT_ID}} — їх передає telegram-bot.py
 # через середовище). Фаза 4: сам текст чернетки (raw_text) тепер живе в таблиці
 # inbox — агент читає його через `db.sh get-inbox <draft_id>`, не з файлу.
@@ -541,6 +583,8 @@ fi
 PROMPT_TMP="$(mktemp "${TMPDIR:-/tmp}/ideas-scout-prompt.XXXXXX")"
 TMP_FILES+=("$PROMPT_TMP")
 sed -e "s/{{RUN_ID}}/${RUN_ID}/g" -e "s/{{TRACK}}/${TRACK}/g" \
+    -e "s|{{CRITERIA_DOC}}|${CRITERIA_DOC}|g" \
+    -e "s|{{SEARCH_QUERIES_DOC}}|${SEARCH_QUERIES_DOC}|g" \
     -e "s|{{INBOX_DIR}}|${INBOX_DIR}|g" -e "s/{{DRAFT_ID}}/${DRAFT_ID}/g" \
     "$PROMPT_SRC" > "$PROMPT_TMP"
 

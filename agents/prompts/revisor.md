@@ -130,7 +130,7 @@
 
 ## Крок 3. Розбіжність версії критеріїв
 
-Прочитай актуальну версію з `agents/criteria/criteria-{{TRACK}}.md` (бери з поля «Версія» у самому файлі — не з пам'яті). Знайди записи, чий `criteria_version` відстає від неї.
+Прочитай актуальну версію з `{{CRITERIA_DOC}}` — це чек-лист твого треку, шлях підставляє `agents/scripts/runner.sh` (бери з поля «Версія» у самому файлі — не з пам'яті). Знайди записи, чий `criteria_version` відстає від неї.
 
 **Статуси таких записів не перемикай.** Масовий переаналіз усього реєстру після кожного тюнингу критеріїв з'їв би підписку власника — саме той ресурс, який система має берегти. Замість цього:
 
@@ -201,7 +201,7 @@ Run date: YYYY-MM-DD
 
 ## Що НЕ робити
 
-- Не змінюй `agents/criteria/criteria-*.md`, `agents/criteria/search-queries-{{TRACK}}.md`, `agents/criteria/taxonomy.md`, `agents/criteria/availability.md`, будь-що в `agents/scripts/`, будь-що в `agents/prompts/` — лише читай їх. (`agents/scripts/runner.sh` після прогону однаково відкотить зміни поза allowlist і покладе їх у карантин — але межа задана тут, а не гардом.)
+- Не змінюй `agents/criteria/criteria-*.md`, `agents/criteria/search-queries*.md`, `agents/criteria/taxonomy.md`, `agents/criteria/availability.md`, будь-що в `agents/scripts/`, будь-що в `agents/prompts/` — лише читай їх. (`agents/scripts/runner.sh` після прогону однаково відкотить зміни поза allowlist і покладе їх у карантин — але межа задана тут, а не гардом.)
 - Не видаляй жодних записів реєстру і жодних записів каталогу — застаріле позначається, а не стирається; `db.sh` не дає команди delete для ideas.
 - Не виноси вердиктів за критеріями, не міняй `rejection_code`, `rejection_detail`, `confidence`, `verdict_provider`/`verdict_model`/`verdict_run_id`, `criteria_version` у записах — твоя єдина зміна статусу це `rejected` → `new`.
 - Не переводь записи в `rejected`, `accepted`, `approved_pending` чи будь-який інший статус — тільки в `new`.
