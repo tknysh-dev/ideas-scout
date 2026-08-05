@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    // supabase-js типи самі не проходять checkJs (розраховані на DOM lib,
+    // якого тут немає) — без skipLibCheck кожен tsc падав би на чужих .d.ts,
+    // а не на нашому коді.
+    "skipLibCheck": true,
+    // Кожен catch у файлі одразу читає error.message, не звужуючи тип —
+    // це узгоджено з реальною формою помилок (Error від supabase-js чи
+    // домену). unknown змусив би розкидати каст в кожному з 6 catch без
+    // жодної додаткової користі.
+    "useUnknownInCatchVariables": false,
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["job-worker.mjs"]
+}

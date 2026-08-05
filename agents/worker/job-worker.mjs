@@ -16,6 +16,74 @@ const RECONNECT_BACKOFF_MS = Object.freeze([1_000, 5_000, 15_000, 60_000, 120_00
 const MAX_RECONNECT_ATTEMPTS = 6;
 const OUTPUT_LIMIT = 64 * 1024;
 
+/**
+ * @typedef {Object} Job
+ * @property {string} id
+ * @property {string} type
+ * @property {unknown} [payload]
+ * @property {string} claim_token
+ * @property {number} attempt_count
+ */
+
+/**
+ * @typedef {Object} JobHandler
+ * @property {string} executable
+ * @property {string[]} args
+ * @property {number} timeoutMs
+ * @property {boolean} passPayload
+ * @property {string} successStatus
+ * @property {string} successNote
+ * @property {string} failureNote
+ */
+
+/**
+ * Мінімальний зріз клієнта supabase-js, яким реально користується воркер —
+ * замість повних (і DOM-залежних) типів бібліотеки описуємо лише те, що
+ * job-worker.mjs викликає, з точними формами полів jobs/runs.
+ * @typedef {Object} JobsUpdateFields
+ * @property {string | null} [run_id]
+ * @property {"succeeded" | "failed"} [status]
+ * @property {string} [finished_at]
+ * @property {string | null} [lease_expires_at]
+ * @property {string | null} [last_error]
+ *
+ * @typedef {Object} JobsQueryBuilder
+ * @property {(fields: JobsUpdateFields) => JobsQueryBuilder} update
+ * @property {(column: string, value: unknown) => JobsQueryBuilder} eq
+ * @property {(columns?: string) => Promise<{data: {id: string}[] | null, error: Error | null}>} select
+ *
+ * @typedef {Object} RunsInsertRow
+ * @property {string} run_id
+ * @property {string} job
+ * @property {"local"} provider
+ * @property {string} started_at
+ * @property {string} status
+ * @property {Record<string, unknown>} meta
+ *
+ * @typedef {Object} RunsUpdateFields
+ * @property {string} finished_at
+ * @property {string} status
+ * @property {string[]} errors
+ * @property {string} notes
+ * @property {Record<string, unknown>} meta
+ *
+ * @typedef {Object} RunsQueryBuilder
+ * @property {(row: RunsInsertRow) => Promise<{error: Error | null}>} insert
+ * @property {(fields: RunsUpdateFields) => {eq: (column: string, value: unknown) => Promise<{error: Error | null}>}} update
+ *
+ * @typedef {Object} SupabaseWorkerClient
+ * @property {(table: string) => JobsQueryBuilder | RunsQueryBuilder} from
+ * @property {(fn: string, args: Record<string, unknown>) => Promise<{data: Job[] | null, error: Error | null}>} rpc
+ *
+ * @typedef {Object} RealtimeChannel
+ * @property {(event: string, filter: Record<string, unknown>, cb: () => void) => RealtimeChannel} on
+ * @property {(listener: (status: string) => void) => RealtimeChannel} subscribe
+ *
+ * @typedef {Object} SupabaseRealtimeClient
+ * @property {(name: string) => RealtimeChannel} channel
+ * @property {(channel: RealtimeChannel) => Promise<void>} removeChannel
+ */
+
 const JOB_HANDLERS = Object.freeze({
   infrastructure_dry_run: Object.freeze({
     executable: join(REPO_ROOT, "agents/scripts/infrastructure-dry-run.sh"),
@@ -58,19 +126,33 @@ const JOB_HANDLERS = Object.freeze({
   }),
 });
 
+/**
+ * @param {string} jobId
+ * @param {string} [jobType]
+ * @param {Date} [date]
+ * @returns {string}
+ */
 export function buildRunId(jobId, jobType = "infrastructure_dry_run", date = new Date()) {
   const timestamp = date.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
   const jobSlug = jobType.replaceAll("_", "-").replace(/[^a-z0-9-]/gi, "-");
   return `${timestamp}-local-${jobSlug}-${jobId.slice(0, 8)}`;
 }
 
+/**
+ * @param {number} attempt
+ * @returns {number}
+ */
 export function backoffFor(attempt) {
   const index = Math.min(Math.max(attempt, 1), RECONNECT_BACKOFF_MS.length) - 1;
   return RECONNECT_BACKOFF_MS[index];
 }
 
+/**
+ * @param {Job} job
+ * @returns {JobHandler & {stdin: string | null}}
+ */
 export function commandForJob(job) {
-  const handler = JOB_HANDLERS[job.type];
+  const handler = JOB_HANDLERS[/** @type {keyof typeof JOB_HANDLERS} */ (job.type)];
   if (!handler) throw new Error(`Непідтримуваний тип job: ${job.type}`);
   return {
     ...handler,
@@ -78,21 +160,37 @@ export function commandForJob(job) {
   };
 }
 
+/**
+ * @param {Job} job
+ * @returns {{idea_id?: string}}
+ */
 function publicJobMeta(job) {
   if (job.type !== "deep_research_synthesis") return {};
-  const ideaId = job.payload?.idea_id;
+  const ideaId = /** @type {{idea_id?: unknown} | null | undefined} */ (job.payload)?.idea_id;
   return typeof ideaId === "string" ? { idea_id: ideaId } : {};
 }
 
+/** @param {string} message */
 function log(message) {
   process.stdout.write(`${new Date().toISOString()} ${message}\n`);
 }
 
+/**
+ * @param {string} current
+ * @param {Buffer | string} chunk
+ * @returns {string}
+ */
 function appendLimited(current, chunk) {
   const next = current + chunk.toString();
   return next.length <= OUTPUT_LIMIT ? next : next.slice(next.length - OUTPUT_LIMIT);
 }
 
+/**
+ * @param {string} executable
+ * @param {string[]} args
+ * @param {{stdin: string | null, timeoutMs: number, extraEnv?: Record<string, string>}} options
+ * @returns {Promise<{exitCode: number | null, stdout: string, stderr: string, error: string | null, timedOut: boolean}>}
+ */
 function runProcess(executable, args, { stdin, timeoutMs, extraEnv }) {
   return new Promise((resolveProcess) => {
     const child = spawn(executable, args, {
@@ -105,10 +203,12 @@ function runProcess(executable, args, { stdin, timeoutMs, extraEnv }) {
     let stderr = "";
     let timedOut = false;
 
-    child.stdout.on("data", (chunk) => {
+    // stdio: [.., "pipe", "pipe"] завжди дає non-null stdout/stderr; @types/node
+    // типізує їх ширше (readonly stream | null), бо не бачить наш конкретний виклик.
+    /** @type {import("node:stream").Readable} */ (child.stdout).on("data", (chunk) => {
       stdout = appendLimited(stdout, chunk);
     });
-    child.stderr.on("data", (chunk) => {
+    /** @type {import("node:stream").Readable} */ (child.stderr).on("data", (chunk) => {
       stderr = appendLimited(stderr, chunk);
     });
 
@@ -134,13 +234,18 @@ function runProcess(executable, args, { stdin, timeoutMs, extraEnv }) {
   });
 }
 
+/** @param {{supabase: SupabaseWorkerClient, workerId: string}} options */
 export function createJobWorker({ supabase, workerId }) {
   let draining = false;
   let drainRequested = false;
 
+  /**
+   * @param {Job} job
+   * @param {JobsUpdateFields} fields
+   * @returns {Promise<boolean>}
+   */
   async function updateClaim(job, fields) {
-    const { data, error } = await supabase
-      .from("jobs")
+    const { data, error } = await /** @type {JobsQueryBuilder} */ (supabase.from("jobs"))
       .update(fields)
       .eq("id", job.id)
       .eq("status", "running")
@@ -150,6 +255,12 @@ export function createJobWorker({ supabase, workerId }) {
     return Boolean(data?.length);
   }
 
+  /**
+   * @param {Job} job
+   * @param {"succeeded" | "failed"} status
+   * @param {string | null} runId
+   * @param {string | null} [errorMessage]
+   */
   async function finishJob(job, status, runId, errorMessage = null) {
     const updated = await updateClaim(job, {
       status,
@@ -161,6 +272,7 @@ export function createJobWorker({ supabase, workerId }) {
     if (!updated) throw new Error(`Lease job ${job.id} більше не належить ${workerId}`);
   }
 
+  /** @param {Job} job */
   async function executeJob(job) {
     let command;
     try {
@@ -173,7 +285,7 @@ export function createJobWorker({ supabase, workerId }) {
 
     const runId = buildRunId(job.id, job.type);
     const startedAt = new Date();
-    const { error: runStartError } = await supabase.from("runs").insert({
+    const { error: runStartError } = await /** @type {RunsQueryBuilder} */ (supabase.from("runs")).insert({
       run_id: runId,
       job: job.type.replaceAll("_", "-"),
       provider: "local",
@@ -221,8 +333,7 @@ export function createJobWorker({ supabase, workerId }) {
     const runStatus = success ? command.successStatus : "error";
     const errors = errorMessage ? [errorMessage] : [];
 
-    const { error: runFinishError } = await supabase
-      .from("runs")
+    const { error: runFinishError } = await /** @type {RunsQueryBuilder} */ (supabase.from("runs"))
       .update({
         finished_at: new Date().toISOString(),
         status: runStatus,
@@ -247,6 +358,7 @@ export function createJobWorker({ supabase, workerId }) {
     log(`job=${job.id} run=${runId} finished status=${runStatus}`);
   }
 
+  /** @returns {Promise<Job | null>} */
   async function claimNextJob() {
     const { data, error } = await supabase.rpc("claim_next_job", {
       p_worker_id: workerId,
@@ -284,6 +396,15 @@ export function createJobWorker({ supabase, workerId }) {
   return { drain };
 }
 
+/**
+ * @param {Object} options
+ * @param {SupabaseRealtimeClient} options.supabase
+ * @param {() => void} options.onEvent
+ * @param {() => void} options.onFatal
+ * @param {(message: string) => void} [options.emit]
+ * @param {(fn: () => (void | Promise<void>), delay: number) => any} [options.setTimer]
+ * @param {(timer: any) => void} [options.clearTimer]
+ */
 export function createRealtimeSupervisor({
   supabase,
   onEvent,
@@ -292,8 +413,12 @@ export function createRealtimeSupervisor({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 }) {
+  /** @type {RealtimeChannel | null} */
   let channel = null;
   let reconnectAttempt = 0;
+  // Продакшен-таймер (NodeJS.Timeout) і тестові фейки (довільний об'єкт-мітка)
+  // мають несумісні форми — це навмисно pluggable-межа, тому any, а не unknown.
+  /** @type {any} */
   let reconnectTimer = null;
   let stopping = false;
 
@@ -302,7 +427,7 @@ export function createRealtimeSupervisor({
     channel = own;
     own
       .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => onEvent())
-      .subscribe((status) => {
+      .subscribe((/** @type {string} */ status) => {
         emit(`realtime=${status}`);
         // Знесений канал теж віддає CLOSED. Без цієї перевірки власний teardown
         // читався б як розрив і планував ще один reconnect — по колу, назавжди.
@@ -380,7 +505,10 @@ async function main() {
   const supabase = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const worker = createJobWorker({ supabase, workerId });
+  // Реальний SupabaseClient набагато складніший за SupabaseWorkerClient
+  // (generic query-builder на весь публічний API); нам потрібен лише зріз,
+  // яким користується воркер, тож звіряємо сумісність один раз тут.
+  const worker = createJobWorker({ supabase: /** @type {SupabaseWorkerClient} */ (/** @type {unknown} */ (supabase)), workerId });
 
   // Маркер старту: лог — один append-only файл на всі життя процесу, тож без
   // нього `tail` змішує рядки нового воркера зі старим і перепідключення давно
@@ -389,7 +517,7 @@ async function main() {
   log(`worker started ${workerId}`);
 
   const realtime = createRealtimeSupervisor({
-    supabase,
+    supabase: /** @type {SupabaseRealtimeClient} */ (/** @type {unknown} */ (supabase)),
     onEvent: () => void worker.drain(),
     onFatal: () => process.exit(1),
   });
@@ -407,7 +535,7 @@ async function main() {
     realtime.reconnectNow();
   }, WATCHDOG_MS);
 
-  const shutdown = async (signal) => {
+  const shutdown = async (/** @type {string} */ signal) => {
     log(`received ${signal}, stopping`);
     clearInterval(safetySweep);
     clearInterval(watchdog);
