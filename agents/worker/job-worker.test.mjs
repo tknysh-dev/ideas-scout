@@ -619,7 +619,7 @@ test("drain(): rpc data=null (без помилки) трактується як
 test("drain(): rpc повертає помилку — логується 'queue drain failed', draining не залипає", async () => {
   const supabase = makeSupabaseMock();
   let calls = 0;
-  supabase.rpc = (name, args) => {
+  supabase.rpc = () => {
     calls += 1;
     return Promise.resolve({ data: null, error: new Error("зв'язок із БД відвалився") });
   };

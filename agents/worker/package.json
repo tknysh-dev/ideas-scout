@@ -5,9 +5,16 @@
   "type": "module",
   "scripts": {
     "start": "node job-worker.mjs",
-    "test": "node --test job-worker.test.mjs"
+    "test": "node --test job-worker.test.mjs",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "eslint-plugin-no-floating-promise": "^2.0.0",
+    "globals": "^17.9.0"
   }
 }
