@@ -244,6 +244,32 @@ run_contract_check "міграції" python3 "$REPO_ROOT/agents/scripts/migrati
 step_start "посилання в документації"
 run_contract_check "документація" python3 "$REPO_ROOT/agents/scripts/docs_links_check.py"
 
+# SQL: набір правил звужено до PG01 (див. .sqlfluff) — блокування таблиці при
+# CREATE INDEX без CONCURRENTLY і ADD CONSTRAINT без NOT VALID. Наявні
+# спрацювання — в уже накочених файлах, тому warn, а не err: число має
+# зрости, якщо НОВА міграція лочитиме таблицю, і це видно до накату на прод.
+SQLFLUFF=""
+if command -v sqlfluff >/dev/null 2>&1; then
+  SQLFLUFF="sqlfluff"
+elif command -v uvx >/dev/null 2>&1; then
+  SQLFLUFF="uvx sqlfluff"
+fi
+if [ -n "$SQLFLUFF" ]; then
+  step_start "sqlfluff (PG01) для shared/"
+  shopt -s nullglob
+  SQL_FILES=("$REPO_ROOT/shared/schema.sql" "$REPO_ROOT/shared/migrations"/*.sql)
+  shopt -u nullglob
+  SQL_HITS="$($SQLFLUFF lint "${SQL_FILES[@]}" 2>/dev/null | grep -c '| PG01 |')"
+  case "$SQL_HITS" in ''|*[!0-9]*) SQL_HITS=0 ;; esac
+  if [ "$SQL_HITS" -eq 0 ]; then
+    ok "sqlfluff: блокувальних конструкцій у SQL немає ($(step_elapsed))"
+  else
+    warn "sqlfluff: $SQL_HITS блокувальних конструкцій (CREATE INDEX без CONCURRENTLY, ADD CONSTRAINT без NOT VALID) — усі в уже накочених файлах"
+  fi
+else
+  note "sqlfluff недоступний — перевірку SQL пропущено (uv tool install sqlfluff)"
+fi
+
 if command -v ruff >/dev/null 2>&1; then
   step_start "ruff check agents/scripts/"
   RUFF_OUT="$(ruff check "$REPO_ROOT/agents/scripts/" 2>&1)"
@@ -455,6 +481,34 @@ if [ "$COVERAGE" -eq 1 ]; then
     else
       note "портал: покриття зібрати не вдалось"
     fi
+  fi
+
+  if command -v kcov >/dev/null 2>&1; then
+    step_start "bash (kcov)"
+    # kcov не приймає абсолютний шлях до скрипта («Can't start/attach»), тому
+    # і скрипт, і тека звіту передаються відносно кореня репозиторію.
+    KCOV_OUT="agents/scripts/.kcov-out"
+    rm -rf "${REPO_ROOT:?}/${KCOV_OUT:?}"
+    mkdir -p "$KCOV_OUT"
+    for f in agents/scripts/*.test.sh; do
+      kcov --include-pattern=agents/scripts/runner-lib.sh,agents/scripts/db-lib.sh,agents/scripts/doctor-lib.sh,agents/scripts/scripts-lib.sh,agents/scripts/test-lib.sh \
+        "$KCOV_OUT/$(basename "$f" .sh)" "$f" >/dev/null 2>&1
+    done
+    BASHCOV="$(kcov --merge "$KCOV_OUT/merged" "$KCOV_OUT"/*.test >/dev/null 2>&1; python3 -c "
+import json, sys
+try:
+    d = json.load(open('$KCOV_OUT/merged/kcov-merged/coverage.json'))
+    print('%.1f%% (%s/%s рядків)' % (float(d['percent_covered']), d['covered_lines'], d['total_lines']))
+except Exception:
+    sys.exit(1)
+" 2>/dev/null)"
+    if [ -n "$BASHCOV" ]; then
+      note "bash: $BASHCOV"
+    else
+      note "bash: kcov не зміг зібрати звіт"
+    fi
+  else
+    note "bash: kcov не встановлений (brew install kcov)"
   fi
 
   step_start "воркер (node --test)"

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node job-worker.mjs",
     "test": "node --test job-worker.test.mjs",
+    "test:mutation": "stryker run",
     "lint": "eslint .",
     "typecheck": "tsc"
   },
@@ -14,6 +15,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@stryker-mutator/core": "^9.6.1",
     "@types/node": "^26.1.2",
     "eslint": "^10.8.0",
     "eslint-plugin-no-floating-promise": "^2.0.0",

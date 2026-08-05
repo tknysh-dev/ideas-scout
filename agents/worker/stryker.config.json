@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "inPlace: true — Stryker сам звичайно копіює проєкт у sandbox і переписує tsconfig.json там, але переписувач викликає ts.parseConfigFileTextToJson, якої немає в typescript@7 (тут ^7.0.2, той самий, що й у tsc для typecheck). Без sandbox цей крок не потрібен: Stryker мутує job-worker.mjs на місці й відкочує з .stryker-tmp/backup-* після кожного прогону.",
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "node --test job-worker.test.mjs"
+  },
+  "mutate": ["job-worker.mjs"],
+  "inPlace": true,
+  "reporters": ["clear-text", "progress"],
+  "tempDirName": ".stryker-tmp"
+}

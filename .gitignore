@@ -31,6 +31,13 @@ __pycache__/
 agents/scripts/.coverage
 agents/scripts/htmlcov/
 
+# Тимчасова тека Stryker (npm run test:mutation --prefix agents/worker) —
+# бекап вихідника на час прогону, більше нема чого туди класти.
+agents/worker/.stryker-tmp/
+
+# Звіти kcov — покриття bash, збирається локально через check.sh --coverage
+agents/scripts/.kcov-out/
+
 # Встановлюються локально на кожній машині через install-launchd.sh.
 agents/worker/node_modules/
 
