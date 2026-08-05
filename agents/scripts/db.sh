@@ -24,6 +24,17 @@
 set -uo pipefail
 
 DB_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# db-lib.sh — чисті функції db.sh (винесені для юніт-тестів, див. шапку файлу);
+# без нього db.sh не працює, тому відсутність — фатальна.
+DB_LIB="$DB_SCRIPT_DIR/db-lib.sh"
+if [ ! -f "$DB_LIB" ]; then
+  echo "db.sh: не знайдено $DB_LIB — db-lib.sh обов'язковий, зупиняюсь" >&2
+  return 2 2>/dev/null || exit 2
+fi
+# shellcheck disable=SC1090,SC1091
+source "$DB_LIB"
+
 DB_ENV_FILE="${IDEAS_SCOUT_ENV_FILE:-$HOME/.config/ideas-scout/env}"
 
 db_die() {
@@ -48,19 +59,6 @@ db_load_env() {
     return 1
   fi
   return 0
-}
-
-# _json_arg <arg> — повертає JSON-текст: сам рядок, вміст stdin (arg="-"), або
-# вміст файлу, якщо arg — шлях до наявного файлу.
-_json_arg() {
-  local arg="${1:-}"
-  if [ "$arg" = "-" ]; then
-    cat
-  elif [ -f "$arg" ]; then
-    cat "$arg"
-  else
-    printf '%s' "$arg"
-  fi
 }
 
 # _db_request <method> <path-з-query> [body] — path вже містить query-рядок
@@ -115,10 +113,6 @@ _db_get() {
     2??) printf '%s\n' "$body_out"; return 0 ;;
     *) db_die "PostgREST GET $path -> HTTP $http_code: $body_out"; return 1 ;;
   esac
-}
-
-_urlenc() {
-  python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
 }
 
 # db_upsert <table> <on_conflict_col> <json|-|file> — POST з on_conflict, merge-duplicates.
