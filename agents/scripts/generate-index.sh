@@ -10,24 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
-# Мінімальний YAML-парсер frontmatter для наших цілей: без зовнішніх
-# залежностей (без yq); поле — це рядок виду "key: значення" на верхньому
-# рівні frontmatter (не всередині sources: чи інших вкладених блоків).
-extract_field() {
-  local file="$1" field="$2"
-  awk -v f="$field" '
-    /^---$/ { d++; next }
-    d==1 && $0 ~ "^" f ":" {
-      sub("^" f ":[ \t]*", "");
-      gsub(/^"|"$/, "");
-      sub(/[ \t]*#.*$/, "");
-      gsub(/^[ \t]+|[ \t]+$/, "");
-      print;
-      exit
-    }
-    d>=2 { exit }
-  ' "$file"
-}
+# shellcheck source=agents/scripts/scripts-lib.sh
+source "$SCRIPT_DIR/scripts-lib.sh"
 
 build_index() {
   local track="$1"
@@ -40,12 +24,7 @@ build_index() {
   fi
 
   {
-    echo "# Індекс: $track"
-    echo ""
-    echo "Автогенеровано \`agents/scripts/generate-index.sh\` $(date -u +%FT%TZ). Не редагувати вручну — файл у .gitignore, перегенеровується щоразу."
-    echo ""
-    echo "| id | title | type | status | rejection_code | confidence |"
-    echo "|---|---|---|---|---|---|"
+    generate_index_header "$track" "$(date -u +%FT%TZ)"
 
     local f id title type status rejection_code confidence
     shopt -s nullglob
@@ -56,13 +35,7 @@ build_index() {
       status="$(extract_field "$f" status)"
       rejection_code="$(extract_field "$f" rejection_code)"
       confidence="$(extract_field "$f" confidence)"
-      [ -z "$id" ] && id="?"
-      [ -z "$title" ] && title="?"
-      [ -z "$type" ] && type="?"
-      [ -z "$status" ] && status="?"
-      [ -z "$rejection_code" ] && rejection_code="—"
-      [ -z "$confidence" ] && confidence="?"
-      echo "| $id | $title | $type | $status | $rejection_code | $confidence |"
+      generate_index_row "$id" "$title" "$type" "$status" "$rejection_code" "$confidence"
     done
     shopt -u nullglob
   } > "$out_file"

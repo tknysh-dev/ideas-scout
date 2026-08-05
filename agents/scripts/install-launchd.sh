@@ -19,15 +19,16 @@ LAUNCHD_SRC_DIR="$REPO_ROOT/agents/launchd"
 LAUNCHD_DEST_DIR="$HOME/Library/LaunchAgents"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-UNINSTALL=0
-case "${1:-}" in
-  --uninstall) UNINSTALL=1 ;;
-  "") ;;
-  *) echo "Використання: install-launchd.sh [--uninstall]" >&2; exit 2 ;;
-esac
+# shellcheck source=agents/scripts/scripts-lib.sh
+source "$SCRIPT_DIR/scripts-lib.sh"
+
+if ! UNINSTALL="$(install_launchd_uninstall_flag "${1:-}")"; then
+  echo "Використання: install-launchd.sh [--uninstall]" >&2
+  exit 2
+fi
 
 UID_NUM="$(id -u)"
-DOMAIN="gui/${UID_NUM}"
+DOMAIN="$(install_launchd_domain "$UID_NUM")"
 LEGACY_TELEGRAM_LABEL="com.ideas-scout.telegram-bot"
 LEGACY_TELEGRAM_DEST="$LAUNCHD_DEST_DIR/${LEGACY_TELEGRAM_LABEL}.plist"
 
@@ -71,7 +72,7 @@ fi
 
 for src in "${PLISTS[@]}"; do
   base="$(basename "$src")"
-  label="${base%.plist}"
+  label="$(install_launchd_label "$base")"
   dest="$LAUNCHD_DEST_DIR/$base"
 
   if [ "$UNINSTALL" -eq 1 ]; then

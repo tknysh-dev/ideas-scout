@@ -13,6 +13,9 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# shellcheck source=agents/scripts/scripts-lib.sh
+source "$SCRIPT_DIR/scripts-lib.sh"
+
 CACHE_DIR="$REPO_ROOT/logs/runs/reddit-cache/latest"
 USER_AGENT="macos:ideas-scout:v0.1 (by /u/ideas-scout-agent)"
 SUBREDDITS=(passive_income sidehustle EntrepreneurRideAlong juststart SaaS)
@@ -29,55 +32,7 @@ if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
   exit 0
 fi
 
-json_reader() {
-  if command -v jq >/dev/null 2>&1; then
-    echo "jq"
-  elif command -v python3 >/dev/null 2>&1; then
-    echo "python3"
-  else
-    echo "none"
-  fi
-}
 READER="$(json_reader)"
-
-get_json_field() {
-  # get_json_field <файл> <поле> — порожньо, якщо нема файла/поля.
-  local file="$1" field="$2"
-  [ -f "$file" ] || { echo ""; return; }
-  if [ "$READER" = "jq" ]; then
-    jq -r --arg f "$field" '.[$f] // ""' "$file" 2>/dev/null
-  elif [ "$READER" = "python3" ]; then
-    python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    v = d.get(sys.argv[2], '')
-    print('' if v is None else v)
-except Exception:
-    print('')
-" "$file" "$field" 2>/dev/null
-  fi
-}
-
-count_posts() {
-  # count_posts <файл> — кількість постів у data.children, або "?" якщо не розбирається.
-  local file="$1"
-  [ -f "$file" ] || { echo "0"; return; }
-  if [ "$READER" = "jq" ]; then
-    jq -r '.data.children | length' "$file" 2>/dev/null || echo "?"
-  elif [ "$READER" = "python3" ]; then
-    python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(len(d.get('data', {}).get('children', [])))
-except Exception:
-    print('?')
-" "$file" 2>/dev/null
-  else
-    echo "?"
-  fi
-}
 
 if [ "$READER" = "none" ]; then
   echo "reddit-fetch.sh: ні jq, ні python3 не знайдено — не можу розібрати відповіді Reddit, пропускаю" >&2
@@ -172,19 +127,11 @@ done
 {
   echo "# Reddit-кеш — $(date -u +%FT%TZ)"
   echo ""
-  echo "## Ок"
-  if [ "${#OK_SUBS[@]}" -eq 0 ]; then
-    echo "(жодного)"
-  else
-    for s in "${OK_SUBS[@]}"; do echo "- ${s}"; done
-  fi
+  # "${arr[@]}" на порожньому масиві під set -u падає "unbound variable" на
+  # bash 3.2 (дефолт macOS) — тому не розгортаємо, якщо масив порожній.
+  if [ "${#OK_SUBS[@]}" -eq 0 ]; then reddit_format_group "Ок"; else reddit_format_group "Ок" "${OK_SUBS[@]}"; fi
   echo ""
-  echo "## Деградували"
-  if [ "${#DEGRADED_SUBS[@]}" -eq 0 ]; then
-    echo "(жодного)"
-  else
-    for s in "${DEGRADED_SUBS[@]}"; do echo "- ${s}"; done
-  fi
+  if [ "${#DEGRADED_SUBS[@]}" -eq 0 ]; then reddit_format_group "Деградували"; else reddit_format_group "Деградували" "${DEGRADED_SUBS[@]}"; fi
 } > "$CACHE_DIR/_meta.md"
 
 echo "reddit-fetch.sh: завершено (ок: ${#OK_SUBS[@]}, деградували: ${#DEGRADED_SUBS[@]})"
