@@ -47,7 +47,18 @@ within_work_window() {
   end="${hours#*-}"
   sm=$(( 10#${start%:*} * 60 + 10#${start#*:} ))
   em=$(( 10#${end%:*} * 60 + 10#${end#*:} ))
-  [ "$now_min" -ge "$sm" ] && [ "$now_min" -lt "$em" ]
+  # sm > em -> вікно перетинає північ (напр. "19:00-09:00"): усередині, якщо
+  # now_min ПІСЛЯ старту АБО ДО кінця (не "і"). sm == em навмисно НЕ отримує
+  # окремої гілки: у нижній гілці (>=sm І <em) для рівних меж умова і так
+  # завжди хибна (число не буває < самого себе) — вікно нульової довжини,
+  # захист вимкнено для цього випадку так само, як і до цього фіксу, а не
+  # трактується як цілодобове вікно (типова помилка "старт == кінець" не має
+  # мовчки вимикати захист на всю добу в інший спосіб, ніж явний hours=none).
+  if [ "$sm" -gt "$em" ]; then
+    [ "$now_min" -ge "$sm" ] || [ "$now_min" -lt "$em" ]
+  else
+    [ "$now_min" -ge "$sm" ] && [ "$now_min" -lt "$em" ]
+  fi
 }
 
 # in_work_hours — тонка обгортка: бере IDEAS_SCOUT_WORK_DAYS/IDEAS_SCOUT_WORK_HOURS
@@ -86,13 +97,25 @@ build_run_id() {
 # ---------------------------------------------------------------------------
 
 is_allowed_path() {
+  # Перевірка ДО case-allowlist: `git status --porcelain -z` віддає лише
+  # working-tree-relative шляхи без компонентів ".." і без ведучого "/" —
+  # усе, що їх містить, не може бути легітимним porcelain-шляхом. Case-glob
+  # нижче робить чисте зіставлення рядка без нормалізації, тож "agents/catalogs/*"
+  # як патерн збігається і з "agents/catalogs/../../agents/scripts/runner.sh" —
+  # цю дірку треба закрити ДО, а не всередині основного case.
+  case "/$1/" in
+    */../*) return 1 ;;
+  esac
+  case "$1" in
+    /*) return 1 ;;
+  esac
   case "$1" in
     agents/catalogs/*) return 0 ;;
     logs/decisions.md|logs/dedup-decisions.md) return 0 ;;
     # Вкладення ручного подання з Telegram: пише бот ДО старту прогону, не агент.
     inbox/*|inbox) return 0 ;;
     logs/triage/*.progress) return 0 ;;
-    agents/criteria/criteria*|agents/criteria/search-queries-*.md|agents/criteria/search-queries.md|agents/criteria/taxonomy.md|agents/criteria/availability.md) return 0 ;;
+    agents/criteria/criteria*.md|agents/criteria/search-queries-*.md|agents/criteria/search-queries.md|agents/criteria/taxonomy.md|agents/criteria/availability.md) return 0 ;;
     # Рантайм цього ж прогону (gitignored; тут — belt-and-braces на випадок
     # checkout без оновленого .gitignore): не блокувати самих себе.
     logs/locks/*|logs/launchd/*|logs/quarantine/*) return 0 ;;

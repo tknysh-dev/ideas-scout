@@ -25,7 +25,8 @@ expect_ok "inbox (без слеша)"              is_allowed_path "inbox"
 expect_ok "inbox/* (вкладення тріажу)"     is_allowed_path "inbox/20260729-141444-passive-income/idea.md"
 expect_ok "logs/triage/*.progress"         is_allowed_path "logs/triage/20260729-141444.progress"
 
-expect_ok "agents/criteria/criteria*"                  is_allowed_path "agents/criteria/criteria-apps.md"
+expect_ok "agents/criteria/criteria*.md"                is_allowed_path "agents/criteria/criteria-apps.md"
+expect_ok "agents/criteria/criteria*.md (другий реальний файл)" is_allowed_path "agents/criteria/criteria-passive-income.md"
 expect_ok "agents/criteria/search-queries-*.md"        is_allowed_path "agents/criteria/search-queries-app-ideas.md"
 expect_ok "agents/criteria/search-queries.md"           is_allowed_path "agents/criteria/search-queries.md"
 expect_ok "agents/criteria/taxonomy.md"                 is_allowed_path "agents/criteria/taxonomy.md"
@@ -76,18 +77,21 @@ expect_fail "підробка суфіксу: logs/decisions.md.bak"      is_all
 expect_fail "підробка суфіксу: logs/triage/x.progress.md (закінчується на .md, не .progress)" \
   is_allowed_path "logs/triage/x.progress.md"
 
-# ВІДОМА ДІРА: case-glob робить чисте зіставлення рядка, без нормалізації
-# шляху. "agents/catalogs/*" (і будь-який інший allowlisted префікс) як
-# glob-патерн збігається з рядком, що ПОЧИНАЄТЬСЯ на цей префікс, включно з
-# ".." усередині — тобто is_allowed_path пропускає вихід за межі дозволеної
-# теки через "../". На практиці ця діра НЕ досяжна: runner.sh годує функцію
-# шляхами з `git status --porcelain -z`, а git такі шляхи не видає (він working-tree-relative
-# і не повертає компоненти ".." — вони можуть з'явитися лише якщо хтось
-# викличе is_allowed_path напряму з довільним рядком, а не через runner.sh).
-expect_ok "ВІДОМА ДІРА: вихід угору через .. всередині allowlisted префіксу (недосяжно через git status -z)" \
+# ВИПРАВЛЕНО: is_allowed_path тепер відхиляє БУДЬ-ЯКИЙ шлях з компонентом ".."
+# ДО зіставлення з allowlist — case-glob сам собою й далі робить чисте
+# зіставлення рядка без нормалізації (тобто "agents/catalogs/*" і далі
+# збігається з рядком, що ПОЧИНАЄТЬСЯ на цей префікс), але тепер це недосяжно:
+# перевірка на ".." стоїть першою і відсікає такі шляхи раніше.
+expect_fail ".. в середині шляху: agents/catalogs/../../agents/scripts/runner.sh" \
   is_allowed_path "agents/catalogs/../../agents/scripts/runner.sh"
-expect_ok "ВІДОМА ДІРА: те саме для inbox/.. (недосяжно через git status -z)" \
+expect_fail ".. в середині шляху: inbox/../.git/hooks/pre-commit" \
   is_allowed_path "inbox/../.git/hooks/pre-commit"
+expect_fail ".. на початку шляху: ../agents/catalogs/evil.md" \
+  is_allowed_path "../agents/catalogs/evil.md"
+expect_fail ".. в кінці шляху: agents/catalogs/evil/.. (без .. це б збіглось із allowlist)" \
+  is_allowed_path "agents/catalogs/evil/.."
+expect_ok "легітимний шлях із \"..\" як ПІДРЯДКОМ, не компонентом: файл..md лишається дозволеним" \
+  is_allowed_path "agents/catalogs/файл..md"
 
 # Абсолютний шлях: жоден allowlisted патерн не починається з "/", тож
 # абсолютні шляхи блокуються завжди — навіть якщо ведуть усередину allowlisted
@@ -104,14 +108,14 @@ expect_ok "шлях із пробілом всередині дозволено�
 # ---------------------------------------------------------------------------
 # 4. Дзеркальність is_allowed_path <-> stage_allowed_paths.
 #
-# stage_allowed_paths коміт не за is_allowed_path, а за власним, окремо
-# прописаним переліком `git add` (дзеркало is_allowed_path мінус рантайм) —
-# з цього приводу і виникає розбіжність. Функцію stage_allowed_paths тут НЕ
-# викликаємо (вона робить git add), тому нижче — локальна копія РІВНО того
-# glob-патерну критеріїв, що в самій функції (runner-lib.sh:121,
-# `agents/criteria/criteria*.md`), аби зафіксувати розбіжність з
-# is_allowed_path (runner-lib.sh:95, `agents/criteria/criteria*` — без .md)
-# без побічних ефектів git.
+# ВИПРАВЛЕНО: раніше is_allowed_path мав патерн "agents/criteria/criteria*"
+# (без розширення), а stage_allowed_paths стейджить лише "criteria*.md" —
+# файл без .md проходив guard, але ніколи не стейджився і лишався вічно
+# брудним. Тепер обидва патерни вимагають .md і узгоджені. Функцію
+# stage_allowed_paths тут НЕ викликаємо (вона робить git add), тому нижче —
+# локальна копія РІВНО того glob-патерну критеріїв, що в самій функції
+# (runner-lib.sh:144, `agents/criteria/criteria*.md`), аби перевірити
+# узгодженість без побічних ефектів git.
 # ---------------------------------------------------------------------------
 
 # Копія glob з stage_allowed_paths — синхронізувати вручну, якщо той рядок
@@ -123,9 +127,9 @@ stage_criteria_glob_matches() {
   esac
 }
 
-expect_ok "is_allowed_path пропускає agents/criteria/criteriaFOO (без .md)" \
+expect_fail "УЗГОДЖЕНО: is_allowed_path тепер теж блокує agents/criteria/criteriaFOO (без .md)" \
   is_allowed_path "agents/criteria/criteriaFOO"
-expect_fail "РОЗБІЖНІСТЬ: той самий шлях НЕ застейджиться — stage-патерн вимагає .md (не лагодимо тут, лише фіксуємо)" \
+expect_fail "УЗГОДЖЕНО: той самий шлях і далі не застейджиться — stage-патерн теж вимагає .md" \
   stage_criteria_glob_matches "agents/criteria/criteriaFOO"
 
-test_summary 47
+test_summary 51
