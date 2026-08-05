@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
+  appendLimited,
   backoffFor,
   buildRunId,
   commandForJob,
   createJobWorker,
   createRealtimeSupervisor,
 } from "./job-worker.mjs";
+
+// Дзеркалить OUTPUT_LIMIT із job-worker.mjs (не експортується, бо використовується
+// лише appendLimited/runProcess) — тримати числа в синхроні, якщо ліміт зміниться.
+const OUTPUT_LIMIT = 64 * 1024;
+
+// Той самий спосіб обчислення REPO_ROOT, що й у job-worker.mjs — тест лежить
+// у тому самому каталозі agents/worker/, тож результат ідентичний.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 test("buildRunId includes deterministic timestamp and job prefix", () => {
   const result = buildRunId(
@@ -171,6 +183,74 @@ test("backoffFor: дробові значення не падають (доку�
   // Викликач завжди передає ціле число (reconnectAttempt), тож на практиці
   // це не трапляється — фіксуємо як задокументовану межу, не як бажану поведінку.
   assert.equal(backoffFor(1.5), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// appendLimited — межі обрізання
+// ---------------------------------------------------------------------------
+
+test("appendLimited: рівно ліміт — обрізання не спрацьовує", () => {
+  const chunk = "a".repeat(OUTPUT_LIMIT);
+  const result = appendLimited("", chunk);
+  assert.equal(result.length, OUTPUT_LIMIT);
+  assert.equal(result, chunk);
+});
+
+test("appendLimited: ліміт мінус один символ — залишається без змін", () => {
+  const chunk = "a".repeat(OUTPUT_LIMIT - 1);
+  const result = appendLimited("", chunk);
+  assert.equal(result.length, OUTPUT_LIMIT - 1);
+  assert.equal(result, chunk);
+});
+
+test("appendLimited: ліміт плюс один символ — обрізає рівно один символ з початку", () => {
+  const chunk = `X${"a".repeat(OUTPUT_LIMIT)}`; // довжина OUTPUT_LIMIT + 1
+  const result = appendLimited("", chunk);
+  assert.equal(result.length, OUTPUT_LIMIT);
+  assert.equal(result, "a".repeat(OUTPUT_LIMIT), "перший символ 'X' має зникнути");
+});
+
+test("appendLimited: порожній current — повертає сам чанк", () => {
+  assert.equal(appendLimited("", "hello"), "hello");
+});
+
+test("appendLimited: порожній чанк (рядок і Buffer) не змінює current", () => {
+  assert.equal(appendLimited("hello", ""), "hello");
+  assert.equal(appendLimited("hello", Buffer.from("")), "hello");
+});
+
+test("appendLimited: кирилиця не розрізається посеред символу при обрізанні", () => {
+  const chunk = `Я${"б".repeat(OUTPUT_LIMIT)}`; // довжина OUTPUT_LIMIT + 1, кожен символ — 1 code unit
+  const result = appendLimited("", chunk);
+  assert.equal(result.length, OUTPUT_LIMIT);
+  assert.equal(result, "б".repeat(OUTPUT_LIMIT), "перша 'Я' відкинута, жодного зіпсованого символу");
+  assert.ok(!result.includes("�"), "немає replacement character — символи цілі");
+});
+
+test("appendLimited: чанк сам по собі більший за ліміт — залишається лише хвіст", () => {
+  const chunk = `${"z".repeat(OUTPUT_LIMIT)}TAIL`; // довжина OUTPUT_LIMIT + 4
+  const result = appendLimited("", chunk);
+  assert.equal(result.length, OUTPUT_LIMIT);
+  assert.ok(result.endsWith("TAIL"));
+  assert.ok(!result.includes("z".repeat(OUTPUT_LIMIT)), "початкові 'z' обрізані повністю під хвіст");
+});
+
+test("appendLimited: кілька додавань поспіль зрізають ковзне вікно з останніх OUTPUT_LIMIT символів", () => {
+  let current = "";
+  const pieces = [];
+  for (let i = 0; i < 10; i += 1) {
+    const piece = `${i}`.repeat(10_000);
+    pieces.push(piece);
+    current = appendLimited(current, piece);
+  }
+  const wholeConcat = pieces.join("");
+  assert.equal(current.length, OUTPUT_LIMIT);
+  assert.equal(current, wholeConcat.slice(wholeConcat.length - OUTPUT_LIMIT));
+});
+
+test("appendLimited: Buffer-чанк додається так само, як рядок", () => {
+  const result = appendLimited("prefix-", Buffer.from("suffix"));
+  assert.equal(result, "prefix-suffix");
 });
 
 // ---------------------------------------------------------------------------
@@ -812,4 +892,319 @@ test("drain(): claim_next_job не повертає той самий job дві
   const worker = createJobWorker({ supabase, workerId: "host:1" });
   await worker.drain();
   assert.equal(supabase.calls.jobsUpdate.length, 1, "job-once оброблено рівно один раз за весь drain()");
+});
+
+// ---------------------------------------------------------------------------
+// runProcess (через createJobWorker({ spawnFn })) — жодного реального процесу.
+// ---------------------------------------------------------------------------
+
+/** Фейковий child_process.ChildProcess: EventEmitter + stdout/stderr/stdin/kill. */
+function makeFakeChild({ withStdin = false } = {}) {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = withStdin
+    ? {
+        ended: null,
+        onEvents: [],
+        on(event) { this.onEvents.push(event); },
+        end(data) { this.ended = data; },
+      }
+    : null;
+  child.killSignals = [];
+  child.kill = (signal) => {
+    child.killSignals.push(signal);
+    // Імітує реальну поведінку: SIGKILL таки вбиває процес, і той закривається
+    // без коду виходу — на відміну від SIGTERM, який фейковий child ігнорує,
+    // доки тест не вирішить інакше (так і тестується подвійний kill).
+    if (signal === "SIGKILL") child.emit("close", null);
+  };
+  return child;
+}
+
+/** Дозволяє тесту дочекатись саме моменту виклику spawnFn, а не гадати кількість мікрозадач. */
+function makeSpawnGate({ withStdin = false } = {}) {
+  let notify;
+  const called = new Promise((res) => { notify = res; });
+  return {
+    called,
+    spawnFn: (...args) => {
+      const child = makeFakeChild({ withStdin });
+      notify({ child, args });
+      return child;
+    },
+  };
+}
+
+const INFRA_JOB = Object.freeze({ id: "job-p", type: "infrastructure_dry_run", claim_token: "tok-p", attempt_count: 1 });
+
+test("runProcess: spawnFn отримує executable/args/опції (cwd, env, shell, stdio), логи фіксують старт і фініш", async () => {
+  const gate = makeSpawnGate();
+  const supabase = makeSupabaseMock({ claimQueue: [INFRA_JOB] });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const lines = await captureStdout(async () => {
+    const drainPromise = worker.drain();
+    const { child, args } = await gate.called;
+    const [executable, cliArgs, options] = args;
+
+    assert.match(executable, /infrastructure-dry-run\.sh$/);
+    assert.deepEqual(cliArgs, []);
+    assert.equal(options.cwd, REPO_ROOT);
+    assert.equal(options.shell, false);
+    assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"], "stdin=null у job без passPayload -> 'ignore'");
+    assert.equal(options.env.PATH, process.env.PATH, "успадковує process.env, а не порожній обʼєкт");
+    assert.match(
+      options.env.IDEAS_SCOUT_JOB_RUN_ID,
+      /^\d{14}-local-infrastructure-dry-run-job-p$/,
+      "run_id передається скрипту через середовище",
+    );
+
+    child.emit("close", 0);
+    await drainPromise;
+  });
+
+  assert.ok(lines.some((l) => l.includes(`job=${INFRA_JOB.id}`) && l.includes("started type=infrastructure_dry_run")));
+  assert.ok(lines.some((l) => l.includes(`job=${INFRA_JOB.id}`) && l.includes("finished status=dry_run")));
+});
+
+test("runProcess: успішне завершення (exitCode 0) накопичує stdout і позначає run/job успішними", async () => {
+  const gate = makeSpawnGate();
+  const supabase = makeSupabaseMock({ claimQueue: [INFRA_JOB] });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+  child.stdout.emit("data", Buffer.from("усе гаразд"));
+  child.emit("close", 0);
+  await drainPromise;
+
+  const runUpdate = supabase.calls.runsUpdate.at(-1);
+  assert.equal(runUpdate.fields.status, "dry_run");
+  assert.equal(runUpdate.fields.meta.stdout, "усе гаразд");
+  assert.equal(runUpdate.fields.meta.exit_code, 0);
+  assert.equal(runUpdate.fields.meta.timed_out, false);
+  assert.deepEqual(runUpdate.fields.errors, []);
+  assert.equal(supabase.calls.jobsUpdate.at(-1).fields.status, "succeeded");
+});
+
+test("runProcess: ненульовий код виходу позначає run/job як помилку з текстом 'Exit code N'", async () => {
+  const gate = makeSpawnGate();
+  const supabase = makeSupabaseMock({ claimQueue: [INFRA_JOB] });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+  child.emit("close", 7);
+  await drainPromise;
+
+  const runUpdate = supabase.calls.runsUpdate.at(-1);
+  assert.equal(runUpdate.fields.status, "error");
+  assert.deepEqual(runUpdate.fields.errors, ["Exit code 7"]);
+  assert.equal(runUpdate.fields.meta.exit_code, 7);
+  assert.equal(supabase.calls.jobsUpdate.at(-1).fields.status, "failed");
+  assert.match(supabase.calls.jobsUpdate.at(-1).fields.last_error, /Exit code 7/);
+});
+
+test("runProcess: помилка запуску (child.on('error')) — exitCode лишається null, job/run позначені failed", async () => {
+  const gate = makeSpawnGate();
+  const supabase = makeSupabaseMock({ claimQueue: [INFRA_JOB] });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+  child.emit("error", new Error("ENOENT: команду не знайдено"));
+  await drainPromise;
+
+  const runUpdate = supabase.calls.runsUpdate.at(-1);
+  assert.equal(runUpdate.fields.status, "error");
+  assert.equal(runUpdate.fields.meta.exit_code, null);
+  assert.match(runUpdate.fields.errors[0], /ENOENT/);
+  assert.equal(supabase.calls.jobsUpdate.at(-1).fields.status, "failed");
+  assert.match(supabase.calls.jobsUpdate.at(-1).fields.last_error, /ENOENT/);
+});
+
+test("runProcess: stdout/stderr обрізаються до OUTPUT_LIMIT при накопиченні через кілька data-подій", async () => {
+  const gate = makeSpawnGate();
+  const supabase = makeSupabaseMock({ claimQueue: [INFRA_JOB] });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+  child.stdout.emit("data", Buffer.from("a".repeat(OUTPUT_LIMIT)));
+  child.stdout.emit("data", Buffer.from("TAIL"));
+  child.stderr.emit("data", Buffer.from("помилковий вивід"));
+  child.emit("close", 0);
+  await drainPromise;
+
+  const runUpdate = supabase.calls.runsUpdate.at(-1);
+  assert.equal(runUpdate.fields.meta.stdout.length, OUTPUT_LIMIT);
+  assert.ok(runUpdate.fields.meta.stdout.endsWith("TAIL"));
+  assert.equal(runUpdate.fields.meta.stderr, "помилковий вивід");
+});
+
+test("runProcess: таймаут шле SIGTERM, а якщо процес не завершується — SIGKILL", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const gate = makeSpawnGate();
+  const supabase = makeSupabaseMock({ claimQueue: [INFRA_JOB] });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+
+  // infrastructure_dry_run має timeoutMs=60_000 (JOB_HANDLERS у job-worker.mjs).
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(child.killSignals, ["SIGTERM"], "перший сигнал — SIGTERM");
+
+  // Фейковий child ігнорує SIGTERM (не закривається сам) — за 5с runProcess шле SIGKILL.
+  t.mock.timers.tick(5_000);
+  assert.deepEqual(child.killSignals, ["SIGTERM", "SIGKILL"]);
+
+  await drainPromise;
+
+  const runUpdate = supabase.calls.runsUpdate.at(-1);
+  assert.equal(runUpdate.fields.meta.timed_out, true);
+  assert.equal(runUpdate.fields.meta.exit_code, null);
+  assert.deepEqual(runUpdate.fields.errors, ["Процес перевищив таймаут"]);
+  assert.equal(supabase.calls.jobsUpdate.at(-1).fields.status, "failed");
+});
+
+test("виконання job: heartbeat оновлює lease_expires_at кожні HEARTBEAT_MS, поки процес ще працює", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const gate = makeSpawnGate();
+  const supabase = makeSupabaseMock({ claimQueue: [INFRA_JOB] });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const isHeartbeatUpdate = (call) =>
+    Object.keys(call.fields).length === 1 && "lease_expires_at" in call.fields;
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+  assert.equal(supabase.calls.jobsUpdate.filter(isHeartbeatUpdate).length, 0, "до тіку heartbeat ще не бив");
+
+  const beforeTick = Date.now();
+  t.mock.timers.tick(60_000); // HEARTBEAT_MS
+  await Promise.resolve();
+  await Promise.resolve();
+  const heartbeatCalls = supabase.calls.jobsUpdate.filter(isHeartbeatUpdate);
+  assert.equal(heartbeatCalls.length, 1, "перший heartbeat пройшов, поки процес виконується");
+  const leaseExpiresAt = new Date(heartbeatCalls[0].fields.lease_expires_at).getTime();
+  assert.ok(
+    leaseExpiresAt > beforeTick + 250_000,
+    "lease продовжено далеко в майбутнє (~LEASE_SECONDS=300с), а не в минуле й не на частку секунди",
+  );
+
+  child.emit("close", 0);
+  await drainPromise;
+});
+
+test("виконання job: фінальне оновлення runs містить duration_s, worker_id, attempt і успішний status", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+  const gate = makeSpawnGate();
+  const job = { id: "job-meta", type: "infrastructure_dry_run", claim_token: "tok-meta", attempt_count: 4 };
+  const supabase = makeSupabaseMock({ claimQueue: [job] });
+  const worker = createJobWorker({ supabase, workerId: "worker-meta", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+  t.mock.timers.tick(5_000); // рівно 5с між startedAt і finished_at
+  child.stdout.emit("data", Buffer.from("  padded stdout  \n"));
+  child.stderr.emit("data", Buffer.from("  padded stderr  \n"));
+  child.emit("close", 0);
+  await drainPromise;
+
+  const runUpdate = supabase.calls.runsUpdate.at(-1);
+  assert.equal(runUpdate.fields.status, "dry_run");
+  assert.equal(runUpdate.fields.notes, "Інфраструктурний dry run успішно виконано.");
+  assert.equal(runUpdate.fields.meta.worker_id, "worker-meta");
+  assert.equal(runUpdate.fields.meta.attempt, 4);
+  assert.equal(runUpdate.fields.meta.duration_s, 5, "(Date.now() - startedAt) / 1000, а не інша арифметика");
+  assert.equal(runUpdate.fields.meta.stdout, "padded stdout", "trim() зрізає пробіли/переноси з обох країв");
+  assert.equal(runUpdate.fields.meta.stderr, "padded stderr");
+  assert.equal(runUpdate.filters.run_id, supabase.calls.runsInsert[0].run_id);
+});
+
+test("runProcess: job з passPayload=true пише stdin у дочірній процес і закриває потік", async () => {
+  const gate = makeSpawnGate({ withStdin: true });
+  const job = {
+    id: "job-stdin",
+    type: "telegram_update", // passPayload=true -> stdio "pipe" -> child.stdin не null
+    payload: { update: { update_id: 1 } },
+    claim_token: "tok-stdin",
+    attempt_count: 1,
+  };
+  const supabase = makeSupabaseMock({ claimQueue: [job] });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child, args } = await gate.called;
+  const [, , options] = args;
+  assert.deepEqual(options.stdio, ["pipe", "pipe", "pipe"], "payload є -> stdin теж 'pipe', а не 'ignore'");
+  assert.equal(child.stdin.ended, JSON.stringify({ update: { update_id: 1 } }), "stdin отримав серіалізований payload і був закритий (.end)");
+  assert.ok(child.stdin.onEvents.includes("error"), "на stdin навішений обробник 'error' (щоб EPIPE не впав необроблено)");
+  child.emit("close", 0);
+  await drainPromise;
+});
+
+test("runProcess: помилка фінального runs.update кидає — finishJob не встигає позначити job 'succeeded'", async () => {
+  const gate = makeSpawnGate();
+  const supabase = makeSupabaseMock({
+    claimQueue: [INFRA_JOB],
+    runsUpdateResult: () => ({ error: new Error("update runs відхилено") }),
+  });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+  child.emit("close", 0);
+
+  const lines = await captureStdout(() => drainPromise);
+  assert.ok(lines.some((l) => l.includes("worker error: update runs відхилено")));
+  assert.equal(
+    supabase.calls.jobsUpdate.filter((c) => c.fields.status === "succeeded").length,
+    0,
+    "runFinishError кидає до виклику finishJob — job лишається без явного 'succeeded' (задокументована гілка)",
+  );
+});
+
+test("heartbeat: якщо updateClaim падає під час виконання, помилка логується і не зупиняє процес", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const gate = makeSpawnGate();
+  let heartbeatCallCount = 0;
+  const supabase = makeSupabaseMock({
+    claimQueue: [INFRA_JOB],
+    jobsUpdateResult: ({ fields }) => {
+      const isHeartbeat = Object.keys(fields).length === 1 && "lease_expires_at" in fields;
+      if (!isHeartbeat) return { data: [{ id: INFRA_JOB.id }], error: null };
+      heartbeatCallCount += 1;
+      return { data: null, error: new Error("lease insert відхилено") };
+    },
+  });
+  const worker = createJobWorker({ supabase, workerId: "host:1", spawnFn: gate.spawnFn });
+
+  const drainPromise = worker.drain();
+  const { child } = await gate.called;
+
+  const lines = await captureStdout(async () => {
+    t.mock.timers.tick(60_000);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  assert.equal(heartbeatCallCount, 1, "heartbeat дійсно спробував оновити lease");
+  assert.ok(lines.some((l) => l.includes("heartbeat failed: lease insert відхилено")));
+
+  child.emit("close", 0);
+  await drainPromise;
+});
+
+test("createJobWorker без переданого spawnFn використовує справжній node:child_process.spawn (перевіряємо лише сигнатуру виклику)", async () => {
+  // Не запускаємо жодного реального процесу: підміняємо job на непідтримуваний
+  // тип, щоб виконання впало ще до runProcess/spawn — тест лише документує,
+  // що відсутність spawnFn у createJobWorker() не кидає TypeError сама по собі.
+  const job = { id: "job-default", type: "unknown_type", claim_token: "t", attempt_count: 1 };
+  const supabase = makeSupabaseMock({ claimQueue: [job] });
+  const worker = createJobWorker({ supabase, workerId: "host:1" });
+  await worker.drain();
+  assert.equal(supabase.calls.jobsUpdate.at(-1).fields.status, "failed");
 });

@@ -180,7 +180,7 @@ function log(message) {
  * @param {Buffer | string} chunk
  * @returns {string}
  */
-function appendLimited(current, chunk) {
+export function appendLimited(current, chunk) {
   const next = current + chunk.toString();
   return next.length <= OUTPUT_LIMIT ? next : next.slice(next.length - OUTPUT_LIMIT);
 }
@@ -188,12 +188,12 @@ function appendLimited(current, chunk) {
 /**
  * @param {string} executable
  * @param {string[]} args
- * @param {{stdin: string | null, timeoutMs: number, extraEnv?: Record<string, string>}} options
+ * @param {{stdin: string | null, timeoutMs: number, extraEnv?: Record<string, string>, spawnFn?: typeof spawn}} options
  * @returns {Promise<{exitCode: number | null, stdout: string, stderr: string, error: string | null, timedOut: boolean}>}
  */
-function runProcess(executable, args, { stdin, timeoutMs, extraEnv }) {
+function runProcess(executable, args, { stdin, timeoutMs, extraEnv, spawnFn = spawn }) {
   return new Promise((resolveProcess) => {
-    const child = spawn(executable, args, {
+    const child = spawnFn(executable, args, {
       cwd: REPO_ROOT,
       env: { ...process.env, ...extraEnv },
       shell: false,
@@ -234,8 +234,8 @@ function runProcess(executable, args, { stdin, timeoutMs, extraEnv }) {
   });
 }
 
-/** @param {{supabase: SupabaseWorkerClient, workerId: string}} options */
-export function createJobWorker({ supabase, workerId }) {
+/** @param {{supabase: SupabaseWorkerClient, workerId: string, spawnFn?: typeof spawn}} options */
+export function createJobWorker({ supabase, workerId, spawnFn = spawn }) {
   let draining = false;
   let drainRequested = false;
 
@@ -322,6 +322,7 @@ export function createJobWorker({ supabase, workerId }) {
     const result = await runProcess(command.executable, command.args, {
       ...command,
       extraEnv: { IDEAS_SCOUT_JOB_RUN_ID: runId },
+      spawnFn,
     });
     clearInterval(heartbeat);
 
