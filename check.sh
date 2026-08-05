@@ -21,16 +21,23 @@ REPO_ROOT="$SCRIPT_DIR"
 cd "$REPO_ROOT" || exit 2
 
 FAST=0
+COVERAGE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --fast) FAST=1 ;;
+    --coverage) COVERAGE=1 ;;
     -h|--help)
       cat <<'EOF'
 Використання: check.sh [--fast]
 
-  --fast  пропустити повільне: tsc --noEmit і npm run lint у dashboard/.
-          Тести й shell/python-перевірки лишаються. Цей режим використовує
-          pre-commit hook — щоб коміт не чекав на повний прогін порталу.
+  --fast  пропустити повільне: tsc --noEmit, lint, прод-збірку порталу і
+          npm audit. Тести й shell/python-перевірки лишаються. Цей режим
+          використовує pre-commit hook — щоб коміт не чекав на прогін порталу.
+
+  --coverage
+          додатково зібрати покриття тестами (портал, python, воркер) і
+          показати числа. Окремим прапорцем, бо це ганяє всі набори ще раз;
+          порогів немає — мета побачити, які ділянки не зачеплені.
 
 Без прапорців ганяє все: shell (bash -n, shellcheck), python (py_compile,
 ruff), портал (tsc, lint, test) і воркер (test).
@@ -234,6 +241,9 @@ run_contract_check "промпти" python3 "$REPO_ROOT/agents/scripts/doctor_pr
 step_start "міграції проти shared/schema.sql"
 run_contract_check "міграції" python3 "$REPO_ROOT/agents/scripts/migrations_check.py"
 
+step_start "посилання в документації"
+run_contract_check "документація" python3 "$REPO_ROOT/agents/scripts/docs_links_check.py"
+
 if command -v ruff >/dev/null 2>&1; then
   step_start "ruff check agents/scripts/"
   RUFF_OUT="$(ruff check "$REPO_ROOT/agents/scripts/" 2>&1)"
@@ -344,6 +354,15 @@ else
     # Портал деплоїться у Vercel, а збірка падає там, де tsc мовчить: порушення
     # межі server/client, server-only в клієнтському компоненті, помилки в
     # конфігурації маршрутів. Без цього кроку таке виявляється аж на деплої.
+    # Мертвий код — інформативно, як і npm audit: невикористаний експорт нічого
+    # не ламає, а блокуючий гейт тут змушував би прибирати щойно написане, ще
+    # не під'єднане. Число в підсумку видно, рішення за власником.
+    if npm run deadcode >/dev/null 2>&1; then
+      note "knip: невикористаних експортів і залежностей не знайдено"
+    else
+      note "knip: є невикористані експорти чи залежності — npm run deadcode --prefix dashboard"
+    fi
+
     step_start "npm run build"
     BUILD_OUT="$(npm run build 2>&1)"
     BUILD_STATUS=$?
@@ -378,6 +397,18 @@ cd "$REPO_ROOT/agents/worker" || exit 2
 # Лінт воркера — dev-залежність, тож без node_modules його просто немає. Тести
 # нижче від цього не залежать і йдуть у будь-якому разі.
 if [ -d node_modules ]; then
+  # job-worker.mjs — чистий JS, тож типи перевіряються через checkJs і JSDoc:
+  # eslint ловить синтаксис, але не форму даних, які їдуть у jobs/runs.
+  step_start "npm run typecheck"
+  WTYPE_OUT="$(npm run typecheck 2>&1)"
+  WTYPE_STATUS=$?
+  if [ "$WTYPE_STATUS" -eq 0 ]; then
+    ok "npm run typecheck: типи ок ($(step_elapsed))"
+  else
+    err "npm run typecheck знайшов помилки ($(step_elapsed)):"
+    printf '%s\n' "$WTYPE_OUT" | sed 's/^/      /'
+  fi
+
   step_start "npm run lint"
   WLINT_OUT="$(npm run lint 2>&1)"
   WLINT_STATUS=$?
@@ -401,6 +432,39 @@ else
   printf '%s\n' "$TEST_OUT" | sed 's/^/      /'
 fi
 cd "$REPO_ROOT" || exit 2
+
+# ---------------------------------------------------------------------------
+if [ "$COVERAGE" -eq 1 ]; then
+  section "Покриття"
+  # Без порогів і без впливу на код виходу: число тут — привід подивитись, які
+  # ділянки не зачеплені, а не гейт. Гейт із порогом змушував би дописувати
+  # тести заради відсотка, а не заради ризику.
+  step_start "python (coverage.py)"
+  PYCOV="$(cd "$REPO_ROOT/agents/scripts" && python3 -m coverage run -m unittest discover -p '*_test.py' -t . >/dev/null 2>&1 && python3 -m coverage report 2>/dev/null | tail -1)"
+  if [ -n "$PYCOV" ]; then
+    note "python: $PYCOV"
+  else
+    note "python: coverage.py недоступний (python3 -m pip install --user coverage)"
+  fi
+
+  if [ -d "$REPO_ROOT/dashboard/node_modules" ]; then
+    step_start "портал (c8 + vitest)"
+    DASHCOV="$(cd "$REPO_ROOT/dashboard" && npm run coverage 2>&1 | grep -iE '^all files' | tail -1)"
+    if [ -n "$DASHCOV" ]; then
+      note "портал: $DASHCOV"
+    else
+      note "портал: покриття зібрати не вдалось"
+    fi
+  fi
+
+  step_start "воркер (node --test)"
+  WCOV="$(cd "$REPO_ROOT/agents/worker" && node --test --experimental-test-coverage job-worker.test.mjs 2>&1 | grep -E 'job-worker\.mjs' | tail -1)"
+  if [ -n "$WCOV" ]; then
+    note "воркер: $WCOV"
+  else
+    note "воркер: покриття зібрати не вдалось"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 TOTAL_ELAPSED=$(( $(date +%s) - START_EPOCH ))

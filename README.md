@@ -34,7 +34,7 @@ agents/
   launchd/                     # шаблони launchd-плістів (рендеряться install-launchd.sh)
 dashboard/                     # веб-дашборд, читає Supabase напряму; вхід — GitHub OAuth (Auth.js)
 shared/                        # спільні контракти БД для agents/ і dashboard/
-  schema.sql                    # DDL: ideas, sources, runs, events, inbox, jobs
+  schema.sql                    # DDL: ideas, sources, runs, events, inbox, jobs, criteria_verdicts, research_reports, competitors
   contracts.md                  # людський опис полів/статусів/кодів — що означає кожна колонка
 templates/
   idea.md                       # історичний шаблон запису ідеї (frontmatter) — джерело стилю тіла (body), формат уже не файловий
@@ -98,8 +98,16 @@ PORT=3100 ./dev.sh
 ./check.sh
 ```
 
+Ще перевіряються: посилання на файли в документації, переліки значень у
+`shared/contracts.md` проти `schema.sql`, і типи воркера (`checkJs` + JSDoc).
+
 `./check.sh --fast` пропускає повільне — `tsc --noEmit`, `lint`, прод-збірку
-порталу і `npm audit`. Тести й перевірки скриптів лишаються.
+порталу, `npm audit` і пошук мертвого коду. Тести й перевірки скриптів
+лишаються.
+
+`./check.sh --coverage` додатково збирає покриття тестами по всіх трьох мовах і
+показує числа. Порогів немає навмисно: мета — побачити, які ділянки не
+зачеплені, а не дописувати тести заради відсотка.
 
 `shellcheck` і `ruff` не обовʼязкові: якщо їх немає, кроки просто пропускаються
 з поміткою. Щоб перевірка була повною — `brew install shellcheck ruff`.
