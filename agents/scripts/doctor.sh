@@ -332,6 +332,26 @@ print(q['due_pending'], q['oldest_due_pending_s'], q['running'], q['stale_runnin
 fi
 
 # ---------------------------------------------------------------------------
+section "Схема бази даних"
+# ---------------------------------------------------------------------------
+# shared/schema.sql — джерело правди, а міграції з shared/migrations/ накочуються
+# вручну через apply.sh: ніщо інше не звіряє, чи реальна схема в Supabase все ще
+# збігається з файлом. Дрейф тихий — до першого запису в невідому колонку вночі.
+if [ "$SKIP_NETWORK" -eq 1 ]; then
+  note "звірку shared/schema.sql з базою пропущено (--offline)"
+else
+  SCHEMA_CHECK="$(python3 "$SCRIPT_DIR/doctor_schema.py")"
+  while IFS=$'\t' read -r level message; do
+    case "$level" in
+      ok) ok "$message" ;;
+      warn) warn "$message" ;;
+      err) err "$message" ;;
+      note) note "$message" ;;
+    esac
+  done <<< "$SCHEMA_CHECK"
+fi
+
+# ---------------------------------------------------------------------------
 section "Прогони агентів"
 # ---------------------------------------------------------------------------
 if [ "$SKIP_NETWORK" -eq 1 ]; then
