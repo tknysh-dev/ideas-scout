@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseReports, sanitizeLabel } from "./deep-research-reports.ts";
+import { BASE_CRITERIA_KEYS_BY_TRACK, DEEP_RESEARCH_KEYS } from "./deep-research-prompt.ts";
 
 const TRACK = "passive-income";
 
@@ -216,4 +217,303 @@ test("цілий блок не отримує помітки про ремонт
     !result.reports[0].notes.some((n) => /полагодити/.test(n)),
     "нічого не ламалось — нема про що попереджати",
   );
+});
+
+// --- Відмінки числівника (plural): усі комбінації mod10/mod100 ---
+// Лічильник відкинутих записів проходить через plural(), тож підбираємо його
+// значеннями, а не викликаємо функцію напряму — вона не експортована.
+function withDropped(n: number) {
+  const invalid = Array.from({ length: n }, () => ({
+    criterion_key: "999",
+    verdict: "passed",
+    summary: "-",
+    detail: "-",
+    evidence: [],
+  }));
+  return parse([
+    {
+      provider: "ChatGPT",
+      text: jsonBlock({
+        criteria: [{ criterion_key: "1", verdict: "passed", summary: "-", detail: "-", evidence: [] }, ...invalid],
+        competitors: [],
+      }),
+    },
+  ]).reports[0].notes;
+}
+
+test("plural: mod10=1 і mod100!==11 дає форму однини", () => {
+  assert.ok(withDropped(1).some((n) => /^1 запис /.test(n)));
+});
+
+test("plural: mod10=1 але mod100===11 — виняток, не однина", () => {
+  assert.ok(withDropped(11).some((n) => /^11 записів/.test(n)));
+});
+
+test("plural: mod10 у межах 2-4, але mod100 у 12-14 — теж не форма 2-4", () => {
+  assert.ok(withDropped(12).some((n) => /^12 записів/.test(n)));
+});
+
+test("plural: mod10 поза діапазоном 1-4 — форма \"записів\"", () => {
+  assert.ok(withDropped(5).some((n) => /^5 записів/.test(n)));
+});
+
+test("plural: mod10 у 2-4 і mod100 поза 12-14 через другу частину OR", () => {
+  assert.ok(withDropped(24).some((n) => /^24 записи /.test(n)));
+});
+
+// --- Межі "скільки критеріїв оцінено з чек-листа" ---
+const ALL_CRITERIA_KEYS = [...BASE_CRITERIA_KEYS_BY_TRACK[TRACK], ...DEEP_RESEARCH_KEYS];
+
+test("усі критерії чек-листа присутні — приміток про неповноту нема", () => {
+  const criteria = ALL_CRITERIA_KEYS.map((key) => ({
+    criterion_key: key,
+    verdict: "passed",
+    summary: "-",
+    detail: "-",
+    evidence: [],
+  }));
+  const result = parse([{ provider: "ChatGPT", text: jsonBlock({ criteria, competitors: [] }) }]);
+  const report = result.reports[0];
+  assert.equal(report.criteria.length, ALL_CRITERIA_KEYS.length);
+  assert.ok(!report.notes.some((n) => /оцінила/.test(n)), "нема прогалини — нема що уточнювати");
+});
+
+test("усі критерії відкинуто, але є конкурент — звіт лишається ok, а не прозою", () => {
+  const result = parse([
+    {
+      provider: "ChatGPT",
+      text: jsonBlock({
+        criteria: [{ criterion_key: "999", verdict: "passed", summary: "-", detail: "-", evidence: [] }],
+        competitors: [{ name: "Тільки назва" }],
+      }),
+    },
+  ]);
+  const report = result.reports[0];
+  assert.equal(report.status, "ok", "конкурент рятує звіт від прозового статусу");
+  assert.equal(report.criteria.length, 0);
+  assert.ok(!report.notes.some((n) => /оцінила/.test(n)), "нуль критеріїв — нема що рахувати у відсотках");
+  const competitor = report.competitors[0];
+  assert.equal(competitor.url, undefined);
+  assert.equal(competitor.pricing, undefined);
+  assert.equal(competitor.strengths, undefined);
+  assert.equal(competitor.weaknesses, undefined);
+  assert.equal(competitor.differentiation, undefined);
+  assert.equal(competitor.liveness, undefined);
+  assert.equal(competitor.last_activity, undefined);
+  assert.deepEqual(competitor.evidence, []);
+});
+
+test("конкурент з усіма полями — pricing/strengths/weaknesses/differentiation теж проходять", () => {
+  const result = parse([
+    {
+      provider: "ChatGPT",
+      text: jsonBlock({
+        criteria: [],
+        competitors: [
+          {
+            name: "Повний профіль",
+            url: "https://example.com/c",
+            pricing: "$29/міс",
+            strengths: "Сильна ніша",
+            weaknesses: "Малий трафік",
+            differentiation: "Інша аудиторія",
+          },
+        ],
+      }),
+    },
+  ]);
+  const competitor = result.reports[0].competitors[0];
+  assert.equal(competitor.pricing, "$29/міс");
+  assert.equal(competitor.strengths, "Сильна ніша");
+  assert.equal(competitor.weaknesses, "Малий трафік");
+  assert.equal(competitor.differentiation, "Інша аудиторія");
+});
+
+// --- sanitizeCriteria: сміттєві елементи масиву ---
+test("критерій-не-обʼєкт і нерядкові key/verdict відкидаються без крашу", () => {
+  const result = parse([
+    {
+      provider: "ChatGPT",
+      text: jsonBlock({
+        criteria: [
+          null,
+          { criterion_key: "1", verdict: "passed", summary: "-", detail: "-", evidence: [] },
+          { criterion_key: 42, verdict: "passed", summary: "-", detail: "-", evidence: [] },
+          { criterion_key: "2", verdict: 1, summary: "-", detail: "-", evidence: [] },
+        ],
+        competitors: [],
+      }),
+    },
+  ]);
+  const report = result.reports[0];
+  assert.equal(report.criteria.length, 1);
+  assert.equal(report.criteria[0].criterion_key, "1");
+  assert.ok(report.notes.some((n) => /^3 записи/.test(n)), "null + нерядковий key + нерядковий verdict — усі три відкинуто");
+});
+
+test("критерій без score/summary/detail отримує null, а не крашиться", () => {
+  const result = parse([
+    {
+      provider: "ChatGPT",
+      text: jsonBlock({ criteria: [{ criterion_key: "1", verdict: "passed", evidence: [] }], competitors: [] }),
+    },
+  ]);
+  const criterion = result.reports[0].criteria[0];
+  assert.equal(criterion.score, null);
+  assert.equal(criterion.summary, null);
+  assert.equal(criterion.detail, null);
+});
+
+// --- sanitizeEvidence: битий елемент масиву доказів ---
+test("докази з битими записами відсіюються, лишається тільки валідне", () => {
+  const result = parse([
+    {
+      provider: "ChatGPT",
+      text: jsonBlock({
+        criteria: [
+          {
+            criterion_key: "1",
+            verdict: "passed",
+            summary: "-",
+            detail: "-",
+            evidence: [
+              null,
+              "рядок замість обʼєкта",
+              { published_date: "2026-01-01" },
+              { url: "https://example.com/a", published_date: "не дата", quote: 42 },
+              { url: "https://example.com/b" },
+            ],
+          },
+        ],
+        competitors: [],
+      }),
+    },
+  ]);
+  const evidence = result.reports[0].criteria[0].evidence;
+  assert.equal(evidence.length, 2, "лишились тільки записи з валідним url");
+  assert.equal(evidence[0].url, "https://example.com/a");
+  assert.equal(evidence[0].published_date, undefined, "невалідний формат дати відкидається");
+  assert.equal(evidence[0].quote, undefined, "цитата не рядкового типу не потрапляє в результат");
+  assert.equal(evidence[1].url, "https://example.com/b");
+});
+
+test("evidence не масив — трактується як відсутність доказів", () => {
+  const result = parse([
+    {
+      provider: "ChatGPT",
+      text: jsonBlock({
+        criteria: [{ criterion_key: "1", verdict: "passed", summary: "-", detail: "-", evidence: "не масив" }],
+        competitors: [],
+      }),
+    },
+  ]);
+  assert.deepEqual(result.reports[0].criteria[0].evidence, []);
+});
+
+// --- sanitizeCompetitors: сміттєві елементи й межі liveness/last_activity ---
+test("конкуренти: невалідний елемент і порожнє імʼя відсіюються, решта проходить", () => {
+  const result = parse([
+    {
+      provider: "ChatGPT",
+      text: jsonBlock({
+        criteria: [],
+        competitors: [
+          null,
+          "рядок замість обʼєкта",
+          { name: 123 },
+          { name: "   " },
+          { name: "Валідний", liveness: "zombie", last_activity: "2026/02/01" },
+          { name: "Другий", liveness: "active", last_activity: "2026-03-15" },
+        ],
+      }),
+    },
+  ]);
+  const competitors = result.reports[0].competitors;
+  assert.equal(competitors.length, 2, "лишились тільки записи з непорожнім рядковим імʼям");
+  assert.equal(competitors[0].name, "Валідний");
+  assert.equal(competitors[0].liveness, undefined, "\"zombie\" поза переліком liveness");
+  assert.equal(competitors[0].last_activity, undefined, "дата не у форматі YYYY-MM-DD");
+  assert.equal(competitors[1].liveness, "active");
+  assert.equal(competitors[1].last_activity, "2026-03-15");
+});
+
+// --- Ремонт json-блоку: типографські лапки та рядки-коментарі ---
+test("типографські лапки на весь блок лагодяться", () => {
+  const curlyJson = criteriaJson.replace(/"/g, "“");
+  const result = parse([{ provider: "ChatGPT", text: "```json\n" + curlyJson + "\n```" }]);
+  assert.equal(result.reports[0].status, "ok");
+  assert.ok(result.reports[0].notes.some((n) => /типографські лапки/.test(n)));
+});
+
+test("рядки-коментарі у json-блоці лагодяться", () => {
+  const withComment = "{\n// це коментар\n" + criteriaJson.slice(1);
+  const result = parse([{ provider: "ChatGPT", text: "```json\n" + withComment + "\n```" }]);
+  assert.equal(result.reports[0].status, "ok");
+  assert.ok(result.reports[0].notes.some((n) => /коментарі/.test(n)));
+});
+
+// --- Топрівневий json іншого типу: масив або null замість обʼєкта ---
+test("json-блок з масивом на верхньому рівні не використовується як звіт", () => {
+  const result = parse([{ provider: "ChatGPT", text: "```json\n[1, 2, 3]\n```" }]);
+  assert.equal(result.reports[0].status, "prose");
+});
+
+test("json-блок з null на верхньому рівні не використовується як звіт", () => {
+  const result = parse([{ provider: "ChatGPT", text: "```json\nnull\n```" }]);
+  assert.equal(result.reports[0].status, "prose");
+});
+
+// --- Вирізаний обʼєкт без очікуваних ключів ігнорується ---
+test("вирізаний обʼєкт без criteria/competitors не використовується", () => {
+  const result = parse([
+    { provider: "ChatGPT", text: "```json\nОсь підсумок: {\"foo\": \"bar\"} Кінець.\n```" },
+  ]);
+  assert.equal(result.reports[0].status, "prose");
+});
+
+// --- Структурно збалансований, але семантично зламаний json ---
+test("збалансовані дужки не рятують семантично зламаний json", () => {
+  const result = parse([{ provider: "ChatGPT", text: "```json\n{\"criteria\": undefined}\n```" }]);
+  const report = result.reports[0];
+  assert.equal(report.status, "prose", "дужки на місці, але undefined — не валідний JSON, ремонт тут безсилий");
+  assert.match(report.problem!, /не розбирається як JSON/);
+});
+
+test("незбалансовані лише квадратні дужки теж не рятують зламаний json", () => {
+  const result = parse([{ provider: "ChatGPT", text: "```json\n{\"list\": [1, 2, 3}\n```" }]);
+  assert.equal(result.reports[0].status, "prose");
+});
+
+// --- Обрив рядка на межі "поза рядком" / "усередині рядка" ---
+test("обрив одразу після завершеного рядка закриває дужки без обрізання хвоста", () => {
+  const raw = '{"criteria": [ {"criterion_key": "1", "verdict": "passed", "evidence": []} ';
+  const result = parse([{ provider: "ChatGPT", text: "```json\n" + raw + "\n```" }]);
+  const report = result.reports[0];
+  assert.equal(report.status, "ok", "обрив поза рядком — дужки просто дозакриваються");
+  assert.equal(report.criteria.length, 1);
+});
+
+test("обрив усередині рядка з комою в хвості обрізає його до коми", () => {
+  const raw = '{"criteria": [ {"criterion_key": "1", "verdict": "pass';
+  const result = parse([{ provider: "ChatGPT", text: "```json\n" + raw + "\n```" }]);
+  // Ремонт форми тут не рятує зміст (обрізаний вердикт однаково не JSON), але
+  // саме обрізання до останньої коми (а не до кінця тексту) має відбутись.
+  assert.equal(result.reports[0].status, "prose");
+});
+
+test("обрив усередині рядка без жодної коми лишає текст як є", () => {
+  const raw = '{"criteria": "pass';
+  const result = parse([{ provider: "ChatGPT", text: "```json\n" + raw + "\n```" }]);
+  assert.equal(result.reports[0].status, "prose");
+});
+
+// Екранований символ у значенні рядка (\\) не має зіпсувати підрахунок глибини
+// дужок під час ремонту обірваного блоку.
+test("екранований бекслеш усередині рядка не плутає лічильник дужок при ремонті", () => {
+  const raw =
+    '{"criteria": [ {"criterion_key": "1", "verdict": "passed", "summary": "back\\\\slash", "evidence": []} ';
+  const result = parse([{ provider: "ChatGPT", text: "```json\n" + raw + "\n```" }]);
+  const report = result.reports[0];
+  assert.equal(report.status, "ok");
+  assert.equal(report.criteria[0].summary, "back\\slash");
 });

@@ -80,6 +80,14 @@ test("checkReportsInput: сумарний обсяг понад ліміт ві�
   assert.match(checkReportsInput(reports) ?? "", /завеликі/);
 });
 
+// entry?.text: null-запис і запис без text/з нетекстовим text рахуються як 0,
+// а не кидають — optional chaining і "typeof === string" беруть на себе весь
+// брудний ввід.
+test("checkReportsInput: null-запис і text не-рядок рахуються як 0 символів", () => {
+  const reports = [null, { provider: "A" }, { provider: "B", text: 123 }];
+  assert.equal(checkReportsInput(reports), null);
+});
+
 test("checkReportsInput: рахує суму по всіх звітах, не лише перший", () => {
   const reports = [
     { provider: "A", text: "x".repeat(MAX_BLOB_CHARS) },

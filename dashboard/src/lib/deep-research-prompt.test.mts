@@ -203,3 +203,76 @@ test("у тілі промпта немає назв сторонніх серв
     assert.doesNotMatch(prompt, new RegExp(name), `${name} не має траплятись у промпті`);
   }
 });
+
+test("невідомий трек кидає помилку прямо з criteriaDocPath", () => {
+  assert.throws(() => criteriaDocPath("unknown-track"), /чек-листа критеріїв/);
+});
+
+test("контекст ідеї підставляє фолбеки для порожніх і невідомих полів", () => {
+  const emptyIdea: IdeaContextInput = {
+    id: "PI-0099",
+    title: "Тест",
+    type: "niche",
+    track: "unknown-track",
+    signal_type: "weird_signal" as unknown as IdeaContextInput["signal_type"],
+    claimed_revenue: "",
+    mechanic_summary: "",
+    monetization_hypothesis: "",
+    body: null,
+  };
+  const context = buildIdeaContext(emptyIdea, []);
+  assert.match(context, /категорія: інша/);
+  assert.match(context, /характер знахідки не уточнено/);
+  assert.match(context, /заявлений дохід: не заявлено/);
+  assert.match(context, /суть механіки: —/);
+  assert.match(context, /гіпотеза монетизації: —/);
+  // тіло картки відсутнє (null) — секції "Опис механіки з картки" немає взагалі
+  assert.doesNotMatch(context, /Опис механіки з картки/);
+});
+
+test("author_interest відсутній або невідомий, published_date відсутній", () => {
+  const srcs: SourceContextInput[] = [
+    { url: "https://a.example/1", published_date: null, author_interest: null },
+    {
+      url: "https://a.example/2",
+      published_date: "2026-02-01",
+      author_interest: "totally_unknown" as unknown as SourceContextInput["author_interest"],
+    },
+  ];
+  const context = buildIdeaContext(idea, srcs);
+  assert.match(
+    context,
+    /https:\/\/a\.example\/1 \(дата: \?, невідомо, чи автор має особисту вигоду\)/,
+  );
+  assert.match(
+    context,
+    /https:\/\/a\.example\/2 \(дата: 2026-02-01, невідомо, чи автор має особисту вигоду\)/,
+  );
+});
+
+test("шаблон без службової шапки використовується як є", () => {
+  const prompt = renderHandoffPrompt({
+    idea,
+    sources: [],
+    template: "Просто текст без роздільника {{IDEA_ID}}.",
+    criteriaDoc: "критерії без шапки",
+    deepDoc: "глибокі критерії без шапки",
+    today: "2026-08-04",
+  });
+  assert.match(prompt, /^Просто текст без роздільника PI-0013\./);
+});
+
+// `!separator?.index` трактує index===0 як «шапки немає»: коли "---" стоїть
+// у першому рядку без жодного тексту перед ним, функція повертає шаблон як є,
+// не знімаючи сам роздільник. Це крайовий випадок перевірки, а не задум.
+test("роздільник на самому початку шаблону лишається неторканим", () => {
+  const prompt = renderHandoffPrompt({
+    idea,
+    sources: [],
+    template: "---\nТіло {{IDEA_ID}}",
+    criteriaDoc: "критерії",
+    deepDoc: "глибокі критерії",
+    today: "2026-08-04",
+  });
+  assert.match(prompt, /^---\nТіло PI-0013/);
+});

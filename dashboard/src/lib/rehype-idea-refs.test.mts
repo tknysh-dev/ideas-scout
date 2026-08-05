@@ -87,6 +87,20 @@ test("невідомий id перед відомим не губить свій
   ]);
 });
 
+test("елемент без children (void-тег) не падає — walk одразу виходить", () => {
+  const voidEl = { type: "element", tagName: "br", properties: {} } as unknown as Element;
+  const tree = root([voidEl]);
+  run(tree, ["PI-0011"]);
+  assert.deepEqual(tree.children, [voidEl]);
+});
+
+test("вузол не element і не text (напр. comment) лишається без змін", () => {
+  const comment = { type: "comment", value: "PI-0011" } as unknown as Text;
+  const tree = root([comment]);
+  run(tree, ["PI-0011"]);
+  assert.deepEqual(tree.children, [comment]);
+});
+
 test("вкладені елементи обходяться рекурсивно", () => {
   const inner = el("strong", [text("PI-0011")]);
   const tree = root([el("p", [inner])]);
