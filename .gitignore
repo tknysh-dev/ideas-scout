@@ -24,6 +24,9 @@ logs/triage/*.progress
 # Байт-код Python (agents/scripts/telegram-bot.py)
 __pycache__/
 
+# Кеш ruff — локальний, створюється при кожному прогоні check.sh
+.ruff_cache/
+
 # Встановлюються локально на кожній машині через install-launchd.sh.
 agents/worker/node_modules/
 

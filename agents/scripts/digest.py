@@ -63,7 +63,7 @@ def dashboard_base_url() -> str:
     try:
         token = subprocess.run(
             ["security", "find-generic-password", "-s", "ideas-scout-telegram", "-w"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, check=False,
         )
         if token.returncode != 0:
             return ""

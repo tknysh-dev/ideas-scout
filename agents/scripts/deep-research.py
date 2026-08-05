@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """deep-research.py — синтез глибокого дослідження ідеї.
 
 Запускається воркером через deep-research.sh (stdin: {"idea_id": "PI-0013"})
@@ -39,7 +38,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 sys.path.insert(0, SCRIPT_DIR)
 
-import db  # noqa: E402  (agents/scripts/db.py — той самий PostgREST-шар, що в telegram-bot.py)
+# agents/scripts/db.py — той самий PostgREST-шар, що в telegram-bot.py; імпорт
+# навмисно після sys.path.insert вище, інакше модуль db не знайдеться.
+import db  # noqa: E402
 
 LLM_INVOKE = os.path.join(SCRIPT_DIR, "llm-invoke.sh")
 
@@ -328,7 +329,7 @@ def run_llm(provider: str, prompt: str, timeout_s: int) -> tuple[int, str]:
         proc = subprocess.run(
             [LLM_INVOKE, "run", provider, "--timeout", str(timeout_s)],
             input=prompt, capture_output=True, text=True,
-            timeout=timeout_s + 120,
+            timeout=timeout_s + 120, check=False,
         )
         output = proc.stdout + (("\n[stderr]\n" + proc.stderr) if proc.stderr.strip() else "")
         return proc.returncode, output

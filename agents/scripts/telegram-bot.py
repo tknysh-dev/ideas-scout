@@ -68,7 +68,7 @@ def keychain(service):
     try:
         out = subprocess.run(
             ["security", "find-generic-password", "-s", service, "-w"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -173,7 +173,7 @@ def new_draft(track=DEFAULT_TRACK, first_msg_id=None, msg_time=None):
     shutil.rmtree(DRAFT_DIR, ignore_errors=True)
     os.makedirs(DRAFT_DIR, exist_ok=True)
     STATE["draft"] = {
-        "id": datetime.now().strftime("%Y%m%d-%H%M%S"),
+        "id": datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"),
         "track": track,
         "state": "open",
         "fragments": [],
@@ -203,9 +203,9 @@ PAYWALL_MARKERS = ("subscribe to continue", "this post is for paid", "paid subsc
 LOGIN_MARKERS = ("sign in to continue", "log in to continue", "please log in",
                  "create an account to", "увійдіть, щоб")
 
-TAG_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
+TAG_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 STRIP_RE = re.compile(r"<[^>]+>")
-TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
+TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.DOTALL | re.IGNORECASE)
 
 
 def fetch_url(url):
@@ -501,7 +501,7 @@ def progress_watcher(d, stop, started):
         stage = ""
         try:
             with open(pfile, encoding="utf-8") as f:
-                lines = [l.strip() for l in f if l.strip()]
+                lines = [line.strip() for line in f if line.strip()]
             stage = lines[-1] if lines else ""
         except OSError:
             pass
@@ -579,6 +579,7 @@ def run_triage(d):
             [os.path.join(REPO_ROOT, "agents", "scripts", "runner.sh"),
              "--track", d["track"], "--agent", "triage", "--provider", "claude"],
             cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=1800,
+            check=False,
         )
         rc = proc.returncode
         tail = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()[-25:]
@@ -785,7 +786,7 @@ def recover_interrupted_triage():
 
 def process_update(upd):
     if not isinstance(upd, dict) or not isinstance(upd.get("update_id"), int):
-        raise ValueError("очікував Telegram update з цілим update_id")
+        raise TypeError("очікував Telegram update з цілим update_id")
 
     if "message" in upd:
         msg = upd["message"]

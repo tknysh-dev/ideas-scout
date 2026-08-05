@@ -43,6 +43,7 @@ def run_doctor(warnings_only: bool = False) -> str:
             capture_output=True,
             text=True,
             timeout=DOCTOR_TIMEOUT_S,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return (f"❔ <b>Здоров'я системи</b>\ndoctor.sh не вклався в {DOCTOR_TIMEOUT_S} с — "
