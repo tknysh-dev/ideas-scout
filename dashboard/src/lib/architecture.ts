@@ -26,7 +26,7 @@ export interface ArchDiagram {
 // різні боки, і разом вони перетворюються на клубок. Ключ вузла в другій діаграмі
 // може мати суфікс `__cfg` — це той самий блок, лише інший Mermaid-id (одного id
 // двічі в одному документі бути не може).
-export const ARCH_FLOW = `flowchart TB
+const ARCH_FLOW = `flowchart TB
   subgraph sources["Джерела сигналів"]
     web["Веб: Reddit, блоги,<br/>форуми, YouTube"]
     telegram["Telegram-бот"]
@@ -76,7 +76,7 @@ export const ARCH_FLOW = `flowchart TB
   owner -- "рішення" --> dashboard
 `;
 
-export const ARCH_CONFIG = `flowchart LR
+const ARCH_CONFIG = `flowchart LR
   subgraph config["Конфігурація в Git"]
     queries["Пакети<br/>пошукових запитів"]
     taxonomy["Таксономія<br/>платформ"]

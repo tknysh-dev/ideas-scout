@@ -3,10 +3,10 @@
 // уже розділені runner.sh/runner-lib.sh та telegram-webhook.ts.
 
 import { OWNER_DECIDABLE_STATUSES } from "./status.ts";
-import type { ParsedReport, ReportInput, ReportStatus } from "./deep-research-reports.ts";
+import type { ParsedReport, ReportStatus } from "./deep-research-reports.ts";
 import type { IdeaStatus } from "./types.ts";
 
-export const IDEA_ID_RE = /^[A-Z]{2,10}-\d{3,8}$/;
+const IDEA_ID_RE = /^[A-Z]{2,10}-\d{3,8}$/;
 
 // Тіло Server Action за замовчуванням обмежене мегабайтом. Пʼять звітів по три
 // тисячі слів у цю межу вкладаються з великим запасом, тому все, що більше, —
@@ -19,7 +19,7 @@ export const MAX_BLOB_CHARS = 800_000;
 // Звіт без структури все одно йде в синтез як текст, тому для бази він 'ok':
 // саме за цим статусом deep-research.py відбирає, що читати. Відмова моделі —
 // не поломка порталу, тому 'skipped'.
-export const REPORT_ROW_STATUS: Record<Exclude<ReportStatus, "empty">, string> = {
+const REPORT_ROW_STATUS: Record<Exclude<ReportStatus, "empty">, string> = {
   ok: "ok",
   prose: "ok",
   refused: "skipped",
@@ -126,5 +126,3 @@ export function computeSavedCounts(writable: ParsedReport[]): {
     refusedCount: writable.filter((r) => r.status === "refused").length,
   };
 }
-
-export type { ReportInput };

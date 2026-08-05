@@ -49,7 +49,7 @@ export function getChecklist(track: string): CriterionSpec[] | undefined {
   return CHECKLISTS[track];
 }
 
-export interface CriterionResult {
+interface CriterionResult {
   spec: CriterionSpec;
   tone: CriterionTone;
   verdict: string;
@@ -134,7 +134,7 @@ function verdictFrom(lead: string): string {
 }
 
 // Абзаци секції без номера критерія — «Підсумок», «Припущення цього прогону».
-export interface CriterionNote {
+interface CriterionNote {
   title: string;
   body: string;
   summary: boolean;

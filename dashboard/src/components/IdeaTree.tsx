@@ -100,5 +100,3 @@ export default function IdeaTree({ nodes }: { nodes: IdeaNode[] }) {
     </div>
   );
 }
-
-export { formatDate };

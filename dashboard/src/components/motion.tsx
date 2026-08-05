@@ -5,9 +5,9 @@ import { motion, type HTMLMotionProps } from "motion/react";
 // Одна крива на весь портал: рух має читатись як одна система, а не як набір
 // різних анімацій на кожному екрані.
 export const EASE = [0.22, 0.61, 0.36, 1] as const;
-export const DURATION = 0.28;
+const DURATION = 0.28;
 
-export const FADE_UP = {
+const FADE_UP = {
   initial: { opacity: 0, y: 8 },
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -6 },

@@ -13,9 +13,9 @@ import {
   DEEP_RESEARCH_KEYS,
 } from "./deep-research-prompt.ts";
 
-export const SEARCH_UNAVAILABLE = "SEARCH UNAVAILABLE";
+const SEARCH_UNAVAILABLE = "SEARCH UNAVAILABLE";
 
-export const VERDICTS = new Set([
+const VERDICTS = new Set([
   "passed",
   "failed",
   "owner",
@@ -23,7 +23,7 @@ export const VERDICTS = new Set([
   "not_applicable",
   "noted",
 ]);
-export const LIVENESS = new Set(["active", "stale", "dead"]);
+const LIVENESS = new Set(["active", "stale", "dead"]);
 
 const MAX_REPORT_MD = 200_000;
 const MAX_LABEL = 100;
@@ -32,13 +32,13 @@ const MAX_EVIDENCE = 20;
 const MAX_COMPETITORS = 40;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-export interface EvidenceEntry {
+interface EvidenceEntry {
   url: string;
   published_date?: string;
   quote?: string;
 }
 
-export interface SanitizedCriterion {
+interface SanitizedCriterion {
   criterion_key: string;
   verdict: string;
   score: string | null;
@@ -47,7 +47,7 @@ export interface SanitizedCriterion {
   evidence: EvidenceEntry[];
 }
 
-export interface SanitizedCompetitor {
+interface SanitizedCompetitor {
   name: string;
   url?: string;
   pricing?: string;
@@ -85,7 +85,7 @@ export function sanitizeLabel(raw: unknown, limit = MAX_LABEL): string {
     .trim();
 }
 
-export function sanitizeEvidence(raw: unknown): EvidenceEntry[] {
+function sanitizeEvidence(raw: unknown): EvidenceEntry[] {
   if (!Array.isArray(raw)) return [];
   const result: EvidenceEntry[] = [];
   for (const item of raw.slice(0, MAX_EVIDENCE)) {
@@ -102,19 +102,19 @@ export function sanitizeEvidence(raw: unknown): EvidenceEntry[] {
   return result;
 }
 
-export function allowedCriteriaKeys(track: string): Set<string> | null {
+function allowedCriteriaKeys(track: string): Set<string> | null {
   const base = BASE_CRITERIA_KEYS_BY_TRACK[track];
   if (!base) return null;
   return new Set<string>([...base, ...DEEP_RESEARCH_KEYS]);
 }
 
-export interface SanitizeCriteriaResult {
+interface SanitizeCriteriaResult {
   criteria: SanitizedCriterion[];
   /** Скільки об'єктів відкинули (невідомий ключ, невідомий вердикт, сміття). */
   dropped: number;
 }
 
-export function sanitizeCriteria(raw: unknown, allowed: Set<string>): SanitizeCriteriaResult {
+function sanitizeCriteria(raw: unknown, allowed: Set<string>): SanitizeCriteriaResult {
   if (!Array.isArray(raw)) return { criteria: [], dropped: 0 };
   // Ключ критерію унікальний у межах звіту (unique-ключ criteria_verdicts) —
   // повтор того самого ключа перезаписує попередній, як і в Python.
@@ -144,7 +144,7 @@ export function sanitizeCriteria(raw: unknown, allowed: Set<string>): SanitizeCr
   return { criteria: [...byKey.values()], dropped };
 }
 
-export function sanitizeCompetitors(raw: unknown): SanitizedCompetitor[] {
+function sanitizeCompetitors(raw: unknown): SanitizedCompetitor[] {
   if (!Array.isArray(raw)) return [];
   const result: SanitizedCompetitor[] = [];
   for (const item of raw.slice(0, MAX_COMPETITORS)) {
@@ -174,7 +174,7 @@ export function sanitizeCompetitors(raw: unknown): SanitizedCompetitor[] {
   return result;
 }
 
-export interface JsonBlockResult {
+interface JsonBlockResult {
   data: Record<string, unknown> | null;
   /** Скільки ```json-огорож знайдено — розрізняє «немає блоку» і «блок битий». */
   blocks: number;
@@ -283,7 +283,7 @@ function parseCandidate(raw: string): { data: Record<string, unknown> | null; re
   return { data: null, repairs: [] };
 }
 
-export function extractJsonBlock(text: string): JsonBlockResult {
+function extractJsonBlock(text: string): JsonBlockResult {
   const fenced = [...text.matchAll(/```[ \t]*json[ \t]*\r?\n([\s\S]*?)```/gi)].map((m) => m[1]);
   const notes: string[] = [];
   // Порядок пошуку — від найнадійнішого джерела до найвідчайдушнішого:
@@ -349,7 +349,7 @@ export interface ParseReportsResult {
 // маркерах, які мала поставити сама модель, — і кожна невдача форматування
 // коштувала цілого прогону. Тепер провайдера називає власник у формі, а текст
 // приходить окремим полем, тож розбирати лишається тільки вміст.
-export function parseReport(
+function parseReport(
   input: ReportInput,
   allowed: Set<string>,
 ): ParsedReport {

@@ -173,7 +173,7 @@ export function groupVerdicts(rows: CriteriaVerdictRow[]): DeepResearchData {
   return { byKey, providers: [...providers].sort(), hasDisagreement };
 }
 
-export interface ProviderVerdictItem {
+interface ProviderVerdictItem {
   key: string;
   title: string;
   row: CriteriaVerdictRow;

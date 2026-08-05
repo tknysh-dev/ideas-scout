@@ -19,7 +19,7 @@ export const REJECTION_CODES: readonly RejectionCode[] = [
   "NO_MARKET",
 ];
 
-export const CHANGE_LABEL: Record<DecisionAction, string> = {
+const CHANGE_LABEL: Record<DecisionAction, string> = {
   accepted: "власник прийняв ідею як годну",
   rejected: "власник відхилив ідею",
 };
