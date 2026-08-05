@@ -3,49 +3,26 @@
 import { revalidatePath } from "next/cache";
 import { buildDeepResearchPrompt } from "@/lib/deep-research-prompt.server";
 import {
-  parseReports,
-  type ParsedReport,
-  type ReportInput,
-  type ReportStatus,
-} from "@/lib/deep-research-reports";
+  buildResearchReportRows,
+  buildSynthesisIdempotencyKey,
+  buildVerdictRows,
+  checkReportsInput,
+  computeSavedCounts,
+  isResearchableIdeaStatus,
+  isValidIdeaId,
+  selectWritableReports,
+  summarizeReport,
+  type ReportSummary,
+} from "@/lib/deep-research-logic";
+import { parseReports, type ReportInput } from "@/lib/deep-research-reports";
 import { ownerLogin } from "@/lib/owner.server";
-import { OWNER_DECIDABLE_STATUSES } from "@/lib/status";
 import { getServiceClient } from "@/lib/supabase/service";
-import type { IdeaStatus } from "@/lib/types";
 
-const IDEA_ID_RE = /^[A-Z]{2,10}-\d{3,8}$/;
-
-// Тіло Server Action за замовчуванням обмежене мегабайтом. Пʼять звітів по три
-// тисячі слів у цю межу вкладаються з великим запасом, тому все, що більше, —
-// майже напевно випадково вставлений сторонній текст, і краще сказати про це
-// одразу, ніж отримати обрив запиту без пояснення.
-const MAX_BLOB_CHARS = 800_000;
-
-// Статус рядка research_reports: відмова моделі — не помилка порталу, тому
-// SEARCH UNAVAILABLE зберігається як 'skipped', а не 'error'.
-// Звіт без структури все одно йде в синтез як текст, тому для бази він 'ok':
-// саме за цим статусом deep-research.py відбирає, що читати. Відмова моделі —
-// не поломка порталу, тому 'skipped'.
-const REPORT_ROW_STATUS: Record<Exclude<ReportStatus, "empty">, string> = {
-  ok: "ok",
-  prose: "ok",
-  refused: "skipped",
-};
+export type { ReportSummary };
 
 export interface DeepResearchPromptActionResult {
   prompt?: string;
   error?: string;
-}
-
-/** Підсумок одного звіту для показу власнику ДО будь-якого запису в базу. */
-export interface ReportSummary {
-  provider: string;
-  status: ReportStatus;
-  model: string | null;
-  criteriaCount: number;
-  competitorsCount: number;
-  problem?: string;
-  notes: string[];
 }
 
 export interface PreviewReportsResult {
@@ -69,7 +46,7 @@ interface LoadedIdea {
 }
 
 async function loadResearchableIdea(ideaId: string): Promise<LoadedIdea> {
-  if (!IDEA_ID_RE.test(ideaId)) return { error: "Некоректний ID ідеї." };
+  if (!isValidIdeaId(ideaId)) return { error: "Некоректний ID ідеї." };
 
   const supabase = getServiceClient();
   if (!supabase) return { error: "Немає доступу до бази." };
@@ -83,7 +60,7 @@ async function loadResearchableIdea(ideaId: string): Promise<LoadedIdea> {
     .maybeSingle();
   if (error) return { error: `Не вдалося перевірити ідею: ${error.message}` };
   if (!idea) return { error: "Ідею не знайдено." };
-  if (!OWNER_DECIDABLE_STATUSES.includes(idea.status as IdeaStatus)) {
+  if (!isResearchableIdeaStatus(idea.status)) {
     return { error: "Глибоке дослідження доступне після первинної оцінки ідеї." };
   }
   return { track: idea.track as string };
@@ -103,36 +80,6 @@ export async function fetchDeepResearchPrompt(
   return buildDeepResearchPrompt(ideaId);
 }
 
-function summarize(report: ParsedReport): ReportSummary {
-  return {
-    provider: report.provider,
-    status: report.status,
-    model: report.model,
-    criteriaCount: report.criteria.length,
-    competitorsCount: report.competitors.length,
-    problem: report.problem,
-    notes: report.notes,
-  };
-}
-
-function checkReports(reports: unknown): string | null {
-  if (!Array.isArray(reports) || reports.length === 0) {
-    return "Додайте хоча б одну відповідь моделі.";
-  }
-  const total = reports.reduce(
-    (sum, entry) => sum + (typeof entry?.text === "string" ? entry.text.length : 0),
-    0,
-  );
-  if (total > MAX_BLOB_CHARS) {
-    return (
-      `Вставлені відповіді разом завеликі (${total.toLocaleString("uk-UA")} символів). ` +
-      "Портал приймає до 800 тисяч — це приблизно вдесятеро більше за пʼять повних звітів. " +
-      "Схоже, разом зі звітами скопіювалось щось стороннє."
-    );
-  }
-  return null;
-}
-
 export async function previewDeepResearchReports(
   ideaId: string,
   reports: ReportInput[],
@@ -140,7 +87,7 @@ export async function previewDeepResearchReports(
   const owner = await ownerLogin();
   if (owner.error) return { error: owner.error };
 
-  const inputError = checkReports(reports);
+  const inputError = checkReportsInput(reports);
   if (inputError) return { error: inputError };
 
   const idea = await loadResearchableIdea(ideaId);
@@ -148,7 +95,7 @@ export async function previewDeepResearchReports(
 
   const parsed = parseReports({ track: idea.track!, reports });
   if (parsed.error) return { error: parsed.error };
-  return { reports: parsed.reports.map(summarize), validCount: parsed.usableCount };
+  return { reports: parsed.reports.map(summarizeReport), validCount: parsed.usableCount };
 }
 
 export async function commitDeepResearchReports(
@@ -158,7 +105,7 @@ export async function commitDeepResearchReports(
   const owner = await ownerLogin();
   if (owner.error) return { error: owner.error };
 
-  const inputError = checkReports(reports);
+  const inputError = checkReportsInput(reports);
   if (inputError) return { error: inputError };
 
   const idea = await loadResearchableIdea(ideaId);
@@ -180,7 +127,7 @@ export async function commitDeepResearchReports(
   const supabase = getServiceClient();
   if (!supabase) return { error: "Немає доступу до бази." };
 
-  const writable = parsed.reports.filter((report) => report.status !== "empty");
+  const writable = selectWritableReports(parsed.reports);
 
   // Повна заміна замість точкового upsert-у: інакше мітки попередньої
   // консолідації, яких цього разу не було, лишились би в базі привидами —
@@ -213,36 +160,12 @@ export async function commitDeepResearchReports(
     }
   }
 
-  const { error: reportsError } = await supabase.from("research_reports").insert(
-    writable.map((report) => ({
-      idea_id: ideaId,
-      stage: "deep_criteria",
-      kind: "model",
-      provider: report.provider,
-      model: report.model,
-      status: REPORT_ROW_STATUS[report.status as Exclude<ReportStatus, "empty">],
-      report_md: report.reportMd,
-    })),
-  );
+  const { error: reportsError } = await supabase
+    .from("research_reports")
+    .insert(buildResearchReportRows(ideaId, writable));
   if (reportsError) return { error: `Не вдалося зберегти звіти: ${reportsError.message}` };
 
-  const verdictRows = writable
-    .filter((report) => report.status === "ok")
-    .flatMap((report) =>
-      report.criteria.map((criterion) => ({
-        idea_id: ideaId,
-        stage: "deep",
-        kind: "model",
-        provider: report.provider,
-        model: report.model,
-        criterion_key: criterion.criterion_key,
-        verdict: criterion.verdict,
-        score: criterion.score,
-        summary: criterion.summary,
-        detail: criterion.detail,
-        evidence: criterion.evidence,
-      })),
-    );
+  const verdictRows = buildVerdictRows(ideaId, writable);
 
   if (verdictRows.length > 0) {
     const { error: verdictsError } = await supabase.from("criteria_verdicts").insert(verdictRows);
@@ -255,9 +178,7 @@ export async function commitDeepResearchReports(
     }
   }
 
-  // Одна хвилина — вікно захисту від подвійного кліку; свідомий повтор
-  // консолідації пізніше створить окремий job.
-  const idempotencyKey = `deep-research-synthesis:${ideaId}:${Math.floor(Date.now() / 60_000)}`;
+  const idempotencyKey = buildSynthesisIdempotencyKey(ideaId, Date.now());
   const { data: job, error: jobError } = await supabase
     .from("jobs")
     .insert({
@@ -269,11 +190,7 @@ export async function commitDeepResearchReports(
     .select("id")
     .single();
 
-  const saved = {
-    savedCount: writable.filter((r) => r.status === "ok" || r.status === "prose").length,
-    refusedCount: writable.filter((r) => r.status === "refused").length,
-    verdictCount: verdictRows.length,
-  };
+  const saved = { ...computeSavedCounts(writable), verdictCount: verdictRows.length };
 
   revalidatePath(`/ideas/${ideaId}`);
   revalidatePath("/runs");

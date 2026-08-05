@@ -4,32 +4,17 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { getAuthEnv } from "@/lib/config";
 import { getServiceClient } from "@/lib/supabase/service";
-import { OWNER_DECIDABLE_STATUSES, statusMeta } from "@/lib/status";
-import type { IdeaStatus, RejectionCode } from "@/lib/types";
+import {
+  buildDecisionEventRow,
+  buildIdeaUpdatePayload,
+  checkDecisionTransition,
+  validateDecisionInput,
+  type DecideIdeaInput,
+  type DecisionAction,
+} from "@/lib/decisions-logic";
+import type { IdeaStatus } from "@/lib/types";
 
-export type DecisionAction = "accepted" | "rejected";
-
-const REJECTION_CODES: readonly RejectionCode[] = [
-  "NO_MONETIZATION",
-  "SOURCE_SUSPECT",
-  "LEGAL",
-  "CAPABILITY_GAP",
-  "CAPITAL",
-  "AUTONOMY",
-  "SATURATED",
-];
-
-const CHANGE_LABEL: Record<DecisionAction, string> = {
-  accepted: "власник прийняв ідею як годну",
-  rejected: "власник відхилив ідею",
-};
-
-export interface DecideIdeaInput {
-  ideaId: string;
-  action: DecisionAction;
-  reason: string;
-  rejectionCode?: string;
-}
+export type { DecideIdeaInput, DecisionAction };
 
 export interface DecideIdeaResult {
   error?: string;
@@ -65,16 +50,8 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   const { ideaId, action, rejectionCode } = input;
   const reason = input.reason.trim();
 
-  if (!ideaId) return { error: "Не вказано ідею." };
-  if (!["accepted", "rejected"].includes(action)) {
-    return { error: "Невідома дія." };
-  }
-  if (action === "rejected") {
-    if (!reason) return { error: "Для відхилення обов'язково вкажи причину." };
-    if (!rejectionCode || !REJECTION_CODES.includes(rejectionCode as RejectionCode)) {
-      return { error: "Обери код відмови зі словника." };
-    }
-  }
+  const inputError = validateDecisionInput({ ideaId, action, reason, rejectionCode });
+  if (inputError) return { error: inputError };
 
   const supabase = getServiceClient();
   if (!supabase) return { error: "Немає доступу до бази." };
@@ -89,33 +66,10 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   if (!idea) return { error: "Ідею не знайдено." };
 
   const current = idea.status as IdeaStatus;
-  if (!OWNER_DECIDABLE_STATUSES.includes(current)) {
-    return {
-      error: `Статус «${statusMeta(current).label}» веде аналітик — рішення власника тут недоступне.`,
-    };
-  }
+  const transition = checkDecisionTransition(current, idea.rejection_code, action, reason, rejectionCode);
+  if (transition.error) return { error: transition.error };
 
-  // Перегляд уже ухваленого рішення — не те саме, що перше рішення по черзі:
-  // без пояснення в events історія картки перестає читатись.
-  const isRevision = current !== "approved_pending";
-  if (isRevision && !reason) {
-    return { error: "Зміна вже ухваленого рішення вимагає причини." };
-  }
-  if (current === action && !(action === "rejected" && idea.rejection_code !== rejectionCode)) {
-    return { error: `Ідея вже в статусі «${statusMeta(current).label}».` };
-  }
-
-  const updatePayload: Record<string, unknown> = { status: action };
-  if (action === "rejected") {
-    updatePayload.rejection_code = rejectionCode;
-    updatePayload.rejection_detail = reason;
-  } else if (current === "rejected") {
-    // Код і деталі відмови описують вердикт, який власник щойно скасував —
-    // лишити їх означало б показувати «Юридична заборона» на прийнятій ідеї.
-    updatePayload.rejection_code = null;
-    updatePayload.rejection_detail = null;
-    updatePayload.rejection_codes_extra = [];
-  }
+  const updatePayload = buildIdeaUpdatePayload(action, current, rejectionCode, reason);
 
   const { error: updateError } = await supabase
     .from("ideas")
@@ -124,14 +78,9 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
 
   if (updateError) return { error: `Помилка оновлення статусу: ${updateError.message}` };
 
-  const changeSuffix = action === "rejected" ? ` (${rejectionCode})` : "";
-  const label = isRevision ? `${CHANGE_LABEL[action]}, переглянувши рішення` : CHANGE_LABEL[action];
-  const { error: eventError } = await supabase.from("events").insert({
-    idea_id: ideaId,
-    actor: "owner:dashboard",
-    change: `status: ${current} -> ${action}${changeSuffix} — ${label}`,
-    reason: reason || null,
-  });
+  const { error: eventError } = await supabase.from("events").insert(
+    buildDecisionEventRow(ideaId, current, action, rejectionCode, transition.isRevision ?? false, reason),
+  );
 
   if (eventError) {
     return { error: `Статус оновлено, але подію не записано: ${eventError.message}` };
