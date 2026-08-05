@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import GitHub from "next-auth/providers/github";
 import { getAuthEnv } from "@/lib/config";
+import * as authLogic from "@/lib/auth-logic";
 
 const env = getAuthEnv();
 
@@ -18,23 +19,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   pages: { signIn: "/login", error: "/login" },
   callbacks: {
-    // Дашборд — на одного власника, тому allow-list звіряємо з GitHub login,
-    // а не з email: email у профілі GitHub може бути приватним і прийти null.
     signIn({ profile }) {
-      if (!env) return false;
-      return profile?.login === env.allowedLogin;
+      return authLogic.signIn(env, profile);
     },
     jwt({ token, profile }) {
-      if (typeof profile?.login === "string") {
-        token.login = profile.login;
-      }
-      return token;
+      // JWT/Session/AdapterUser з next-auth не мають індексного типу, який
+      // вимагає auth-logic.ts — кастимо на межі, сама логіка лишається чистою.
+      return authLogic.jwt(token as authLogic.AuthToken, profile) as typeof token;
     },
     session({ session, token }) {
-      if (typeof token.login === "string") {
-        session.user.login = token.login;
-      }
-      return session;
+      return authLogic.session(session as unknown as authLogic.AuthSession, token as authLogic.AuthToken) as unknown as typeof session;
     },
   },
 });

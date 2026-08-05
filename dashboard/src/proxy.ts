@@ -1,29 +1,20 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/auth";
 import { getAuthEnv } from "@/lib/config";
+import { isPublic, unconfigured as unconfiguredVerdict } from "@/lib/auth-logic";
 
 // Next.js 16: middleware.ts перейменовано на proxy.ts. Файл мусить лежати на
 // одному рівні з `app/` — тобто в `src/`, а не в корені проєкту: у корені
 // Next його просто не реєструє (middleware-manifest.json лишається порожнім),
 // і гейт авторизації не виконується жодного разу.
-// Telegram не має GitHub-сесії, тому webhook публічний на рівні Auth.js. Сам route
-// окремо fail-closed перевіряє секретний заголовок Telegram до будь-якого запису.
-const PUBLIC_PATHS = ["/login", "/api/auth", "/api/telegram/webhook"];
-
-function isPublic(pathname: string) {
-  return PUBLIC_PATHS.some(
-    (path) => pathname === path || pathname.startsWith(`${path}/`),
-  );
-}
 
 // Поведінка, коли AUTH_* не заповнені. У dev пускаємо все, щоб можна було
 // працювати без OAuth-застосунку; у проді — навпаки, закриваємо все, крім
 // /login, яка пояснить, яких env бракує. Fail closed: попередня версія при
 // відсутності env пускала всіх, і в проді це означало відкритий дашборд.
 function unconfigured(request: NextRequest) {
-  if (process.env.NODE_ENV === "development") return NextResponse.next();
-  if (isPublic(request.nextUrl.pathname)) return NextResponse.next();
-  return NextResponse.redirect(new URL("/login", request.nextUrl));
+  const verdict = unconfiguredVerdict(process.env.NODE_ENV, request.nextUrl.pathname);
+  return verdict === "allow" ? NextResponse.next() : NextResponse.redirect(new URL("/login", request.nextUrl));
 }
 
 const gate = auth((request) => {
