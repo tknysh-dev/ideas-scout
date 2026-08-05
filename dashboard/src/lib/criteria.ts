@@ -164,8 +164,13 @@ export interface StructuredVerdict {
   summary: string | null;
 }
 
+// Чек-лист і фолбек-вердикти залежать лише від цих трьох полів ідеї — решта
+// ~30 полів Idea тут не читаються, тож фікстурам і викликам не потрібен
+// повний рядок.
+export type CriteriaIdeaInput = Pick<Idea, "track" | "type" | "signal_type">;
+
 export function analyzeCriteria(
-  idea: Idea,
+  idea: CriteriaIdeaInput,
   section: string | null,
   // Після глибокого дослідження вердикти існують як дані, тож регулярка по
   // прозі більше не потрібна: вона лишається запасним шляхом для карток, які
@@ -271,7 +276,7 @@ export function analyzeCriteria(
 
 function fallbackVerdict(
   spec: CriterionSpec,
-  idea: Idea,
+  idea: CriteriaIdeaInput,
   noneParsed: boolean,
   stoppedAt: number | undefined,
 ): string {

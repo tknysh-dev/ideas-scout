@@ -1,45 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { analyzeCriteria, splitCriteriaSection, splitSection } from "./criteria.ts";
-import type { Idea } from "./types.ts";
+import type { CriteriaIdeaInput } from "./criteria.ts";
 
-const idea: Idea = {
-  id: "PI-0001",
+const idea: CriteriaIdeaInput = {
   track: "passive-income",
   type: "niche",
   signal_type: "income_claim",
-  status: "approved_pending",
-  parent_id: null,
-  title: "Test Idea",
-  discovered: "2026-01-01",
-  monetization_hypothesis: null,
-  mentions_count: 0,
-  claimed_revenue: null,
-  mechanic_summary: null,
-  rejection_code: null,
-  rejection_detail: null,
-  rejection_codes_extra: [],
-  missing_capabilities: [],
-  ceiling_estimate: null,
-  launch_effort_hours: null,
-  ceiling_flag: null,
-  review_condition: null,
-  review_count: 0,
-  last_reviewed: null,
-  min_review_interval_days: 7,
-  confidence: null,
-  transferred_to: null,
-  verdict_provider: null,
-  verdict_model: null,
-  verdict_run_id: null,
-  research_depth: "initial",
-  deep_researched_at: null,
-  deep_research_run_id: null,
-  schema_version: 1,
-  criteria_version: null,
-  body: null,
-  created_at: "2026-01-01",
-  updated_at: "2026-01-01",
 };
 
 const body = `## Механіка
