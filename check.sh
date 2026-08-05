@@ -127,6 +127,19 @@ else
   done
 fi
 
+# unittest зі стдлібу, без pytest: перевірки мають працювати на голій машині.
+# -t тека тестів, бо скрипти агентів імпортуються через test_support.load_script,
+# і той шим лежить поруч із ними, а не в корені репозиторію.
+step_start "python3 -m unittest (agents/scripts/*_test.py)"
+PY_TEST_OUT="$(cd "$REPO_ROOT/agents/scripts" && python3 -m unittest discover -p '*_test.py' -t . 2>&1)"
+PY_TEST_STATUS=$?
+if [ "$PY_TEST_STATUS" -eq 0 ]; then
+  ok "unittest: $(printf '%s' "$PY_TEST_OUT" | grep -E '^Ran ' | head -1) ($(step_elapsed))"
+else
+  err "unittest провалився ($(step_elapsed)):"
+  printf '%s\n' "$PY_TEST_OUT" | sed 's/^/      /'
+fi
+
 # ---------------------------------------------------------------------------
 section "Python"
 # ---------------------------------------------------------------------------
