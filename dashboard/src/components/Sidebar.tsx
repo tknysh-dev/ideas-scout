@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
@@ -34,10 +34,15 @@ export default function Sidebar({
   const [open, setOpen] = useState(false);
 
   // Закриваємо висувну панель при кожній навігації — інакше на мобільному
-  // вона лишається відкритою поверх нової сторінки.
-  useEffect(() => {
+  // вона лишається відкритою поверх нової сторінки. Підлаштування стану під
+  // час рендеру, а не в useEffect: ефект тут спричиняв каскадний ререндер
+  // (react-hooks/set-state-in-effect), а закриття по onClick на посиланнях
+  // пропускало навігацію кнопкою «назад».
+  const [lastPathname, setLastPathname] = useState(pathname);
+  if (pathname !== lastPathname) {
+    setLastPathname(pathname);
     setOpen(false);
-  }, [pathname]);
+  }
 
   if (pathname === "/login") return null;
 

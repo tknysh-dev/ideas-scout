@@ -7,12 +7,14 @@ import {
   buildIdeaContext,
   criteriaDocPath,
   renderHandoffPrompt,
+  type IdeaContextInput,
+  type SourceContextInput,
 } from "./deep-research-prompt.ts";
 
 const repoFile = (path: string) =>
   readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), "utf-8");
 
-const idea: any = {
+const idea: IdeaContextInput = {
   id: "PI-0013",
   title: "Каталог шаблонів Notion",
   type: "niche",
@@ -31,7 +33,7 @@ const idea: any = {
 `,
 };
 
-const sources: any[] = [
+const sources: SourceContextInput[] = [
   { url: "https://example.com/post", published_date: "2026-01-15", author_interest: "affiliate" },
 ];
 
@@ -162,7 +164,7 @@ test("службова шапка зовнішнього брифа не пот�
 // висновків. Розділ критеріїв ховали з самого початку, а конкурентів — ні:
 // готова картина конкурентного поля попереднього прогону їхала в промпт.
 test("висновки попереднього прогону не потрапляють у контекст ідеї", () => {
-  const withPriorRun: any = {
+  const withPriorRun: IdeaContextInput = {
     ...idea,
     body: [
       "## Механіка",
