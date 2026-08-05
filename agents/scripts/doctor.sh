@@ -19,6 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
+# shellcheck source=agents/scripts/doctor-lib.sh
+source "$SCRIPT_DIR/doctor-lib.sh"
+
 ENV_FILE="${IDEAS_SCOUT_ENV_FILE:-$HOME/.config/ideas-scout/env}"
 WORKER_LOG="$REPO_ROOT/logs/launchd/job-worker.launchd.log"
 QUEUE_STALE_AFTER_S=900
@@ -88,26 +91,6 @@ err()  { ERR_COUNT=$((ERR_COUNT + 1));  printf '  %s✘%s  %s\n' "$C_ERR" "$C_RE
 note() { printf '  %s·  %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
 hint() { printf '     %s↳ %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
 
-human_age() {
-  local s="${1:-0}"
-  case "$s" in ''|*[!0-9]*) echo "?"; return ;; esac
-  if   [ "$s" -lt 90 ];     then echo "${s} с"
-  elif [ "$s" -lt 5400 ];   then echo "$((s / 60)) хв"
-  elif [ "$s" -lt 172800 ]; then echo "$((s / 3600)) год"
-  else                           echo "$((s / 86400)) дн"
-  fi
-}
-
-iso_to_epoch() {
-  python3 -c "
-import datetime, sys
-try:
-    print(int(datetime.datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00')).timestamp()))
-except Exception:
-    print(0)
-" "$1" 2>/dev/null || echo 0
-}
-
 NOW_EPOCH="$(date +%s)"
 DOMAIN="gui/$(id -u)"
 
@@ -117,10 +100,7 @@ IS_WORKER_HOST=0
 launchctl print "${DOMAIN}/com.ideas-scout.job-worker" >/dev/null 2>&1 && IS_WORKER_HOST=1
 
 IS_AGENT_HOST=0
-for _label in $(launchctl list 2>/dev/null | awk '/com\.ideas-scout\./ {print $3}'); do
-  IS_AGENT_HOST=1
-  break
-done
+has_ideas_scout_jobs "$(launchctl list 2>/dev/null)" && IS_AGENT_HOST=1
 
 # Секрет обов'язковий лише там, де крутяться джоби; на робочому ноуті його
 # відсутність — норма, і кричати про неї означає привчити ігнорувати ✘.
@@ -160,11 +140,8 @@ else
   [ -f "$CLAMSHELL_BASELINE_FILE" ] && CLAMSHELL_SINCE="$(head -1 "$CLAMSHELL_BASELINE_FILE" 2>/dev/null | tr -d '\n')"
 
   if [ -n "$CLAMSHELL_SINCE" ]; then
-    # Префікс рядка pmset — "РРРР-ММ-ДД ГГ:ХХ:СС" фіксованої ширини, тому
-    # лексикографічне порівняння з позначкою і є порівнянням за часом.
-    CLAMSHELL="$(pmset -g log 2>/dev/null | grep "Clamshell Sleep" \
-      | awk -v b="$CLAMSHELL_SINCE" 'substr($0,1,19) >= b' | wc -l | tr -d ' ')"
-    case "$CLAMSHELL" in ''|*[!0-9]*) CLAMSHELL=0 ;; esac
+    CLAMSHELL_LOG="$(pmset -g log 2>/dev/null | grep "Clamshell Sleep")"
+    CLAMSHELL="$(clamshell_count_since "$CLAMSHELL_SINCE" "$CLAMSHELL_LOG")"
     CLAMSHELL_OLD=$((CLAMSHELL_ALL - CLAMSHELL))
     if [ "$CLAMSHELL" -gt 0 ]; then
       warn "${CLAMSHELL} засинань від закритої кришки ПІСЛЯ фіксу (${CLAMSHELL_SINCE}) — sudo pmset не застосувався або злетів"
@@ -206,23 +183,16 @@ else
       hint "./agents/scripts/install-launchd.sh"
       continue
     fi
-    state="$(printf '%s\n' "$print_out" | awk -F'= ' '/^\tstate = /{print $2; exit}')"
-    exit_code="$(printf '%s\n' "$print_out" | awk -F'= ' '/last exit code = /{print $2; exit}')"
-    case "$exit_code" in *[!0-9]*) exit_code="" ;; esac
+    IFS=$'\t' read -r state exit_code <<<"$(launchctl_job_status "$print_out")"
 
-    if [ "$short" = "job-worker" ]; then
-      # Єдиний постійний процес: для нього "not running" — це поломка, а не спокій.
-      if [ "$state" = "running" ]; then
-        ok "job-worker: працює${exit_code:+, останній вихід $exit_code}"
-      else
+    case "$(classify_launchd_job "$short" "$state" "$exit_code")" in
+      worker_running) ok "job-worker: працює${exit_code:+, останній вихід $exit_code}" ;;
+      worker_down)
         err "job-worker: state=${state:-?} — постійний воркер не запущений, черга нікому не потрібна"
-        hint "launchctl kickstart -k ${DOMAIN}/${label}"
-      fi
-    elif [ -n "$exit_code" ] && [ "$exit_code" != "0" ]; then
-      warn "${short}: завантажений, але останній прогін вийшов з кодом ${exit_code}"
-    else
-      ok "${short}: завантажений (за розкладом)"
-    fi
+        hint "launchctl kickstart -k ${DOMAIN}/${label}" ;;
+      exit_nonzero) warn "${short}: завантажений, але останній прогін вийшов з кодом ${exit_code}" ;;
+      scheduled_ok) ok "${short}: завантажений (за розкладом)" ;;
+    esac
   done
 
   LEGACY="com.ideas-scout.telegram-bot"
@@ -247,11 +217,11 @@ else
   fi
 
   last_realtime="$(grep -o 'realtime=[A-Z_]*' "$WORKER_LOG" | tail -1 | cut -d= -f2)"
-  case "$last_realtime" in
-    SUBSCRIBED) ok "Realtime-канал підписаний (останній статус SUBSCRIBED)" ;;
-    "")         warn "у лозі немає жодного статусу realtime — воркер не доходив до підписки" ;;
-    *)          err "Realtime-канал у стані ${last_realtime} — воркер живий, але глухий до нових подій"
-                hint "launchctl kickstart -k ${DOMAIN}/com.ideas-scout.job-worker" ;;
+  case "$(classify_realtime_status "$last_realtime")" in
+    ok)   ok "Realtime-канал підписаний (останній статус SUBSCRIBED)" ;;
+    warn) warn "у лозі немає жодного статусу realtime — воркер не доходив до підписки" ;;
+    err)  err "Realtime-канал у стані ${last_realtime} — воркер живий, але глухий до нових подій"
+          hint "launchctl kickstart -k ${DOMAIN}/com.ideas-scout.job-worker" ;;
   esac
 
   # Лог воркера — append-only файл, спільний для всіх життів процесу. `tail -200`
@@ -314,23 +284,16 @@ print(q['due_pending'], q['oldest_due_pending_s'], q['running'], q['stale_runnin
       q.get('busy_type') or '-', q.get('busy_s', 0))
 " "$QUEUE_JSON" 2>/dev/null || echo "0 0 0 0 - 0")"
 
-    # Воркер бере джоби по одному, а глибоке дослідження триває до 90 хв — черга
-    # за ним стоїть законно й виглядає точно як мертвий воркер. Розрізняє їх
-    # живий lease: якщо довгий джоб реально працює, це очікування, не поломка.
-    case "$Q_BUSY_TYPE" in
-      deep_research_synthesis) LONG_JOB_BUSY=1 ;;
-      *) LONG_JOB_BUSY=0 ;;
+    case "$(classify_queue_state "$Q_DUE" "$Q_OLDEST" "$Q_BUSY_TYPE" "$QUEUE_STALE_AFTER_S")" in
+      waiting_long_job)
+        warn "черга чекає на глибоке дослідження (${Q_BUSY_TYPE}, вже $(human_age "$Q_BUSY_S")): ${Q_DUE} завдань позаду, найстаріше $(human_age "$Q_OLDEST") — це очікування, а не поломка" ;;
+      stalled)
+        err "черга стоїть: ${Q_DUE} завдань чекають, найстаріше $(human_age "$Q_OLDEST") — саме так виглядає непрацюючий воркер із боку користувача" ;;
+      moving)
+        ok "черга рухається: ${Q_DUE} чекає (найстаріше $(human_age "$Q_OLDEST")), ${Q_RUNNING} у роботі" ;;
+      empty)
+        ok "черга порожня, ${Q_RUNNING} завдань у роботі" ;;
     esac
-
-    if [ "${Q_OLDEST:-0}" -gt "$QUEUE_STALE_AFTER_S" ] && [ "$LONG_JOB_BUSY" -eq 1 ]; then
-      warn "черга чекає на глибоке дослідження (${Q_BUSY_TYPE}, вже $(human_age "$Q_BUSY_S")): ${Q_DUE} завдань позаду, найстаріше $(human_age "$Q_OLDEST") — це очікування, а не поломка"
-    elif [ "${Q_OLDEST:-0}" -gt "$QUEUE_STALE_AFTER_S" ]; then
-      err "черга стоїть: ${Q_DUE} завдань чекають, найстаріше $(human_age "$Q_OLDEST") — саме так виглядає непрацюючий воркер із боку користувача"
-    elif [ "${Q_DUE:-0}" -gt 0 ]; then
-      ok "черга рухається: ${Q_DUE} чекає (найстаріше $(human_age "$Q_OLDEST")), ${Q_RUNNING} у роботі"
-    else
-      ok "черга порожня, ${Q_RUNNING} завдань у роботі"
-    fi
     [ "${Q_STALE:-0}" -gt 0 ] && warn "${Q_STALE} завдань у running із простроченою орендою — воркер помер посеред роботи, вони чекають перепризначення"
   fi
 fi
@@ -386,21 +349,22 @@ print(row.get('status') or '?', row.get('finished_at') or '')
       f_epoch="$(iso_to_epoch "$r_finished")"
       [ "$f_epoch" -gt 0 ] && age=$((NOW_EPOCH - f_epoch))
     fi
-    if [ "$age" -gt "$threshold" ]; then
-      warn "${job}: останній прогін $(human_age "$age") тому (поріг $(human_age "$threshold")), статус=${r_status}"
-    elif [ "$r_status" = "error" ]; then
-      # Без тексту помилки доводиться йти по логах на самій машині, а doctor.sh
-      # часто читають саме тоді, коли доступу до неї вже немає.
-      r_error="$(python3 -c "
+    case "$(classify_run_state "$age" "$threshold" "$r_status")" in
+      stale)
+        warn "${job}: останній прогін $(human_age "$age") тому (поріг $(human_age "$threshold")), статус=${r_status}" ;;
+      error)
+        # Без тексту помилки доводиться йти по логах на самій машині, а doctor.sh
+        # часто читають саме тоді, коли доступу до неї вже немає.
+        r_error="$(python3 -c "
 import json, sys
 rows = json.loads(sys.argv[1])
 errors = (rows[0] if rows else {}).get('errors') or []
 print(' '.join(str(errors[0]).split())[:300] if errors else '')
 " "$run_json" 2>/dev/null || echo "")"
-      warn "${job}: останній прогін завершився помилкою ($(human_age "$age") тому)${r_error:+ — ${r_error}}"
-    else
-      ok "${job}: ${r_status}, $(human_age "$age") тому"
-    fi
+        warn "${job}: останній прогін завершився помилкою ($(human_age "$age") тому)${r_error:+ — ${r_error}}" ;;
+      ok)
+        ok "${job}: ${r_status}, $(human_age "$age") тому" ;;
+    esac
   done
 fi
 
@@ -597,25 +561,22 @@ if [ "$PROBE_WEBSEARCH" -eq 1 ] && [ "$SKIP_NETWORK" -eq 0 ]; then
     | "$REPO_ROOT/agents/scripts/llm-invoke.sh" run claude --timeout "$WS_TIMEOUT_S" 2>&1)"
   WS_ELAPSED=$(( $(date +%s) - WS_START ))
   WS_TAIL="$(printf '%s' "$WS_OUT" | tr '\n' ' ' | head -c 200)"
-  # Модель, яка не змогла автентифікуватись, теж не поверне URL — але це зовсім
-  # інша поломка з іншим лікуванням. Не розрізнивши їх, доктор відправляв би
-  # шукати проблему з веб-пошуком там, де просто протух логін.
-  if [ "$WS_ELAPSED" -ge "$WS_TIMEOUT_S" ] && [ -z "${WS_OUT//[[:space:]]/}" ]; then
-    err "claude не відповів за $((WS_TIMEOUT_S / 60)) хв і був знятий за таймаутом — чи є веб-пошук, лишилось невідомим"
-    hint "той самий виклик руками покаже, на чому він стоїть:"
-    hint "printf 'Назви одну новину за останні 7 днів: <URL> | <дата>' | ./agents/scripts/llm-invoke.sh run claude --timeout 120"
-  elif printf '%s' "$WS_OUT" | grep -Eqi 'oauth|authenticat|401|invalid api key|credit balance'; then
-    err "claude не автентифікувався — виклик навіть не дійшов до моделі, тож ні синтезу, ні перевірки пошуку зараз не буде"
-    hint "відповідь: ${WS_TAIL:-（порожньо）}"
-    hint "залогінься під агентським юзером: claude"
-  elif printf '%s' "$WS_OUT" | grep -Eq 'https?://[^[:space:]]+' \
-     && printf '%s' "$WS_OUT" | grep -Eq '[0-9]{4}-[0-9]{2}-[0-9]{2}'; then
-    ok "claude через llm-invoke.sh реально шукає у вебі (за ${WS_ELAPSED} с: ${WS_TAIL})"
-  else
-    err "claude через llm-invoke.sh не повернув URL з датою — веб-пошук недоступний, і синтез робитиме кешовані d_-блоки замість живого дослідження"
-    hint "відповідь моделі: ${WS_TAIL:-（порожньо）}"
-    hint "перевір, що claude CLI бачить WebSearch/WebFetch: ./agents/scripts/llm-invoke.sh check claude"
-  fi
+  case "$(classify_websearch_probe "$WS_OUT" "$WS_ELAPSED" "$WS_TIMEOUT_S")" in
+    timeout)
+      err "claude не відповів за $((WS_TIMEOUT_S / 60)) хв і був знятий за таймаутом — чи є веб-пошук, лишилось невідомим"
+      hint "той самий виклик руками покаже, на чому він стоїть:"
+      hint "printf 'Назви одну новину за останні 7 днів: <URL> | <дата>' | ./agents/scripts/llm-invoke.sh run claude --timeout 120" ;;
+    auth_failed)
+      err "claude не автентифікувався — виклик навіть не дійшов до моделі, тож ні синтезу, ні перевірки пошуку зараз не буде"
+      hint "відповідь: ${WS_TAIL:-（порожньо）}"
+      hint "залогінься під агентським юзером: claude" ;;
+    ok)
+      ok "claude через llm-invoke.sh реально шукає у вебі (за ${WS_ELAPSED} с: ${WS_TAIL})" ;;
+    no_result)
+      err "claude через llm-invoke.sh не повернув URL з датою — веб-пошук недоступний, і синтез робитиме кешовані d_-блоки замість живого дослідження"
+      hint "відповідь моделі: ${WS_TAIL:-（порожньо）}"
+      hint "перевір, що claude CLI бачить WebSearch/WebFetch: ./agents/scripts/llm-invoke.sh check claude" ;;
+  esac
   unset WS_OUT
 elif [ "$PROBE_WEBSEARCH" -eq 1 ]; then
   note "перевірку веб-пошуку claude пропущено (--offline)"
