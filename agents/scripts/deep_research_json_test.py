@@ -5,9 +5,13 @@ _parse_candidate). Фіксує фактичну поведінку на реа�
 кілька блоків, проза навколо JSON) і на ворожих входах (порожній рядок,
 масив замість обʼєкта, дужки/бектики всередині рядкових значень).
 
-Тести навмисно не змінюють deep-research.py: там, де ремонт поводиться
-неочевидно, тест фіксує реальний результат і позначений коментарем
-"СУМНІВНО" — див. фінальний звіт про причину.
+_slice_object рахує глибину дужок поза рядками (лапки й екранування
+враховуються), тож "}" усередині значення чи в прозі після обʼєкта більше не
+переважує справжнє закриття. Одна відома вада лишається в _balance_brackets
+(різ по останній комі в усьому тексті на обриві всередині рядка) — вона
+позначена коментарем "СУМНІВНО" на місці, deep-research.py в цій частині не
+змінювався: обрив однаково рятує попередній крок (_slice_object), тож
+до _balance_brackets ця вада на практиці не доходить.
 """
 import json
 import unittest
@@ -142,16 +146,49 @@ class ExtractJsonBlock(unittest.TestCase):
             },
         )
 
-    def test_stray_unquoted_brace_after_object_defeats_recovery(self):
-        # СУМНІВНО: _slice_object бере raw.rfind("}") наївно, без огляду на
-        # лапки, тому "зайва" `}` у прозі ПІСЛЯ справжнього обʼєкта
-        # переважує справжню закривну дужку. Зрізаний фрагмент виходить
-        # синтаксично невалідним, а наступний крок (_balance_brackets)
-        # рахує дужки в тексті, що вже містить чужу "}", і теж не рятує —
-        # хоча сам JSON у тексті був цілком коректний і відновний.
-        # Задокументовано як є, deep-research.py НЕ змінювався.
+    def test_stray_unquoted_brace_after_object_is_ignored(self):
+        # _slice_object рахує глибину дужок поза рядками і зупиняється, щойно
+        # перший обʼєкт справді закрився — "зайва" `}` у прозі ПІСЛЯ нього
+        # більше не переважує справжню закривну дужку.
         text = 'Ось результат:\n{"criteria": []}\nа ще один } десь у тексті.'
-        self.assertIsNone(dr.extract_json_block(text))
+        self.assertEqual(dr.extract_json_block(text), {"criteria": []})
+
+    def test_prose_after_object_with_both_braces_is_ignored(self):
+        text = 'Результат: {"criteria": []} Далі шаблон {ключ} і ще } десь.'
+        self.assertEqual(dr.extract_json_block(text), {"criteria": []})
+
+    def test_brace_inside_string_value_survives_prose_after(self):
+        text = '{"criteria": [{"criterion_key": "0", "verdict": "passed", "detail": "шаблон {x}"}]} а ще проза.'
+        self.assertEqual(
+            dr.extract_json_block(text),
+            {"criteria": [{"criterion_key": "0", "verdict": "passed", "detail": "шаблон {x}"}]},
+        )
+
+    def test_escaped_quote_before_brace_in_value_survives(self):
+        text = r'{"criteria": [{"criterion_key": "0", "verdict": "passed", "detail": "він сказав \"тут}\" і все"}]}'
+        self.assertEqual(
+            dr.extract_json_block(text),
+            {"criteria": [{"criterion_key": "0", "verdict": "passed",
+                           "detail": 'він сказав "тут}" і все'}]},
+        )
+
+    def test_two_objects_in_a_row_first_one_wins(self):
+        text = '{"criteria": []}{"competitors": [{"name": "X"}]}'
+        self.assertEqual(dr.extract_json_block(text), {"criteria": []})
+
+    def test_truncated_json_still_recovers_via_balance_brackets(self):
+        # Обірваний на півслові вхід має лишитись відновним через
+        # _slice_object -> _balance_brackets, попри те, що _slice_object
+        # тепер коректно ігнорує "}" усередині рядків.
+        text = (
+            '```json\n{"criteria": ['
+            '{"criterion_key": "0", "verdict": "passed"}, '
+            '{"criterion_key": "1", "verdict": "fail\n```'
+        )
+        self.assertEqual(
+            dr.extract_json_block(text),
+            {"criteria": [{"criterion_key": "0", "verdict": "passed"}]},
+        )
 
     # --- межові та ворожі входи ----------------------------------------
 
@@ -248,23 +285,46 @@ class SliceObject(unittest.TestCase):
     def test_only_opening_brace_returns_none(self):
         self.assertIsNone(dr._slice_object('pre {"criteria": [] no close'))
 
-    def test_stray_unquoted_brace_after_object_extends_slice_too_far(self):
-        # СУМНІВНО: raw.rfind("}") не розрізняє лапок узагалі, тож "чужа"
-        # `}` у прозі після справжнього обʼєкта потрапляє у зріз замість
-        # справжньої закривної дужки. Той самий корінь, що й у
-        # test_stray_unquoted_brace_after_object_defeats_recovery вище.
+    def test_stray_unquoted_brace_after_object_does_not_extend_slice(self):
+        # Глибина дужок рахується від першого "{"; щойно вона повертається
+        # до нуля, обʼєкт вважається закритим — "чужа" `}` у прозі після
+        # нього більше не потрапляє у зріз.
         self.assertEqual(
             dr._slice_object('pre {"criteria": []} post } stray'),
-            '{"criteria": []} post }',
+            '{"criteria": []}',
         )
 
-    def test_stray_brace_inside_quotes_after_object_also_extends_slice(self):
-        # Так само: лапки взагалі не беруться до уваги, тож навіть якщо
-        # "чужа" `}` сама лежить усередині рядка в прозі, вона все одно
-        # переважує справжню закривну дужку обʼєкта.
+    def test_stray_brace_inside_quotes_after_object_is_ignored(self):
+        # Те саме, навіть якщо "чужа" `}` сама лежить усередині рядка в
+        # прозі після обʼєкта — вона взагалі не бачиться скануванням,
+        # оскільки скан зупиняється раніше, на справжньому закритті.
         self.assertEqual(
             dr._slice_object('pre {"criteria": []} post "quoted }" stray'),
-            '{"criteria": []} post "quoted }',
+            '{"criteria": []}',
+        )
+
+    def test_brace_inside_quoted_value_does_not_affect_depth(self):
+        text = '{"criteria": [], "note": "шаблон {x}"}'
+        self.assertEqual(dr._slice_object(text), text)
+
+    def test_escaped_quote_before_brace_in_value(self):
+        text = r'{"criteria": [], "note": "він сказав \"тут}\" і все"}'
+        self.assertEqual(dr._slice_object(text), text)
+
+    def test_two_objects_in_a_row_takes_first(self):
+        self.assertEqual(
+            dr._slice_object('{"criteria": []}{"competitors": []}'),
+            '{"criteria": []}',
+        )
+
+    def test_truncated_object_slices_to_last_real_closing_brace(self):
+        # Обрив усередині другого запису масиву: жодна "}" усередині обірваного
+        # рядкового значення не рахується, тож зріз доходить до останньої
+        # СПРАВЖНЬОЇ закривної дужки — кінця першого повного запису.
+        text = '{"criteria": [{"criterion_key": "0", "verdict": "passed"}, {"criterion_key": "1", "verdict": "fail'
+        self.assertEqual(
+            dr._slice_object(text),
+            '{"criteria": [{"criterion_key": "0", "verdict": "passed"}',
         )
 
 

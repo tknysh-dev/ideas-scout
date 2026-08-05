@@ -190,10 +190,45 @@ def _balance_brackets(raw: str) -> str:
 
 
 def _slice_object(raw: str) -> str | None:
-    first, last = raw.find("{"), raw.rfind("}")
-    if first == -1 or last <= first:
+    """Обʼєкт від першого `{` до дужки, що його СПРАВДІ закриває.
+
+    Глибина рахується лише по `{`/`}` поза рядковими літералами (лапки й
+    екранування — як у _balance_brackets), тож "}" усередині значення чи в
+    прозі після обʼєкта більше не переважує справжнє закриття. Якщо обʼєкт
+    до кінця тексту так і не закрився (обрив на півслові), зрізаємо до
+    останньої СПРАВЖНЬОЇ закривної дужки, яку встигли побачити, — так само,
+    як робив старий наївний rfind("}") у типовому випадку обриву всередині
+    масиву записів, — щоб _balance_brackets далі міг дозакрити решту.
+    """
+    first = raw.find("{")
+    if first == -1:
         return None
-    sliced = raw[first:last + 1]
+    depth = 0
+    in_string = escaped = False
+    last_close = None
+    for i in range(first, len(raw)):
+        char = raw[i]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            last_close = i
+            if depth == 0:
+                break
+    if last_close is None:
+        return None
+    sliced = raw[first:last_close + 1]
     return sliced if re.search(r'"(criteria|competitors|idea_updates)"', sliced) else None
 
 
@@ -363,9 +398,15 @@ def build_idea_context(idea: dict, sources: list[dict]) -> str:
 
 
 def render(template: str, mapping: dict[str, str]) -> str:
-    for key, value in mapping.items():
-        template = template.replace("{{" + key + "}}", value)
-    return template
+    """Однопрохідна підстановка: `{{...}}` у ЗНАЧЕННІ одного плейсхолдера не
+    підставляється повторно, і результат не залежить від порядку ключів у
+    mapping. Незнайдений плейсхолдер лишається дослівно — контракт
+    шаблон↔код звіряє doctor_prompt_contract.py."""
+    if not mapping:
+        return template
+    placeholders = {f"{{{{{key}}}}}": value for key, value in mapping.items()}
+    pattern = re.compile("|".join(re.escape(p) for p in placeholders))
+    return pattern.sub(lambda m: placeholders[m.group(0)], template)
 
 
 def criteria_doc_path(track: str) -> str:

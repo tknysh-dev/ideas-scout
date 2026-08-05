@@ -164,24 +164,23 @@ class RenderTest(unittest.TestCase):
         template = "Hi {{NAME}}"
         self.assertEqual(dr.render(template, {}), template)
 
-    def test_value_containing_placeholder_syntax_may_be_reinterpreted(self):
-        """ФАКТИЧНИЙ БАГ: render ітерує mapping.items() і .replace()-ить у той
-        самий template послідовно, тому значення, яке саме містить "{{...}}",
-        може отримати повторну підстановку — залежно від ПОРЯДКУ ключів у
-        mapping (у Python dict зберігає порядок вставки).
-
-        Якщо ключ "A" (значення якого — "{{B}}") обробляється РАНІШЕ за "B",
-        новоприлеглий "{{B}}" встигає потрапити в template до того, як цикл
-        дійде до "B", і теж заміниться — подвійна інтерпретація."""
+    def test_value_containing_placeholder_syntax_is_not_reinterpreted(self):
+        """Підстановка однопрохідна: кожен плейсхолдер шукається лише в
+        ОРИГІНАЛЬНОМУ template, тож "{{...}}", що прийшов у значенні іншого
+        ключа, більше не інтерпретується як ще один плейсхолдер — і
+        результат не залежить від порядку ключів у mapping."""
         template = "X={{A}} Y={{B}}"
         out_a_first = dr.render(template, {"A": "{{B}}", "B": "REPLACED"})
-        self.assertEqual(out_a_first, "X=REPLACED Y=REPLACED")
-
-        # Той самий mapping, зворотний порядок ключів — інший результат:
-        # "{{B}}" з значення A підставляється вже ПІСЛЯ обробки ключа B,
-        # тож лишається нерозгорнутим у виводі.
         out_b_first = dr.render(template, {"B": "REPLACED", "A": "{{B}}"})
-        self.assertEqual(out_b_first, "X={{B}} Y=REPLACED")
+        self.assertEqual(out_a_first, "X={{B}} Y=REPLACED")
+        self.assertEqual(out_a_first, out_b_first)
+
+    def test_value_with_backslash_and_group_reference_is_inserted_literally(self):
+        """re.sub із рядком-заміною інтерпретував би "\\1"/"\\g<0>" як
+        посилання на групу; render підставляє значення через функцію-заміну,
+        тож бекслеші й "\\1" у значенні йдуть у вивід дослівно."""
+        out = dr.render("A={{X}}", {"X": r"back\slash and \1 and \g<0>"})
+        self.assertEqual(out, r"A=back\slash and \1 and \g<0>")
 
 
 class CriteriaVersionOfTest(unittest.TestCase):
