@@ -1,5 +1,7 @@
 import type { Element, ElementContent, Root } from "hast";
-import { IDEA_ID_PATTERN } from "@/lib/idea-refs";
+// Відносний шлях замість "@/lib/idea-refs": плейн `node --test` (без next-резолвера
+// tsconfig-шляхів) не вміє резолвити аліас "@/*", а сам модуль лишається тим самим.
+import { IDEA_ID_PATTERN } from "./idea-refs.ts";
 
 const SKIP_TAGS = new Set(["code", "pre", "a"]);
 

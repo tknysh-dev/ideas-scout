@@ -8,7 +8,9 @@ import type {
   CriterionVerdict,
   SynthesisResolution,
 } from "./types";
-import { getChecklist, type CriterionSpec, type CriterionTone } from "./criteria";
+// Розширення ".ts" явно: плейн `node --test` резолвить лише файлові шляхи,
+// без bundler-евристик tsconfig.
+import { getChecklist, type CriterionSpec, type CriterionTone } from "./criteria.ts";
 
 export type { CriterionTone };
 
