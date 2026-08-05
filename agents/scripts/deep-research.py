@@ -89,7 +89,7 @@ def read_idea_id() -> str:
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, OSError) as error:
-        raise SystemExit(f"deep-research: payload не є валідним JSON: {error}")
+        raise SystemExit(f"deep-research: payload не є валідним JSON: {error}") from error
     idea_id = payload.get("idea_id") if isinstance(payload, dict) else None
     if not isinstance(idea_id, str) or not re.fullmatch(r"[A-Z]{2,10}-[0-9]{3,8}", idea_id):
         raise SystemExit("deep-research: некоректний або відсутній idea_id")
@@ -361,7 +361,9 @@ def sanitize_criteria(raw, allowed_keys: set[str], *, require_resolution: bool) 
 def run_llm(provider: str, prompt: str, timeout_s: int) -> tuple[int, str]:
     """(exit_code, stdout+stderr) виклику llm-invoke.sh run <provider>."""
     try:
-        proc = subprocess.run(
+        # LLM_INVOKE — фіксований шлях зі SCRIPT_DIR; provider завжди один із
+        # захардкоджених у викликах run_llm() рядків ("claude"), не ввід ззовні.
+        proc = subprocess.run(  # noqa: S603
             [LLM_INVOKE, "run", provider, "--timeout", str(timeout_s)],
             input=prompt, capture_output=True, text=True,
             timeout=timeout_s + 120, check=False,
@@ -388,9 +390,9 @@ def build_idea_context(idea: dict, sources: list[dict]) -> str:
     ]
     if sources:
         lines.append("- джерела знахідки:")
-        for s in sources[:10]:
-            lines.append(f"  - {s.get('url')} (дата: {s.get('published_date') or '?'}, "
-                         f"інтерес автора: {s.get('author_interest') or '?'})")
+        lines.extend(f"  - {s.get('url')} (дата: {s.get('published_date') or '?'}, "
+                      f"інтерес автора: {s.get('author_interest') or '?'})"
+                      for s in sources[:10])
     context = "\n".join(lines)
     if body_rest:
         context += "\n\nОпис механіки з картки:\n\n" + body_rest
@@ -693,8 +695,8 @@ def run_synthesis_stage(idea_id: str, run_id: str | None, today: str) -> None:
     })
     db._request("PATCH", f"/ideas?id=eq.{quoted_id}", updates)
 
-    change = f"research_depth: {idea.get('research_depth') or 'initial'} -> deep; " \
-             f"status: {idea['status']} -> {updates['status']}"
+    change = (f"research_depth: {idea.get('research_depth') or 'initial'} -> deep; "
+              f"status: {idea['status']} -> {updates['status']}")
     if failed_fatal:
         reason = (f"Провалено фатальні критерії {', '.join(failed_fatal)} "
                   f"(код {updates['rejection_code']}); зведено звіти: {', '.join(contributors)}.")

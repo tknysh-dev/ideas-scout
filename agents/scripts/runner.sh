@@ -83,7 +83,7 @@ if [ ! -f "$RUNNER_LIB" ]; then
   echo "runner.sh: не знайдено $RUNNER_LIB — runner-lib.sh обов'язковий, зупиняюсь" >&2
   exit 2
 fi
-# shellcheck disable=SC1090,SC1091
+# shellcheck source=agents/scripts/runner-lib.sh
 source "$RUNNER_LIB"
 
 cd "$REPO_ROOT" || { echo "runner.sh: не вдалось перейти в $REPO_ROOT" >&2; exit 2; }
@@ -101,7 +101,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 mkdir -p "$REPO_ROOT/logs/locks" "$REPO_ROOT/logs/launchd" "$REPO_ROOT/logs/quarantine"
 
-# shellcheck disable=SC1091
+# shellcheck source=agents/scripts/db.sh
 source "$REPO_ROOT/agents/scripts/db.sh"
 
 MAIN_BRANCH="${IDEAS_SCOUT_MAIN_BRANCH:-main}"
@@ -137,6 +137,9 @@ GIT_LOCK_OWNED=0
 GIT_LOCK_DIR="$REPO_ROOT/logs/locks/git.lock"
 TMP_FILES=()
 
+# викликається лише через trap нижче — shellcheck аналізує файл без урахування
+# trap-виклику й тому вважає функцію невикористаною.
+# shellcheck disable=SC2329
 cleanup() {
   local ec=$?
   if [ "$GIT_LOCK_OWNED" = "1" ]; then
@@ -157,8 +160,6 @@ trap cleanup EXIT INT TERM
 # Статус: атомарний запис (tmp + mv), викликається з будь-якої точки завершення.
 # ---------------------------------------------------------------------------
 
-STARTED_AT="$(date -u +%FT%TZ)"
-STARTED_EPOCH="$(date +%s)"
 RUN_ID=""
 RUN_REGISTERED=0
 

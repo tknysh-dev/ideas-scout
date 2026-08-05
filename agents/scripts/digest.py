@@ -61,8 +61,9 @@ def dashboard_base_url() -> str:
     if override:
         return override.rstrip("/")
     try:
+        # "security" — стандартна утиліта macOS у системному PATH.
         token = subprocess.run(
-            ["security", "find-generic-password", "-s", "ideas-scout-telegram", "-w"],
+            ["security", "find-generic-password", "-s", "ideas-scout-telegram", "-w"],  # noqa: S607
             capture_output=True, text=True, timeout=10, check=False,
         )
         if token.returncode != 0:

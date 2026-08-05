@@ -30,9 +30,13 @@ DB_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DB_LIB="$DB_SCRIPT_DIR/db-lib.sh"
 if [ ! -f "$DB_LIB" ]; then
   echo "db.sh: не знайдено $DB_LIB — db-lib.sh обов'язковий, зупиняюсь" >&2
+  # return спрацьовує в режимі source (є що повертати), exit — коли викликано напряму
+  # (return поза функцією/сорсом провалюється, stderr придушено, тому впадаємо в exit);
+  # статичний аналіз бачить лише один із цих двох режимів і тому вважає exit недосяжним.
+  # shellcheck disable=SC2317
   return 2 2>/dev/null || exit 2
 fi
-# shellcheck disable=SC1090,SC1091
+# shellcheck source=agents/scripts/db-lib.sh
 source "$DB_LIB"
 
 DB_ENV_FILE="${IDEAS_SCOUT_ENV_FILE:-$HOME/.config/ideas-scout/env}"
@@ -51,6 +55,7 @@ db_load_env() {
     return 1
   fi
   set -a
+  # env-файл користувача (шлях configurable через IDEAS_SCOUT_ENV_FILE) — статично не резолвний
   # shellcheck disable=SC1090
   source "$DB_ENV_FILE"
   set +a
@@ -361,7 +366,8 @@ print(json.dumps(d))
 db_get_last_run() {
   local job="$1" track="${2:-}"
   [ -n "$job" ] || { db_die "get_last_run: потрібен job"; return 2; }
-  local q="select=*&job=eq.$(_urlenc "$job")"
+  local q
+  q="select=*&job=eq.$(_urlenc "$job")"
   [ -n "$track" ] && q="${q}&track=eq.$(_urlenc "$track")"
   q="${q}&order=started_at.desc&limit=1"
   _db_get "/runs?${q}"

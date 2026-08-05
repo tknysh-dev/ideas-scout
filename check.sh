@@ -56,7 +56,6 @@ fi
 
 section() { printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
 ok()   { OK_COUNT=$((OK_COUNT + 1));   printf '  %s✔%s  %s\n' "$C_OK" "$C_RESET" "$1"; }
-warn() { WARN_COUNT=$((WARN_COUNT + 1)); printf '  %s▲%s  %s\n' "$C_WARN" "$C_RESET" "$1"; }
 err()  { ERR_COUNT=$((ERR_COUNT + 1));  printf '  %s✘%s  %s\n' "$C_ERR" "$C_RESET" "$1"; }
 note() { printf '  %s·  %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
 
@@ -71,7 +70,8 @@ section "Shell"
 # ---------------------------------------------------------------------------
 shopt -s nullglob
 SHELL_FILES=("$REPO_ROOT/agents/scripts"/*.sh "$REPO_ROOT/dev.sh" \
-             "$REPO_ROOT/shared/migrations/apply.sh" "$REPO_ROOT/check.sh")
+             "$REPO_ROOT/shared/migrations/apply.sh" "$REPO_ROOT/check.sh" \
+             "$REPO_ROOT/hooks/pre-commit")
 shopt -u nullglob
 
 for f in "${SHELL_FILES[@]}"; do
@@ -85,18 +85,23 @@ for f in "${SHELL_FILES[@]}"; do
 done
 
 if command -v shellcheck >/dev/null 2>&1; then
-  # Поріг свідомо занижений до --severity=error: скрипти проєкту цю перевірку
-  # ще НІКОЛИ не проходили, і повний прогін одразу потоне в стилістичних
-  # SC2086/SC2155 та подібних. Піднімати поріг варто поступово, у міру чистки
-  # конкретних файлів, а не всіх одразу. Рядок коментаря не має починатися зі
-  # слова shellcheck — воно читається як директива й ламає розбір файлу.
-  step_start "shellcheck (--severity=error) для ${#SHELL_FILES[@]} файлів"
-  SC_OUT="$(shellcheck --severity=error "${SHELL_FILES[@]}" 2>&1)"
+  # Поріг піднято до --severity=style (найсуворіший рівень shellcheck): усі
+  # скрипти проєкту тепер проходять його чисто. Кожен sourced-файл (test-lib.sh,
+  # db-lib.sh, runner-lib.sh, db.sh) має власну директиву
+  # "# shellcheck source=<шлях>" над відповідним source — завдяки цьому shellcheck
+  # реально читає той файл (а не лише гасить SC1091/SC1090), і саме тому весь
+  # список файлів так само передається одним викликом: sourced-файли мають бути
+  # серед аргументів, інакше директива source= не спрацює. Де шлях справді
+  # динамічний (env-файл користувача) — окремий "# shellcheck disable=SC1090" з
+  # поясненням поруч. Рядок коментаря не має починатися зі слова shellcheck —
+  # воно читається як директива й ламає розбір файлу.
+  step_start "shellcheck (--severity=style) для ${#SHELL_FILES[@]} файлів"
+  SC_OUT="$(shellcheck --severity=style "${SHELL_FILES[@]}" 2>&1)"
   SC_STATUS=$?
   if [ "$SC_STATUS" -eq 0 ]; then
-    ok "shellcheck: помилок рівня error немає ($(step_elapsed))"
+    ok "shellcheck: зауважень немає, включно зі стилем ($(step_elapsed))"
   else
-    err "shellcheck знайшов помилки ($(step_elapsed)):"
+    err "shellcheck знайшов зауваження ($(step_elapsed)):"
     printf '%s\n' "$SC_OUT" | sed 's/^/      /'
   fi
 else
@@ -156,6 +161,32 @@ for f in "${PY_FILES[@]}"; do
   fi
 done
 find "$REPO_ROOT/agents/scripts" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+
+# Конвеєр запускає deep-research.py явно через /usr/bin/python3 (див.
+# deep-research.sh), а це системний python macOS — 3.9, значно старший за той,
+# що в PATH. Різниця не гіпотетична: ruff із неправильним target-version уже
+# радив тут datetime.UTC (3.11+), і скрипт падав би ImportError на першому ж
+# нічному прогоні, бо py_compile і тести бачать лише новий python.
+SYSTEM_PY="/usr/bin/python3"
+if [ -x "$SYSTEM_PY" ]; then
+  step_start "$SYSTEM_PY ($("$SYSTEM_PY" --version 2>&1)) завантажує deep-research.py"
+  SYSPY_OUT="$("$SYSTEM_PY" -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("m", "agents/scripts/deep-research.py")
+module = importlib.util.module_from_spec(spec)
+sys.modules["m"] = module
+spec.loader.exec_module(module)
+' 2>&1)"
+  SYSPY_STATUS=$?
+  if [ "$SYSPY_STATUS" -eq 0 ]; then
+    ok "deep-research.py завантажується системним python ($(step_elapsed))"
+  else
+    err "deep-research.py НЕ завантажується під $SYSTEM_PY — нічний прогін впаде ($(step_elapsed)):"
+    printf '%s\n' "$SYSPY_OUT" | sed 's/^/      /'
+  fi
+else
+  note "немає $SYSTEM_PY — перевірку сумісності з системним python пропущено"
+fi
 
 if command -v ruff >/dev/null 2>&1; then
   step_start "ruff check agents/scripts/"

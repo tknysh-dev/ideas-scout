@@ -124,6 +124,10 @@ done
 
 # Секрет обов'язковий лише там, де крутяться джоби; на робочому ноуті його
 # відсутність — норма, і кричати про неї означає привчити ігнорувати ✘.
+# A && B || C, не if-then-else: якби err/note (обидві завершуються printf) колись
+# провалились, C теж виконався б. На практиці printf у цьому скрипті не провалюється,
+# але щоб не міняти поведінку doctor.sh цим проходом, лишаю як є.
+# shellcheck disable=SC2015
 required_here() { [ "$IS_AGENT_HOST" -eq 1 ] && err "$1" || note "$1 (тут не критично — джоби на цій машині не крутяться)"; }
 
 printf '%sideas-scout doctor%s  %s  %s\n' "$C_BOLD" "$C_RESET" "$(hostname -s)" "$(date '+%F %H:%M')"
@@ -671,16 +675,20 @@ else
 fi
 
 DIRTY="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+# A && B || C, не if-then-else: якби warn/ok (обидві завершуються printf) колись
+# провалились, C теж виконався б. Не міняю поведінку doctor.sh цим проходом.
+# shellcheck disable=SC2015
 [ "${DIRTY:-0}" -gt 0 ] \
   && warn "${DIRTY} незакомічених змін — наступний прогін їх засташає" \
   || ok "робоче дерево чисте"
 
 STASHES="$(git -C "$REPO_ROOT" stash list 2>/dev/null | wc -l | tr -d ' ')"
+# shellcheck disable=SC2015
 [ "${STASHES:-0}" -gt 0 ] \
   && warn "${STASHES} відкладених stash від попередніх прогонів — розбери 'git stash list' вручну" \
   || ok "stash-ів немає"
 
-AHEAD="$(git -C "$REPO_ROOT" rev-list --count @{u}..HEAD 2>/dev/null || echo 0)"
+AHEAD="$(git -C "$REPO_ROOT" rev-list --count "@{u}..HEAD" 2>/dev/null || echo 0)"
 [ "${AHEAD:-0}" -gt 0 ] && warn "${AHEAD} комітів не запушено (за даними останнього fetch)"
 
 QUARANTINE="$(git -C "$REPO_ROOT" branch --list 'quarantine/*' 2>/dev/null | wc -l | tr -d ' ')"

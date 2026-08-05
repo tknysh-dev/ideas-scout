@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
-# shellcheck disable=SC1091
+# shellcheck source=agents/scripts/db.sh
 source "$SCRIPT_DIR/db.sh"
 
 # launchd будить джоб одразу після прокидання Mac, коли Wi-Fi ще не піднявся:

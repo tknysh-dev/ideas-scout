@@ -47,8 +47,10 @@ def read_env_value(name):
 
 def keychain(service):
     try:
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", service, "-w"],
+        # service — літерал зі скрипту ("ideas-scout-telegram*"), не ввід ззовні;
+        # "security" — стандартна утиліта macOS у системному PATH.
+        result = subprocess.run(  # noqa: S603
+            ["security", "find-generic-password", "-s", service, "-w"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=10,
@@ -68,7 +70,8 @@ def telegram_api(token, method, **params):
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        # URL зібраний з константи https://api.telegram.org, не з вводу користувача.
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
             result = json.loads(response.read().decode())
     except urllib.error.HTTPError as error:
         body = error.read().decode(errors="replace")[:300]

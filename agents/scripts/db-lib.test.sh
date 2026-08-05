@@ -3,7 +3,9 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_NAME="db-lib"
+# shellcheck source=agents/scripts/test-lib.sh
 source "$SCRIPT_DIR/test-lib.sh"
+# shellcheck source=agents/scripts/db-lib.sh
 source "$SCRIPT_DIR/db-lib.sh"
 
 # ---------------------------------------------------------------------------

@@ -387,7 +387,7 @@ class ParseModelReportsTest(unittest.TestCase):
 
     def test_search_unavailable_report_excluded_entirely(self):
         reports = [report("chatgpt", "SEARCH UNAVAILABLE"), report("gemini", CRITERIA_BLOCK_0_PASSED)]
-        criteria, competitors, prose = dr.parse_model_reports(reports, ALLOWED)
+        criteria, _competitors, prose = dr.parse_model_reports(reports, ALLOWED)
         self.assertNotIn("chatgpt", criteria)
         self.assertNotIn("chatgpt", prose)
         self.assertEqual(set(criteria), {"gemini"})

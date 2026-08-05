@@ -11,6 +11,8 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 set -a
+# env-файл користувача (шлях configurable через IDEAS_SCOUT_ENV_FILE) — статично не резолвний
+# shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
 

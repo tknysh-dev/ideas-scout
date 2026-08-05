@@ -11,7 +11,9 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_NAME="runner-lib guard (is_allowed_path)"
+# shellcheck source=agents/scripts/test-lib.sh
 source "$SCRIPT_DIR/test-lib.sh"
+# shellcheck source=agents/scripts/runner-lib.sh
 source "$SCRIPT_DIR/runner-lib.sh"
 
 # ---------------------------------------------------------------------------

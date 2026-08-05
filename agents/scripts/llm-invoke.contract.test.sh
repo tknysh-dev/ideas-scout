@@ -15,6 +15,7 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_NAME="llm-invoke.sh contract"
+# shellcheck source=agents/scripts/test-lib.sh
 source "$SCRIPT_DIR/test-lib.sh"
 
 LLM_INVOKE="$SCRIPT_DIR/llm-invoke.sh"

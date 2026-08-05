@@ -46,7 +46,7 @@ def read(path):
 
 missing = []
 texts = {}
-for name, (renderer, role) in RENDERED_BY.items():
+for name, (_renderer, role) in RENDERED_BY.items():
     text = read(os.path.join(PROMPTS, name))
     if text is None:
         missing.append(f"{name} ({role})")

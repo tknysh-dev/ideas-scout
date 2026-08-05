@@ -43,8 +43,8 @@ def _load_env() -> dict:
     if not os.path.isfile(ENV_FILE):
         raise DbError(f"env-файл не знайдено: {ENV_FILE} (потрібні SUPABASE_URL, SUPABASE_SERVICE_KEY)")
     with open(ENV_FILE, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+        for raw_line in f:
+            line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
@@ -93,9 +93,10 @@ def _request(method: str, path: str, body=None, timeout: float = 20.0):
         if isinstance(body, list):
             body = _align_bulk(body)
         data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    # url зібраний із SUPABASE_URL у власному env-файлі, не з вводу користувача.
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)  # noqa: S310
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             raw = resp.read().decode("utf-8")
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as e:

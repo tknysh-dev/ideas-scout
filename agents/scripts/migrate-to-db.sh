@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
-# shellcheck disable=SC1091
+# shellcheck source=agents/scripts/db.sh
 source "$SCRIPT_DIR/db.sh"
 
 PARSE_PY="$(mktemp "${TMPDIR:-/tmp}/migrate-parse.XXXXXX.py")"
@@ -538,7 +538,6 @@ jq -c '.ideas[]' "$PARSED_JSON" | while IFS= read -r rec; do
   done || exit 1
 
   echo "$rec" | jq -c '.events[]?' | while IFS= read -r ev; do
-    body="$(echo "$ev" | jq -c --arg idea_id "$idea_id" '. + {idea_id: $idea_id} | with_entries(select(.value != null))')"
     if ! ./agents/scripts/db.sh insert-event "$idea_id" "$(echo "$ev" | jq -r '.actor')" "$(echo "$ev" | jq -r '.change')" "$(echo "$ev" | jq -r '.reason // ""')" "$(echo "$ev" | jq -r '.run_id // ""')" >/dev/null; then
       echo "migrate-to-db.sh: ПОМИЛКА insert-event для $idea_id" >&2
       exit 1

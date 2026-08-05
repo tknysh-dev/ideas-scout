@@ -36,7 +36,8 @@ def run_doctor(warnings_only: bool = False) -> str:
     """
     script = os.path.join(REPO_ROOT, "agents/scripts/doctor.sh")
     try:
-        p = subprocess.run(
+        # script зібраний із REPO_ROOT (шлях від __file__), не з вводу користувача.
+        p = subprocess.run(  # noqa: S603
             [script],
             cwd=REPO_ROOT,
             env={**os.environ, "NO_COLOR": "1"},

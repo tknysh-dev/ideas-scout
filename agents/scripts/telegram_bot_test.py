@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import subprocess
 import unittest
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 from test_support import load_script
 
-FAKE_TOKEN = "111111:fake-token-for-tests"
+FAKE_TOKEN = "111111:fake-token-for-tests"  # noqa: S105 — фейковий токен для тестів, не секрет
 FAKE_CHAT_ID = "555555555"
 
 
@@ -306,7 +306,7 @@ class RenderTest(unittest.TestCase):
              patch.object(bot, "edit") as mock_edit, \
              patch.object(bot, "save_state"):
             bot.render(d)
-        args, kwargs = mock_edit.call_args
+        args, _kwargs = mock_edit.call_args
         self.assertEqual(args[0], 999)
         self.assertEqual(args[1], bot.panel_text(d))
         self.assertEqual(args[2], bot.panel_buttons(d))
@@ -350,6 +350,42 @@ class AddFragmentTest(unittest.TestCase):
         d = make_draft(state="awaiting_material")
         bot.add_fragment(d, {"kind": "text", "value": "a" * bot.PASTED_ARTICLE_MIN})
         self.assertEqual(d["state"], "open")
+
+
+class FetchUrlTest(unittest.TestCase):
+    """fetch_url — єдине місце, куди долітає URL прямо з чату (через URL_RE
+    у handle_text). Перевіряємо, що схема звужена до http/https ще до
+    urlopen: URL_RE й так пропускає лише https?://, але це перевірка ще й
+    тут, на межі з мережею — якщо колись з'явиться інший виклик fetch_url()
+    в обхід URL_RE, він теж не пронесе file:// до urlopen."""
+
+    def test_file_scheme_rejected_without_network_call(self):
+        with patch.object(bot.urllib.request, "urlopen") as mock_urlopen:
+            state, detail, title, body = bot.fetch_url(
+                "file:///Users/x/.config/ideas-scout/env"
+            )
+        mock_urlopen.assert_not_called()
+        self.assertEqual(state, "error")
+        self.assertIn("http", detail)
+        self.assertEqual(title, "")
+        self.assertEqual(body, "")
+
+    def test_ftp_scheme_rejected_without_network_call(self):
+        with patch.object(bot.urllib.request, "urlopen") as mock_urlopen:
+            state, _detail, _title, _body = bot.fetch_url("ftp://example.test/x")
+        mock_urlopen.assert_not_called()
+        self.assertEqual(state, "error")
+
+    def test_https_scheme_reaches_urlopen(self):
+        page = b"<html><body>" + b"a" * 500 + b"</body></html>"
+        response = MagicMock()
+        response.read.return_value = page
+        response.headers.get_content_charset.return_value = "utf-8"
+        response.__enter__.return_value = response
+        with patch.object(bot.urllib.request, "urlopen", return_value=response) as mock_urlopen:
+            state, _detail, _title, _body = bot.fetch_url("https://example.test/article")
+        mock_urlopen.assert_called_once()
+        self.assertEqual(state, "ok")
 
 
 class HandleTextTest(unittest.TestCase):
@@ -469,9 +505,8 @@ class IsSubstantiveTest(unittest.TestCase):
 class ProcessUpdateTest(unittest.TestCase):
     def test_non_dict_raises_type_error(self):
         for bad in (None, "string", 123, [1, 2], 1.5):
-            with self.subTest(bad=bad):
-                with self.assertRaises(TypeError):
-                    bot.process_update(bad)
+            with self.subTest(bad=bad), self.assertRaises(TypeError):
+                bot.process_update(bad)
 
     def test_empty_dict_raises_type_error(self):
         with self.assertRaises(TypeError):

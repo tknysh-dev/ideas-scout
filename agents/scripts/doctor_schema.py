@@ -319,9 +319,10 @@ def fetch_db_tables() -> dict[str, set[str]] | None:
         return None
     url_base, key = creds
     url = url_base.rstrip("/") + "/rest/v1/"
-    req = urllib.request.Request(url, headers={"apikey": key, "Authorization": f"Bearer {key}"})
+    # url зібраний із SUPABASE_URL у власному env-файлі, не з вводу користувача.
+    req = urllib.request.Request(url, headers={"apikey": key, "Authorization": f"Bearer {key}"})  # noqa: S310
     try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:  # noqa: S310
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         say("warn", f"PostgREST GET /rest/v1/ -> HTTP {exc.code} — звірку схеми пропущено")

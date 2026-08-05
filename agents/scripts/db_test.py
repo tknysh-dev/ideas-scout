@@ -113,16 +113,14 @@ class LoadEnvTest(unittest.TestCase):
 
     def test_missing_file_raises(self):
         missing_path = "/nonexistent/path/does-not-exist/env"
-        with mock.patch.object(db, "ENV_FILE", missing_path):
-            with self.assertRaises(db.DbError) as ctx:
-                db._load_env()
+        with mock.patch.object(db, "ENV_FILE", missing_path), self.assertRaises(db.DbError) as ctx:
+            db._load_env()
         self.assertIn(missing_path, str(ctx.exception))
 
     def test_empty_file_raises(self):
         path = self._write_env_file("")
-        with mock.patch.object(db, "ENV_FILE", path):
-            with self.assertRaises(db.DbError):
-                db._load_env()
+        with mock.patch.object(db, "ENV_FILE", path), self.assertRaises(db.DbError):
+            db._load_env()
 
     def test_comments_and_blank_lines_ignored(self):
         path = self._write_env_file(
@@ -168,9 +166,8 @@ class LoadEnvTest(unittest.TestCase):
 
     def test_missing_required_key_raises(self):
         path = self._write_env_file("SUPABASE_URL=https://example.supabase.co\n")
-        with mock.patch.object(db, "ENV_FILE", path):
-            with self.assertRaises(db.DbError):
-                db._load_env()
+        with mock.patch.object(db, "ENV_FILE", path), self.assertRaises(db.DbError):
+            db._load_env()
 
     def test_env_vars_take_priority_over_file(self):
         os.environ["SUPABASE_URL"] = "https://env-var.supabase.co"

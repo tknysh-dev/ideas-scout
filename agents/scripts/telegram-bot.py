@@ -66,8 +66,10 @@ def log(msg):
 
 def keychain(service):
     try:
-        out = subprocess.run(
-            ["security", "find-generic-password", "-s", service, "-w"],
+        # service — літерал зі скрипту ("ideas-scout-telegram*"), не ввід ззовні;
+        # "security" — стандартна утиліта macOS у системному PATH.
+        out = subprocess.run(  # noqa: S603
+            ["security", "find-generic-password", "-s", service, "-w"],  # noqa: S607
             capture_output=True, text=True, timeout=10, check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -93,11 +95,13 @@ def api(method, _http_timeout=30, **params):
     """Викликає один метод Telegram Bot API з обмеженим HTTP-таймаутом."""
     url = f"{API}/bot{TOKEN}/{method}"
     data = json.dumps(params).encode()
-    req = urllib.request.Request(
+    # url зібраний з константи API ("https://api.telegram.org") і method — завжди
+    # літерал у місцях виклику api(), не ввід із чату.
+    req = urllib.request.Request(  # noqa: S310
         url, data=data, headers={"Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=_http_timeout) as resp:
+        with urllib.request.urlopen(req, timeout=_http_timeout) as resp:  # noqa: S310
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")[:300]
@@ -211,14 +215,19 @@ TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.DOTALL | re.IGNORECASE)
 def fetch_url(url):
     """Повертає (стан, деталі, заголовок, текст). Стан: ok | paywall | login |
     empty | blocked | missing | error."""
-    req = urllib.request.Request(url, headers={
+    # URL_RE вище й так пропускає лише http(s)://, але це перевірка ще й тут,
+    # на межі з urlopen: інакше file:// чи інша схема тихо прочитали б локальний
+    # файл (наприклад ~/.config/ideas-scout/env із SUPABASE_SERVICE_KEY).
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        return "error", "дозволені лише http/https посилання", "", ""
+    req = urllib.request.Request(url, headers={  # noqa: S310 — схему вже звужено вище
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": "uk,en;q=0.8",
     })
     try:
-        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_S) as resp:  # noqa: S310 — схему вже звужено вище
             raw = resp.read(FETCH_MAX_BYTES)
             charset = resp.headers.get_content_charset() or "utf-8"
     except urllib.error.HTTPError as e:
@@ -352,7 +361,9 @@ def handle_photo(d, file_id, caption):
     name = f"photo-{len([f for f in d['fragments'] if f['kind']=='photo'])+1}{os.path.splitext(fp)[1] or '.jpg'}"
     dest = os.path.join(DRAFT_DIR, name)
     try:
-        urllib.request.urlretrieve(f"{API}/file/bot{TOKEN}/{fp}", dest)
+        # url зібраний з константи API і fp — шлях, який повернув сам Telegram
+        # у відповіді getFile, не ввід із чату.
+        urllib.request.urlretrieve(f"{API}/file/bot{TOKEN}/{fp}", dest)  # noqa: S310
     except (urllib.error.URLError, OSError) as e:
         log(f"getFile download: {e}")
         return
@@ -575,7 +586,10 @@ def run_triage(d):
         watcher = threading.Thread(target=progress_watcher, args=(d, stop, started), daemon=True)
         watcher.start()
 
-        proc = subprocess.run(
+        # runner.sh — фіксований шлях від REPO_ROOT; d["track"] обмежений ключами
+        # TRACKS (перевіряється в on_callback ще до потрапляння сюди), і навіть
+        # без цього shell=False та список argv не дають command injection.
+        proc = subprocess.run(  # noqa: S603
             [os.path.join(REPO_ROOT, "agents", "scripts", "runner.sh"),
              "--track", d["track"], "--agent", "triage", "--provider", "claude"],
             cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=1800,
@@ -719,9 +733,7 @@ def cmd_last():
         return f"Не вдалось прочитати ideas з БД: {esc(str(e))}"
     if not ideas:
         return "Карток ще немає."
-    out = []
-    for r in ideas:
-        out.append(f"• <b>{esc(r.get('id'))}</b> {esc(r.get('title'))} — {esc(r.get('status'))}")
+    out = [f"• <b>{esc(r.get('id'))}</b> {esc(r.get('title'))} — {esc(r.get('status'))}" for r in ideas]
     return "\n".join(out)
 
 

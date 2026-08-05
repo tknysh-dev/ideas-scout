@@ -17,6 +17,7 @@ PORT="${PORT:-3000}"
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a
+  # env-файл користувача (шлях configurable через IDEAS_SCOUT_ENV) — статично не резолвний
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a

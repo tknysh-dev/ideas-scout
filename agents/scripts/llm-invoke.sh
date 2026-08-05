@@ -29,12 +29,10 @@
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
 ENV_FILE="${IDEAS_SCOUT_ENV_FILE:-$HOME/.config/ideas-scout/env}"
 if [ -f "$ENV_FILE" ]; then
   set -a
+  # env-файл користувача (шлях configurable через IDEAS_SCOUT_ENV_FILE) — статично не резолвний
   # shellcheck disable=SC1090
   . "$ENV_FILE"
   set +a

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
+# shellcheck source=agents/scripts/db.sh
 source "$REPO_ROOT/agents/scripts/db.sh"
 
 REQUESTED_BY="owner:local-test"
