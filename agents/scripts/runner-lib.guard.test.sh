@@ -134,4 +134,41 @@ expect_fail "УЗГОДЖЕНО: is_allowed_path тепер теж блокує 
 expect_fail "УЗГОДЖЕНО: той самий шлях і далі не застейджиться — stage-патерн теж вимагає .md" \
   stage_criteria_glob_matches "agents/criteria/criteriaFOO"
 
-test_summary 51
+# ---------------------------------------------------------------------------
+# 5. stage_allowed_paths — реальний виклик функції (не лише дзеркальна копія
+#    патерну вище), у ІЗОЛЬОВАНОМУ tmp git-репозиторії — НЕ в цьому репо.
+#    git add тут торкається лише одноразового репо, який видаляється одразу
+#    після перевірки.
+# ---------------------------------------------------------------------------
+
+STAGE_TMP="$(mktemp -d)"
+trap 'rm -rf "$STAGE_TMP"' EXIT
+
+STAGE_STAGED="$(
+  cd "$STAGE_TMP" || exit 1
+  git init -q
+  git config user.email test@example.com
+  git config user.name test
+  mkdir -p agents/catalogs agents/criteria logs/locks
+  echo x > agents/catalogs/a.md
+  echo x > logs/decisions.md
+  echo x > logs/dedup-decisions.md
+  echo x > agents/criteria/taxonomy.md
+  echo x > agents/criteria/availability.md
+  echo x > agents/criteria/criteria-apps.md
+  echo x > agents/criteria/search-queries-app-ideas.md
+  echo x > agents/criteria/criteriaFOO
+  echo x > README.md
+  echo x > logs/locks/some.lock
+  stage_allowed_paths
+  git diff --cached --name-only | sort | tr '\n' ' '
+)"
+
+expect_eq \
+  "stage_allowed_paths: реально стейджить рівно allowlist, і нічого поза ним (README.md, logs/locks/* лишаються незастейдженими)" \
+  "agents/catalogs/a.md agents/criteria/availability.md agents/criteria/criteria-apps.md agents/criteria/search-queries-app-ideas.md agents/criteria/taxonomy.md logs/decisions.md logs/dedup-decisions.md " \
+  "$STAGE_STAGED"
+
+rm -rf "$STAGE_TMP"
+
+test_summary 52

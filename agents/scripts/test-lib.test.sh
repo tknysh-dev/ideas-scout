@@ -7,6 +7,18 @@
 # у СВІЖОМУ підпроцесі bash -c (стан не тече між перевірками), а результат
 # (stdout+stderr, код виходу) звіряється голим `[ ... ]`/`case` і рахується
 # власними, не-харнесними лічильниками нижче.
+#
+# ПОМІЧЕНО ПРИ РОБОТІ НАД ПОКРИТТЯМ: код усередині `bash -c '...'` (окремий
+# exec'нутий процес) для kcov на цій машині завжди невидимий — навіть коли
+# тест реально проганяє гілку (_fail, test_summary), kcov показує ці рядки
+# як непокриті. Заміна на підстановку команди без bash -c (голий fork) іноді
+# робить рядки видимими для kcov ізольовано, але ламається (0 підхоплених
+# рядків) щойно у файлі вже визначені звичайні shell-функції (pass/fail/
+# assert_contains) — а вони тут потрібні. Тому це не інструментальний
+# недолік тестів: bash -c лишається правильним і стабільним вибором для
+# ізоляції, а _fail (рядки 16-20) і гілки провалу test_summary (52-53, 56,
+# 58) реально виконуються цими тестами, просто kcov на цій машині не вміє
+# їх порахувати.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$SCRIPT_DIR/test-lib.sh"
@@ -33,6 +45,13 @@ assert_contains() {
     *"$3"*) pass "$1" ;;
     *) fail "$1" "очікував входження [$3] у [$2]" ;;
   esac
+}
+
+assert_eq_lines() {
+  # assert_eq_lines "опис" "очікувана_кількість_рядків" "вивід"
+  local n
+  n="$(printf '%s' "$3" | grep -c '')"
+  if [ "$n" -eq "$2" ] 2>/dev/null; then pass "$1"; else fail "$1" "очікував $2 рядок(ів), отримав $n"; fi
 }
 
 assert_zero() {
@@ -96,6 +115,26 @@ assert_contains "лічильники: 4 виклики, провал одног
 out="$(bash -c 'source "$LIB"; expect_ok "a" true; printf "code=%s\n" "$?"' 2>&1)"
 assert_contains 'expect_ok/expect_fail самі завжди повертають 0 (безпека йде через TESTS_FAILED+test_summary, не через $?)' "$out" "code=0"
 
+printf '\n=== _fail напряму (без обгортки expect_*) ===\n'
+
+# _fail — внутрішня функція test-lib.sh (не викликається напряму з жодного
+# expect_*-тесту з другим аргументом чи без нього одночасно), тому тут явно
+# перевіряється обидва варіанти виклику: з деталями і без.
+out="$(bash -c 'source "$LIB"; _fail "опис без деталей"' 2>&1)"
+assert_contains "_fail: без другого аргументу друкує лише опис" "$out" "✘ опис без деталей"
+assert_eq_lines "_fail: без другого аргументу друкує РІВНО один рядок (немає рядка деталей)" 1 "$out"
+
+out="$(bash -c 'source "$LIB"; _fail "опис з деталями" "додаткові деталі провалу"' 2>&1)"
+assert_contains "_fail: з другим аргументом друкує опис" "$out" "✘ опис з деталями"
+assert_contains "_fail: з другим аргументом друкує деталі окремим рядком" "$out" "додаткові деталі провалу"
+assert_eq_lines "_fail: з другим аргументом друкує РІВНО два рядки" 2 "$out"
+
+out="$(bash -c 'source "$LIB"; _fail "рахує провал" >/dev/null; printf "RUN=%s FAILED=%s\n" "$TESTS_RUN" "$TESTS_FAILED"' 2>&1)"
+assert_contains "_fail: рахує TESTS_RUN і TESTS_FAILED так само, як через expect_*" "$out" "RUN=1 FAILED=1"
+
+out="$(bash -c 'source "$LIB"; _fail "код завжди 0" >/dev/null; printf "code=%s\n" "$?"' 2>&1)"
+assert_contains "_fail: сама завжди повертає 0" "$out" "code=0"
+
 printf '\n=== expect_eq ===\n'
 
 check_eq_pass "expect_eq: однакові прості рядки" "hello"
@@ -144,6 +183,8 @@ out="$(bash -c '
 ' 2>&1)"
 code=$?
 assert_nonzero "test_summary: фактична кількість БІЛЬША за очікувану -> ненульовий код" "$code"
+assert_contains "test_summary: повідомлення про перевищення теж пояснює причину (той самий рядок, що й недобіг)" \
+  "$out" "набір обірвався"
 
 out="$(bash -c 'source "$LIB"; test_summary' 2>&1)"
 code=$?
@@ -156,6 +197,9 @@ assert_nonzero "test_summary: виклик із порожнім рядком з
 
 out="$(bash -c 'source "$LIB"; TEST_NAME="назва-набору"; expect_ok "a" true; test_summary 1' 2>&1)"
 assert_contains "test_summary: використовує TEST_NAME у заголовку підсумку" "$out" "назва-набору: 1 тест(ів), 0 провалено"
+
+out="$(bash -c 'source "$LIB"; expect_ok "a" true; test_summary 1' 2>&1)"
+assert_contains "test_summary: без TEST_NAME використовує дефолт «тести» у заголовку" "$out" "тести: 1 тест(ів), 0 провалено"
 
 printf '\n%s: %d тест(ів), %d провалено\n' "test-lib.test.sh" "$RUN" "$FAILED"
 [ "$FAILED" -eq 0 ]

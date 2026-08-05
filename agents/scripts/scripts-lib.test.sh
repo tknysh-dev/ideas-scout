@@ -145,6 +145,15 @@ expect_eq "count_posts: data без children — 0, не падає" "0" "$(coun
 
 expect_eq "count_posts: файла не існує — 0" "0" "$(count_posts "$TMP_DIR/does-not-exist.json")"
 
+# ---------------------------------------------------------------------------
+# READER невідомий (ні jq, ні python3 — json_reader повернув "none")
+# ---------------------------------------------------------------------------
+
+READER="none"
+expect_eq "count_posts: READER=none — фолбек ?" "?" "$(count_posts "$POSTS_FILE")"
+expect_eq "get_json_field: READER=none — порожньо (немає гілки на цей випадок)" \
+  "" "$(get_json_field "$TOKEN_OK" access_token)"
+
 READER="jq"
 if command -v jq >/dev/null 2>&1; then
   JQ_TOKEN_FILE="$TMP_DIR/jq_token.json"
@@ -279,4 +288,4 @@ EOF
 expect_eq "extract_field: обрізає інлайновий # коментар і пробіли навколо" \
   "idea-002" "$(extract_field "$FM_COMMENT" id)"
 
-test_summary 63
+test_summary 65
