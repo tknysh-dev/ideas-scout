@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Pre-commit хук: єдина перевірка перед записом коміту.
+# Перевірка версіонується в репозиторії (hooks/) і включається
+# командою: git config core.hooksPath hooks (на кожній машині окремо).
+# Як обійти: git commit --no-verify
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CHECK_SCRIPT="$REPO_ROOT/check.sh"
+
+if [[ ! -f "$CHECK_SCRIPT" ]] || [[ ! -x "$CHECK_SCRIPT" ]]; then
+	echo "⚠️  Немає виконуваного $CHECK_SCRIPT — перевірку пропущено." >&2
+	echo "   Коміт не блокується: поломка самого хука не має зупиняти роботу." >&2
+	exit 0
+fi
+
+# Статус береться окремим рядком, а не з $? усередині `if ! …`: там $? —
+# це результат заперечення, тобто завжди 0, і хук пропускав би коміт.
+"$CHECK_SCRIPT" --fast
+STATUS=$?
+if [ "$STATUS" -ne 0 ]; then
+	echo "❌ Перевірка не пройшла — коміт зупинено. Полагодь помилки вище." >&2
+	echo "   Щоб обійти хук цього разу: git commit --no-verify" >&2
+	exit "$STATUS"
+fi
