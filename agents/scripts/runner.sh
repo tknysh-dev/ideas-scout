@@ -75,6 +75,17 @@ case "$PROVIDER" in claude|codex) ;; *) echo "runner.sh: --provider має бу�
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# runner-lib.sh — чисті функції runner.sh (винесені для юніт-тестів, див.
+# шапку файлу); без нього runner.sh не працює, тому відсутність — фатальна.
+RUNNER_LIB="$SCRIPT_DIR/runner-lib.sh"
+if [ ! -f "$RUNNER_LIB" ]; then
+  echo "runner.sh: не знайдено $RUNNER_LIB — runner-lib.sh обов'язковий, зупиняюсь" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090,SC1091
+source "$RUNNER_LIB"
+
 cd "$REPO_ROOT" || { echo "runner.sh: не вдалось перейти в $REPO_ROOT" >&2; exit 2; }
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -151,16 +162,7 @@ STARTED_EPOCH="$(date +%s)"
 RUN_ID=""
 RUN_REGISTERED=0
 
-json_escape() {
-  # мінімальне екранування для рядкових полів (лапки, зворотні слеші, переводи рядків)
-  printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip("\n")))' 2>/dev/null \
-    || printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' ')"
-}
-
-json_array_of_strings() {
-  # json_array_of_strings a b c -> ["a","b","c"]; без аргументів -> []
-  python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"
-}
+# json_escape, json_array_of_strings — у runner-lib.sh (засорсено вище).
 
 # write_status: раніше писав logs/status/<job>.json; тепер реєстрація прогону —
 # у Supabase через db.sh (таблиця runs), Фаза 4 міграції. Викликається лише ПІСЛЯ
@@ -188,33 +190,7 @@ write_status() {
     || echo "runner.sh: попередження — не вдалось записати завершення прогону в БД (runs)" >&2
 }
 
-# ---------------------------------------------------------------------------
-# Захист робочих годин: launchd після сну доганяє пропущені розклади вдень —
-# такий catch-up конкурує з власником за ліміт підписки. Реальний (не dry-run)
-# прогін у робочому вікні пропускається. Overrides: IDEAS_SCOUT_WORK_DAYS
-# (дефолт "1,2,3,4,5", 1=понеділок), IDEAS_SCOUT_WORK_HOURS (дефолт
-# "09:00-19:00"; значення "none" вимикає захист), IDEAS_SCOUT_IGNORE_WORK_HOURS=1
-# — разовий обхід для ручного запуску.
-# ---------------------------------------------------------------------------
-
-in_work_hours() {
-  local days="${IDEAS_SCOUT_WORK_DAYS:-1,2,3,4,5}"
-  local hours="${IDEAS_SCOUT_WORK_HOURS:-09:00-19:00}"
-  [ "$hours" = "none" ] && return 1
-  local dow
-  dow="$(date +%u)"
-  case ",$days," in
-    *,"$dow",*) ;;
-    *) return 1 ;;
-  esac
-  local now_min start end sm em
-  now_min=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
-  start="${hours%-*}"
-  end="${hours#*-}"
-  sm=$(( 10#${start%:*} * 60 + 10#${start#*:} ))
-  em=$(( 10#${end%:*} * 60 + 10#${end#*:} ))
-  [ "$now_min" -ge "$sm" ] && [ "$now_min" -lt "$em" ]
-}
+# in_work_hours (захист робочих годин) — у runner-lib.sh (засорсено вище).
 
 # Тріаж завжди ініціює власник вручну з чату — це не launchd catch-up, і мовчазний
 # skip виглядав би для нього як зависання бота. Захист робочих годин його не стосується.
@@ -315,7 +291,9 @@ fi
 # run_id
 # ---------------------------------------------------------------------------
 
-RUN_ID="$(date +%Y%m%d-%H%M%S)-${PROVIDER}-${TRACK}-${AGENT}"
+# date тут БЕЗ -u (локальний час) — навмисно, не міняти на UTC (build_run_id
+# у runner-lib.sh це документує).
+RUN_ID="$(build_run_id "$(date +%Y%m%d-%H%M%S)" "$PROVIDER" "$TRACK" "$AGENT")"
 echo "runner.sh: run_id=$RUN_ID"
 
 # Реєстрація — умова спостережуваності, а не формальність: write_status пише в
@@ -688,38 +666,8 @@ if ! git_lock_acquire 1800; then
   exit 0
 fi
 
-# ---------------------------------------------------------------------------
-# Guard проти промпт-ін'єкції — ALLOWLIST: комітиться (і взагалі приймається)
-# лише те, що агент має право міняти. БУДЬ-ЯКИЙ інший змінений/новий шлях
-# (agents/scripts/, agents/prompts/, agents/launchd/, .gitignore, docs/, корінь, .github/ —
-# будь-що) відкочується, потрапляє в blocked_paths і дає status=blocked_paths.
-# Розбір порцеляну через -z/NUL — шляхи з пробілами та не-ASCII (git-лапки)
-# не обходять детекцію.
-#
-# Фаза 4 (Supabase): ideas/sources/runs/events/inbox тепер пишуться в БД через
-# db.sh, не файлами — тому registries/*, logs/runs/*, logs/status/*, logs/triage/*.md
-# і вердикт-файли inbox прибрано з allowlist: якщо агент (чи промпт-ін'єкція)
-# усе ж спробує писати туди по-старому, це тепер саме та аномалія, яку має
-# ловити guard, а не тихо пропускати. inbox/ лишається дозволеним лише тому, що
-# туди пише БОТ (вкладення для тріажу) ДО старту прогону — не сам агент.
-# logs/triage/*.progress лишається — туди агент-тріаж пише живий прогрес для чату.
-# ---------------------------------------------------------------------------
-
-is_allowed_path() {
-  case "$1" in
-    agents/catalogs/*) return 0 ;;
-    logs/decisions.md|logs/dedup-decisions.md) return 0 ;;
-    # Вкладення ручного подання з Telegram: пише бот ДО старту прогону, не агент.
-    inbox/*|inbox) return 0 ;;
-    logs/triage/*.progress) return 0 ;;
-    agents/criteria/criteria*|agents/criteria/search-queries-*.md|agents/criteria/search-queries.md|agents/criteria/taxonomy.md|agents/criteria/availability.md) return 0 ;;
-    # Рантайм цього ж прогону (gitignored; тут — belt-and-braces на випадок
-    # checkout без оновленого .gitignore): не блокувати самих себе.
-    logs/locks/*|logs/launchd/*|logs/quarantine/*) return 0 ;;
-    logs/locks|logs/launchd|logs/quarantine) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+# Guard проти промпт-ін'єкції — is_allowed_path (ALLOWLIST) — у runner-lib.sh
+# (засорсено вище); коментар-блок, що пояснює межу, лишається там же.
 
 BLOCKED_PATHS=()
 while IFS= read -r -d '' entry; do
@@ -773,27 +721,8 @@ if [ "${#BLOCKED_PATHS[@]}" -gt 0 ]; then
     || printf '["%s"]' "$(printf '%s' "${BLOCKED_PATHS[*]}" | sed 's/"/\\"/g')")"
 fi
 
-# ---------------------------------------------------------------------------
-# Коміт: staging строго за allowlist (дзеркало is_allowed_path, мінус рантайм).
-#
-# Фаза 4 (Supabase): ideas/sources/runs/events/inbox — ДАНІ, вони більше не
-# комітяться (registries/, logs/runs/, inbox/, logs/triage/ прибрано зі
-# staging) — прогони пишуть їх у БД через db.sh. У Git далі комітяться лише
-# код і "поведінкові" файли: каталог можливостей і критерії (правила, що їх
-# тюнить ревізор/власник), плюс два прозові журнали рішень без власної таблиці
-# в схемі (logs/decisions.md, logs/dedup-decisions.md).
-# ---------------------------------------------------------------------------
-
-stage_allowed_paths() {
-  local p
-  for p in agents/catalogs logs/decisions.md logs/dedup-decisions.md \
-           agents/criteria/taxonomy.md agents/criteria/availability.md; do
-    [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
-  done
-  for p in agents/criteria/criteria*.md agents/criteria/search-queries*.md; do
-    [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
-  done
-}
+# Коміт: staging за allowlist — stage_allowed_paths — у runner-lib.sh
+# (засорсено вище); коментар-блок лишається там же.
 
 push_with_retry() {
   local branch="$1"

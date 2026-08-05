@@ -104,6 +104,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+section "Тести скриптів"
+# ---------------------------------------------------------------------------
+shopt -s nullglob
+SH_TESTS=("$REPO_ROOT/agents/scripts"/*.test.sh)
+shopt -u nullglob
+
+if [ "${#SH_TESTS[@]}" -eq 0 ]; then
+  note "немає жодного agents/scripts/*.test.sh"
+else
+  for f in "${SH_TESTS[@]}"; do
+    rel="${f#"$REPO_ROOT"/}"
+    step_start "$rel"
+    T_OUT="$("$f" 2>&1)"
+    T_STATUS=$?
+    if [ "$T_STATUS" -eq 0 ]; then
+      ok "${rel}: $(printf '%s' "$T_OUT" | tail -1) ($(step_elapsed))"
+    else
+      err "${rel} провалився ($(step_elapsed)):"
+      printf '%s\n' "$T_OUT" | sed 's/^/      /'
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
 section "Python"
 # ---------------------------------------------------------------------------
 shopt -s nullglob
