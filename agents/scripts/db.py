@@ -55,6 +55,29 @@ def _load_env() -> dict:
     return env
 
 
+def _align_bulk(rows: list) -> list:
+    """Однаковий набір ключів у всіх рядках пакета — вимога PostgREST.
+
+    Пакетний POST з різними наборами ключів відхиляється цілком: HTTP 400,
+    PGRST102 "All object keys must match". Санітизатори складають рядки з
+    полів, які модель могла й не заповнити, тож набір ключів залежить від
+    відповіді моделі — пакет ламається не завжди, а лише на певних даних, і
+    завжди в кінці прогону, після години роботи моделей.
+
+    Вирівнювання живе тут, на межі з базою, а не у викликах: обмеження
+    належить транспорту, і новий пакетний POST отримує його задарма, замість
+    покладатись на те, що про нього не забудуть. Відсутні ключі доливаються
+    як None — нової поломки це не створює: рядок без NOT NULL-колонки впав би
+    й без вирівнювання.
+    """
+    if len(rows) < 2 or not all(isinstance(row, dict) for row in rows):
+        return rows
+    keys = {key for row in rows for key in row}
+    if all(len(row) == len(keys) for row in rows):
+        return rows
+    return [{key: row.get(key) for key in keys} for row in rows]
+
+
 def _request(method: str, path: str, body=None, timeout: float = 20.0):
     env = _load_env()
     url = env["SUPABASE_URL"].rstrip("/") + "/rest/v1" + path
@@ -67,6 +90,8 @@ def _request(method: str, path: str, body=None, timeout: float = 20.0):
         headers["Prefer"] = "return=representation"
     data = None
     if body is not None:
+        if isinstance(body, list):
+            body = _align_bulk(body)
         data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
