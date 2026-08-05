@@ -1,0 +1,12 @@
+[run]
+branch = True
+# Тести ганяються під python3 з PATH (3.14), а конвеєр — під системний
+# /usr/bin/python3 (3.9, без coverage). Конфіг стосується лише збору покриття
+# під час тестів і не чіпає, як скрипти запускаються в проді.
+omit =
+    *_test.py
+    test_support.py
+
+[report]
+precision = 1
+skip_empty = True

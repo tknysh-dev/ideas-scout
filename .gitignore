@@ -27,6 +27,10 @@ __pycache__/
 # Кеш ruff — локальний, створюється при кожному прогоні check.sh
 .ruff_cache/
 
+# Артефакти coverage.py (agents/scripts) — локальний вимір, не переноситься
+agents/scripts/.coverage
+agents/scripts/htmlcov/
+
 # Встановлюються локально на кожній машині через install-launchd.sh.
 agents/worker/node_modules/
 
