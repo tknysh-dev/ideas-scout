@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # check.sh — одна команда, що перед комітом ганяє всі статичні перевірки й
-# тести: синтаксис і shellcheck усіх shell-скриптів, компільованість і lint
-# python-скриптів агентів, типи/lint/тести порталу (dashboard/) і тести
-# воркера (agents/worker/). Мета — зловити те, що інакше випливе аж на
+# тести: синтаксис і shellcheck shell-скриптів, компільованість і ruff
+# python-скриптів агентів, усі набори тестів, контракт промптів, узгодженість
+# міграцій зі схемою, валідність launchd-plist, пошук секретів, і типи/lint/
+# збірку/тести порталу та воркера. Мета — зловити те, що інакше випливе аж на
 # проді чи в наступному прогоні runner.sh.
 #
 # Як і doctor.sh, check.sh НЕ зупиняється на першій помилці: проганяє всі
@@ -56,8 +57,47 @@ fi
 
 section() { printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
 ok()   { OK_COUNT=$((OK_COUNT + 1));   printf '  %s✔%s  %s\n' "$C_OK" "$C_RESET" "$1"; }
+# warn не валить прогін: це відоме, вже наявне занепокоєння (напр. міграція без
+# IF NOT EXISTS), яке треба бачити, але яке не має блокувати коміт.
+warn() { WARN_COUNT=$((WARN_COUNT + 1)); printf '  %s▲%s  %s\n' "$C_WARN" "$C_RESET" "$1"; }
 err()  { ERR_COUNT=$((ERR_COUNT + 1));  printf '  %s✘%s  %s\n' "$C_ERR" "$C_RESET" "$1"; }
 note() { printf '  %s·  %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
+
+# Сторожі проєкту (doctor_prompt_contract.py, migrations_check.py) друкують
+# рядки "рівень<TAB>повідомлення" — той самий контракт, що споживає doctor.sh.
+# Тут він розкладається у ok/warn/err/note, щоб коди виходу лишались єдиними.
+run_contract_check() {
+  local label="$1"; shift
+  local out status
+  out="$("$@" 2>&1)"
+  status=$?
+  if [ "$status" -ne 0 ] && [ -z "$out" ]; then
+    err "$label: перевірка впала (код $status)"
+    return
+  fi
+  # Попередження згортаються в підсумок: у міграцій їх сімнадцять, усі про два
+  # давно накочені файли, і щоденні сімнадцять рядків просто перестануть читати.
+  # Число лишається на очах — воно зросте, якщо нову міграцію напишуть так само.
+  local level message warn_count=0 first_warn=""
+  while IFS=$'\t' read -r level message; do
+    [ -z "$level" ] && continue
+    case "$level" in
+      ok)   ok "$label: $message" ;;
+      err)  err "$label: $message" ;;
+      warn)
+        warn_count=$((warn_count + 1))
+        [ -z "$first_warn" ] && first_warn="$message"
+        ;;
+      *)    note "$label: $message" ;;
+    esac
+  done <<< "$out"
+  if [ "$warn_count" -eq 1 ]; then
+    warn "$label: $first_warn"
+  elif [ "$warn_count" -gt 1 ]; then
+    warn "$label: $warn_count попереджень, перше — $first_warn"
+    note "$label: решта — запусти перевірку напряму"
+  fi
+}
 
 START_EPOCH="$(date +%s)"
 step_start() { STEP_EPOCH="$(date +%s)"; note "$1…"; }
@@ -188,6 +228,12 @@ else
   note "немає $SYSTEM_PY — перевірку сумісності з системним python пропущено"
 fi
 
+step_start "контракт промптів"
+run_contract_check "промпти" python3 "$REPO_ROOT/agents/scripts/doctor_prompt_contract.py"
+
+step_start "міграції проти shared/schema.sql"
+run_contract_check "міграції" python3 "$REPO_ROOT/agents/scripts/migrations_check.py"
+
 if command -v ruff >/dev/null 2>&1; then
   step_start "ruff check agents/scripts/"
   RUFF_OUT="$(ruff check "$REPO_ROOT/agents/scripts/" 2>&1)"
@@ -200,6 +246,64 @@ if command -v ruff >/dev/null 2>&1; then
   fi
 else
   note "ruff не встановлений — перевірку пропущено (brew install ruff)"
+fi
+
+# ---------------------------------------------------------------------------
+section "Залежності"
+# ---------------------------------------------------------------------------
+# Тільки інформативно, ніколи не валить прогін: npm audit залежить від мережі й
+# від щойно опублікованих порад, тож як блокуючий гейт він зробив би check.sh
+# недетермінованим — коміт падав би через чужу вразливість, знайдену вночі.
+if [ "$FAST" -eq 1 ]; then
+  note "--fast: npm audit пропущено"
+else
+  for pkg in dashboard agents/worker; do
+    if [ -d "$REPO_ROOT/$pkg/node_modules" ]; then
+      if npm audit --audit-level=high --prefix "$REPO_ROOT/$pkg" >/dev/null 2>&1; then
+        note "$pkg: npm audit не бачить вразливостей рівня high і вище"
+      else
+        note "$pkg: npm audit щось знайшов — глянь окремо (не блокує коміт)"
+      fi
+    else
+      note "$pkg: немає node_modules, audit пропущено"
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
+section "Конфігурація і секрети"
+# ---------------------------------------------------------------------------
+# plutil стоїть і в install-launchd.sh, але там він спрацьовує аж при
+# встановленні. Зламаний plist означає, що джоб тихо ніколи не запуститься —
+# це треба ловити на коміті, а не через тиждень мовчазної тиші.
+if command -v plutil >/dev/null 2>&1; then
+  shopt -s nullglob
+  PLISTS=("$REPO_ROOT/agents/launchd"/*.plist)
+  shopt -u nullglob
+  PLIST_BAD=0
+  for f in "${PLISTS[@]}"; do
+    plutil -lint "$f" >/dev/null 2>&1 || { err "невалідний plist: ${f#"$REPO_ROOT"/}"; PLIST_BAD=1; }
+  done
+  [ "$PLIST_BAD" -eq 0 ] && ok "plutil: усі ${#PLISTS[@]} launchd-plist валідні"
+else
+  note "plutil недоступний — валідність plist не перевірено"
+fi
+
+# Секрети в репозиторії заборонені (AGENTS.md, README). .gitignore прикриває
+# env-файли, але не ключ, вставлений у код чи в лог. Шукаємо за формою відомих
+# токенів — і лише у файлах, які git реально відстежує.
+step_start "пошук секретів у відстежуваних файлах"
+SECRET_HITS="$(git ls-files -z 2>/dev/null | xargs -0 grep -nIE \
+  -e 'eyJhbGciOiJ[A-Za-z0-9_-]{10,}' \
+  -e '\b[0-9]{8,10}:AA[A-Za-z0-9_-]{30,}' \
+  -e '\bsk-(ant-)?[A-Za-z0-9_-]{20,}' \
+  -e '\bgh[pousr]_[A-Za-z0-9]{30,}' \
+  2>/dev/null)"
+if [ -z "$SECRET_HITS" ]; then
+  ok "секретів за відомими формами не знайдено ($(step_elapsed))"
+else
+  err "схоже на секрет у відстежуваних файлах ($(step_elapsed)):"
+  printf '%s\n' "$SECRET_HITS" | cut -c1-160 | sed 's/^/      /'
 fi
 
 # ---------------------------------------------------------------------------
@@ -236,6 +340,19 @@ else
       err "npm run lint знайшов зауваження ($(step_elapsed)):"
       printf '%s\n' "$LINT_OUT" | sed 's/^/      /'
     fi
+
+    # Портал деплоїться у Vercel, а збірка падає там, де tsc мовчить: порушення
+    # межі server/client, server-only в клієнтському компоненті, помилки в
+    # конфігурації маршрутів. Без цього кроку таке виявляється аж на деплої.
+    step_start "npm run build"
+    BUILD_OUT="$(npm run build 2>&1)"
+    BUILD_STATUS=$?
+    if [ "$BUILD_STATUS" -eq 0 ]; then
+      ok "npm run build: прод-збірка зібралась ($(step_elapsed))"
+    else
+      err "npm run build провалився ($(step_elapsed)):"
+      printf '%s\n' "$BUILD_OUT" | tail -40 | sed 's/^/      /'
+    fi
   fi
 
   step_start "npm test"
@@ -257,6 +374,23 @@ section "Воркер (agents/worker/)"
 # інжектиться зовні), тож тести воркера йдуть на голому node. Гейт тут означав
 # би, що на машині без npm install ці тести тихо не запускаються ніколи.
 cd "$REPO_ROOT/agents/worker" || exit 2
+
+# Лінт воркера — dev-залежність, тож без node_modules його просто немає. Тести
+# нижче від цього не залежать і йдуть у будь-якому разі.
+if [ -d node_modules ]; then
+  step_start "npm run lint"
+  WLINT_OUT="$(npm run lint 2>&1)"
+  WLINT_STATUS=$?
+  if [ "$WLINT_STATUS" -eq 0 ]; then
+    ok "npm run lint: зауважень немає ($(step_elapsed))"
+  else
+    err "npm run lint знайшов зауваження ($(step_elapsed)):"
+    printf '%s\n' "$WLINT_OUT" | sed 's/^/      /'
+  fi
+else
+  note "немає node_modules — лінт воркера пропущено (npm install --prefix agents/worker)"
+fi
+
 step_start "npm test"
 TEST_OUT="$(npm test 2>&1)"
 TEST_STATUS=$?
