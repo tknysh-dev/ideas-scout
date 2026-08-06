@@ -36,6 +36,52 @@ def _clear_lines():
 
 
 # ---------------------------------------------------------------------------
+# 0. Низькорівневі хелпери розбору — гілки, які через parse_schema/
+#    _count_unrecognized_statements не завжди легко довести до потрібного
+#    стану (екранована лапка ''  всередині рядкового літералу, коментар без
+#    завершального переносу рядка).
+# ---------------------------------------------------------------------------
+
+class StripCommentsTest(unittest.TestCase):
+    def test_doubled_quote_escape_inside_string_preserved(self):
+        # 'it''s ok' — стандартне SQL-екранування лапки подвоєнням; парсер
+        # рядкового стану має лишитись "усередині рядка" після ''.
+        text = "default 'it''s ok'"
+        self.assertEqual(ds._strip_comments(text), text)
+
+    def test_line_comment_without_trailing_newline_is_dropped_to_end(self):
+        # "--"-коментар, що йде до самого кінця файлу без \n після себе:
+        # nl == -1 -> break, а не нескінченний цикл чи IndexError.
+        text = "select 1 -- trailing comment with no newline"
+        self.assertEqual(ds._strip_comments(text), "select 1 ")
+
+
+class FindMatchingParenTest(unittest.TestCase):
+    def test_doubled_quote_inside_string_does_not_confuse_paren_depth(self):
+        text = "(id text default 'it''s', name text)"
+        end = ds._find_matching_paren(text, 0)
+        self.assertEqual(end, len(text) - 1)
+
+
+class SplitTopLevelTest(unittest.TestCase):
+    def test_doubled_quote_inside_default_value_does_not_split_column(self):
+        body = "id text default 'it''s ok', name text"
+        parts = ds._split_top_level(body)
+        self.assertEqual(len(parts), 2)
+        self.assertIn("it''s ok", parts[0])
+
+    def test_trailing_comma_does_not_yield_empty_trailing_part(self):
+        parts = ds._split_top_level("id text, name text,")
+        self.assertEqual(parts, ["id text", " name text"])
+
+
+class SplitStatementsTest(unittest.TestCase):
+    def test_doubled_quote_inside_string_does_not_split_statement(self):
+        text = "insert into t values ('it''s ok');"
+        self.assertEqual(ds._split_statements(text), [text])
+
+
+# ---------------------------------------------------------------------------
 # 1. Розбір shared/schema.sql — базові форми CREATE TABLE / ALTER TABLE
 # ---------------------------------------------------------------------------
 
@@ -211,6 +257,35 @@ class ParseSchemaUnparsedBucket(unittest.TestCase):
         self.assertEqual(unparsed, 1)
         self.assertEqual(ds.lines, [])  # немає жодного err/note із назвою "ideas" тут
 
+    def test_empty_segment_from_double_comma_is_skipped_without_crash(self):
+        sql = "create table t (id text,, name text);"
+        tables, unparsed = ds.parse_schema(sql)
+        self.assertEqual(tables, {"t": {"id", "name"}})
+        self.assertEqual(unparsed, 0)
+
+    def test_segment_not_starting_with_identifier_counts_as_unparsed(self):
+        # "123abc" не матчить `([A-Za-z_][A-Za-z0-9_]*)` — колонка не додається,
+        # але й не зникає мовчки: рахується в unparsed.
+        sql = "create table t (id text, 123abc text);"
+        tables, unparsed = ds.parse_schema(sql)
+        self.assertEqual(tables, {"t": {"id"}})
+        self.assertEqual(unparsed, 1)
+
+    def test_alter_table_with_empty_body_is_skipped_silently(self):
+        # "alter table foo ;" збігається з регексом ALTER-циклу (група ADD
+        # COLUMN порожня), але body.strip() порожній -> continue ДО
+        # consumed.append: інструкція лишається нерозпізнаною в remainder.
+        sql = "alter table foo ;"
+        tables, unparsed = ds.parse_schema(sql)
+        self.assertEqual(tables, {})
+        self.assertEqual(unparsed, 1)
+
+    def test_alter_table_add_column_without_name_yields_no_column(self):
+        sql = "alter table foo add column ;"
+        tables, unparsed = ds.parse_schema(sql)
+        self.assertEqual(tables, {})
+        self.assertEqual(unparsed, 0)
+
 
 # ---------------------------------------------------------------------------
 # 4. ВІДОМИЙ ДЕФЕКТ: надто жадібне вирізання тіла CREATE FUNCTION у
@@ -357,6 +432,14 @@ class CompareWithDbSchema(unittest.TestCase):
         self.assertFalse(any(line.startswith("err\t") for line in lines))
         self.assertFalse(any(line.startswith("warn\t") for line in lines))
 
+    def test_db_unreachable_prints_partial_lines_and_stops_before_comparison(self):
+        # fetch_db_tables повертає None (недоступна база чи зіпсована
+        # відповідь) — main() друкує вже накопичені рядки (тут — жодного) і
+        # виходить ДО будь-якої звірки таблиць/колонок.
+        schema_sql = "create table ideas (id text primary key);"
+        lines = self._run_main(schema_sql, None)
+        self.assertEqual(lines, [])
+
     def test_missing_schema_file_is_err(self):
         with mock.patch.object(ds, "SCHEMA_FILE", os.path.join(self._tmpdir.name, "nope.sql")):
             ds.main()
@@ -364,6 +447,78 @@ class CompareWithDbSchema(unittest.TestCase):
         level, message = ds.lines[0].split("\t", 1)
         self.assertEqual(level, "err")
         self.assertIn("nope.sql", message)
+
+
+# ---------------------------------------------------------------------------
+# 3. _load_creds — інші тести підміняють цю функцію цілком, тут вона
+#    викликається напряму. Свій env-файл підмінюється через ds.ENV_FILE,
+#    SUPABASE_URL/SUPABASE_SERVICE_KEY з оточення прибираються на час тесту,
+#    щоб не залежати від того, що реально лежить у середовищі.
+# ---------------------------------------------------------------------------
+
+class LoadCredsTest(unittest.TestCase):
+    def setUp(self):
+        _clear_lines()
+        self._saved_environ = {}
+        for key in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY"):
+            self._saved_environ[key] = os.environ.pop(key, None)
+
+    def tearDown(self):
+        for key, value in self._saved_environ.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    @staticmethod
+    def _safe_remove(path: str) -> None:
+        if os.path.exists(path):
+            os.remove(path)
+
+    def _write_env_file(self, content: str) -> str:
+        fd, path = tempfile.mkstemp()
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        return path
+
+    def test_env_vars_take_priority_and_skip_file_entirely(self):
+        os.environ["SUPABASE_URL"] = "https://env-var.supabase.co"
+        os.environ["SUPABASE_SERVICE_KEY"] = "env-var-key"
+        with mock.patch.object(ds, "ENV_FILE", "/nonexistent/path/env"):
+            result = ds._load_creds()
+        self.assertEqual(result, ("https://env-var.supabase.co", "env-var-key"))
+        self.assertEqual(ds.lines, [])
+
+    def test_missing_env_file_notes_and_returns_none(self):
+        missing_path = "/nonexistent/path/does-not-exist/env"
+        with mock.patch.object(ds, "ENV_FILE", missing_path):
+            result = ds._load_creds()
+        self.assertIsNone(result)
+        self.assertEqual(len(ds.lines), 1)
+        level, message = ds.lines[0].split("\t", 1)
+        self.assertEqual(level, "note")
+        self.assertIn(missing_path, message)
+
+    def test_env_file_missing_required_key_notes_and_returns_none(self):
+        path = self._write_env_file("SUPABASE_URL=https://x.co\n")
+        self.addCleanup(self._safe_remove, path)
+        with mock.patch.object(ds, "ENV_FILE", path):
+            result = ds._load_creds()
+        self.assertIsNone(result)
+        self.assertEqual(len(ds.lines), 1)
+        level, message = ds.lines[0].split("\t", 1)
+        self.assertEqual(level, "note")
+        self.assertIn(path, message)
+
+    def test_env_file_valid_is_parsed_with_comments_and_quotes(self):
+        path = self._write_env_file(
+            "# коментар\n\nSUPABASE_URL=\"https://x.co\"\nSUPABASE_SERVICE_KEY=key123\n"
+        )
+        self.addCleanup(self._safe_remove, path)
+        with mock.patch.object(ds, "ENV_FILE", path):
+            result = ds._load_creds()
+        self.assertEqual(result, ("https://x.co", "key123"))
+        self.assertEqual(ds.lines, [])
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +629,17 @@ class FetchDbTablesOpenApiParsing(unittest.TestCase):
             result = ds.fetch_db_tables()
         self.assertIsNone(result)
         self.assertTrue(ds.lines[0].startswith("warn\t"))
+
+    def test_generic_os_error_warns_and_returns_none(self):
+        # TimeoutError — підклас OSError, але НЕ urllib.error.URLError:
+        # окрема except-гілка нижче за HTTPError/URLError.
+        with mock.patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+            result = ds.fetch_db_tables()
+        self.assertIsNone(result)
+        self.assertEqual(len(ds.lines), 1)
+        level, message = ds.lines[0].split("\t", 1)
+        self.assertEqual(level, "warn")
+        self.assertIn("timed out", message)
 
     def test_non_json_response_warns_and_returns_none(self):
         with mock.patch("urllib.request.urlopen", return_value=_FakeHttpResponse(b"<html>not json</html>")):

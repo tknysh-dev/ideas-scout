@@ -8,9 +8,12 @@ db._request без підміни, він впаде на DbError (немає en
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 
 import db
@@ -189,6 +192,102 @@ class LoadEnvTest(unittest.TestCase):
             self._safe_remove(path)  # файл зник, але кеш має вижити
             env2 = db._load_env()
         self.assertIs(env1, env2)
+
+
+class RequestTest(unittest.TestCase):
+    """_request саме тут — жоден інший тест його не викликає напряму: усюди
+    він змокано цілком. urllib.request.urlopen тут теж завжди підмінений."""
+
+    def setUp(self):
+        patcher = mock.patch.object(
+            db,
+            "_load_env",
+            return_value={
+                "SUPABASE_URL": "https://example.supabase.co/",
+                "SUPABASE_SERVICE_KEY": "secret-key",
+            },
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _response(body: bytes):
+        resp = mock.MagicMock()
+        resp.read.return_value = body
+        cm = mock.MagicMock()
+        cm.__enter__.return_value = resp
+        cm.__exit__.return_value = False
+        return cm
+
+    @mock.patch("urllib.request.urlopen")
+    def test_get_request_builds_url_and_returns_parsed_json(self, mock_urlopen):
+        mock_urlopen.return_value = self._response(b'{"id": "d1"}')
+        result = db._request("GET", "/inbox?select=*")
+        self.assertEqual(result, {"id": "d1"})
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(req.full_url, "https://example.supabase.co/rest/v1/inbox?select=*")
+        self.assertEqual(req.get_method(), "GET")
+        self.assertEqual(req.get_header("Apikey"), "secret-key")
+        self.assertEqual(req.get_header("Authorization"), "Bearer secret-key")
+        self.assertIsNone(req.get_header("Prefer"))
+
+    @mock.patch("urllib.request.urlopen")
+    def test_empty_response_body_returns_none(self, mock_urlopen):
+        mock_urlopen.return_value = self._response(b"")
+        result = db._request("DELETE", "/inbox?draft_id=eq.d1")
+        self.assertIsNone(result)
+
+    @mock.patch("urllib.request.urlopen")
+    def test_post_sets_prefer_header_and_encodes_dict_body(self, mock_urlopen):
+        mock_urlopen.return_value = self._response(b'[{"draft_id": "d1"}]')
+        result = db._request("POST", "/inbox", {"draft_id": "d1"})
+        self.assertEqual(result, [{"draft_id": "d1"}])
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(req.get_header("Prefer"), "return=representation")
+        self.assertEqual(json.loads(req.data), {"draft_id": "d1"})
+
+    @mock.patch("urllib.request.urlopen")
+    def test_patch_sets_prefer_header(self, mock_urlopen):
+        mock_urlopen.return_value = self._response(b"[]")
+        db._request("PATCH", "/inbox?draft_id=eq.d1", {"status": "done"})
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(req.get_header("Prefer"), "return=representation")
+
+    @mock.patch("urllib.request.urlopen")
+    def test_list_body_aligned_before_sending(self, mock_urlopen):
+        mock_urlopen.return_value = self._response(b"[]")
+        db._request("POST", "/inbox", [{"a": 1}, {"a": 2, "b": 3}])
+        req = mock_urlopen.call_args[0][0]
+        sent = json.loads(req.data)
+        self.assertEqual(sent, [{"a": 1, "b": None}, {"a": 2, "b": 3}])
+
+    @mock.patch("urllib.request.urlopen")
+    def test_http_error_raises_dberror_with_method_path_code_body(self, mock_urlopen):
+        http_error = urllib.error.HTTPError(
+            "https://example.supabase.co/rest/v1/inbox",
+            409,
+            "Conflict",
+            None,
+            io.BytesIO(b'{"message": "duplicate key"}'),
+        )
+        mock_urlopen.side_effect = http_error
+        with self.assertRaises(db.DbError) as ctx:
+            db._request("POST", "/inbox", {"draft_id": "d1"})
+        message = str(ctx.exception)
+        self.assertIn("POST", message)
+        self.assertIn("/inbox", message)
+        self.assertIn("409", message)
+        self.assertIn("duplicate key", message)
+
+    @mock.patch("urllib.request.urlopen")
+    def test_url_error_raises_dberror(self, mock_urlopen):
+        mock_urlopen.side_effect = urllib.error.URLError("timed out")
+        with self.assertRaises(db.DbError) as ctx:
+            db._request("GET", "/ideas")
+        message = str(ctx.exception)
+        self.assertIn("GET", message)
+        self.assertIn("/ideas", message)
+        self.assertIn("timed out", message)
 
 
 class InsertInboxTest(unittest.TestCase):

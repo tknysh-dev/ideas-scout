@@ -12,7 +12,12 @@ shared/migrations/*.sql і shared/schema.sql — це навмисно (зада
 
 from __future__ import annotations
 
+import contextlib
+import io
+import os
+import tempfile
 import unittest
+from unittest import mock
 
 import migrations_check as mc
 
@@ -69,6 +74,16 @@ class ExtractValueChecksTest(unittest.TestCase):
 
     def test_no_check_returns_empty(self):
         sql = "create table ideas (id text primary key, title text);"
+        self.assertEqual(mc.extract_value_checks(sql), {})
+
+    def test_unbalanced_create_table_parens_are_skipped_without_crash(self):
+        # _find_matching_paren повертає None на незакритій CREATE TABLE.
+        # Сам CHECK(...) тут ЗАКРИТИЙ навмисно: text[open_idx+1:None] у
+        # Python — валідний зріз "до кінця рядка", а не помилка, тож якби
+        # `continue` на end_idx is None прибрали, extract_value_checks
+        # мовчки прочитав би CHECK через незакриту CREATE TABLE і повернув
+        # би хибний запис — саме цю різницю тест і фіксує.
+        sql = "create table broken (id text, status text check (status in ('a', 'b'))"
         self.assertEqual(mc.extract_value_checks(sql), {})
 
     def test_comment_with_parens_does_not_confuse_parser(self):
@@ -167,6 +182,27 @@ class CheckSchemaDriftTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0][0], "err")
 
+    def test_check_value_list_only_extra_in_schema_no_missing(self):
+        # schema.sql — надмножина переліку з міграції (нічого не бракує,
+        # лише зайве) -> гілка missing_in_schema порожня, extra_in_schema ні.
+        schema = """
+        create table ideas (
+          id text primary key,
+          status text check (status in ('a', 'b', 'c'))
+        );
+        """
+        migration = """
+        alter table ideas add constraint ideas_status_check check (
+          status in ('a', 'b')
+        );
+        """
+        result = mc.check_schema_drift(schema, [("2026-01-01-x.sql", migration)])
+        self.assertEqual(len(result), 1)
+        level, message = result[0]
+        self.assertEqual(level, "err")
+        self.assertIn("є в schema.sql, немає в міграції: c", message)
+        self.assertNotIn("немає в schema.sql:", message)
+
     def test_chronological_order_matters_last_migration_wins(self):
         schema = """
         create table ideas (
@@ -258,6 +294,18 @@ class CheckIdempotencyTest(unittest.TestCase):
         sql = "alter table ideas add column a text, add column b text;"
         result = mc.check_idempotency(sql, "m.sql")
         self.assertEqual(len(result), 2)
+
+    def test_drop_column_without_if_exists_warns(self):
+        result = mc.check_idempotency("alter table ideas drop column note;", "m.sql")
+        self.assertEqual(len(result), 1)
+        level, message = result[0]
+        self.assertEqual(level, "warn")
+        self.assertIn("DROP COLUMN note", message)
+        self.assertIn("IF EXISTS", message)
+
+    def test_drop_column_if_exists_is_clean(self):
+        result = mc.check_idempotency("alter table ideas drop column if exists note;", "m.sql")
+        self.assertEqual(result, [])
 
     def test_drop_then_add_constraint_same_name_is_recognized_safe(self):
         sql = """
@@ -374,6 +422,127 @@ class ScanUnrecognizedTest(unittest.TestCase):
         $$;
         """
         self.assertEqual(mc.scan_unrecognized(sql, "m.sql"), [])
+
+
+# ---------------------------------------------------------------------------
+# migration_files / read_text — файлова система, теж потребує гілок помилок
+# ---------------------------------------------------------------------------
+
+class MigrationFilesTest(unittest.TestCase):
+    def test_missing_migrations_dir_returns_empty_list(self):
+        with mock.patch.object(mc, "MIGRATIONS_DIR", "/nonexistent/migrations/dir"):
+            self.assertEqual(mc.migration_files(), [])
+
+    def test_only_sql_files_are_listed_and_sorted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for name in ("2026-01-02-b.sql", "2026-01-01-a.sql", "readme.md"):
+                open(os.path.join(tmpdir, name), "w", encoding="utf-8").close()
+            with mock.patch.object(mc, "MIGRATIONS_DIR", tmpdir):
+                self.assertEqual(mc.migration_files(), ["2026-01-01-a.sql", "2026-01-02-b.sql"])
+
+
+class ReadTextTest(unittest.TestCase):
+    def test_nonexistent_file_returns_none(self):
+        self.assertIsNone(mc.read_text("/nonexistent/path/file.sql"))
+
+    def test_directory_instead_of_file_returns_none(self):
+        # os.listdir у migration_files() не розрізняє файл/теку за розширенням
+        # — тека з іменем "*.sql" пройде фільтр, а open() на ній впаде
+        # IsADirectoryError (підклас OSError), і саме цю гілку тут і перевіряємо.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertIsNone(mc.read_text(tmpdir))
+
+    def test_existing_file_returns_contents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "m.sql")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("select 1;")
+            self.assertEqual(mc.read_text(path), "select 1;")
+
+
+# ---------------------------------------------------------------------------
+# run() — синтетичні файлові дерева для гілок помилок (без диска репозиторію)
+# ---------------------------------------------------------------------------
+
+class RunSyntheticTest(unittest.TestCase):
+    def _write(self, path, content):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def test_missing_schema_file_is_err_and_run_stops_immediately(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = os.path.join(tmpdir, "nope.sql")
+            with mock.patch.object(mc, "SCHEMA_FILE", missing):
+                result = mc.run()
+        self.assertEqual(len(result), 1)
+        level, message = result[0]
+        self.assertEqual(level, "err")
+        self.assertIn(missing, message)
+
+    def test_no_migration_files_notes_and_stops(self):
+        with tempfile.TemporaryDirectory() as schema_dir, tempfile.TemporaryDirectory() as empty_mig_dir:
+            schema_path = os.path.join(schema_dir, "schema.sql")
+            self._write(schema_path, "create table ideas (id text primary key);")
+            with mock.patch.object(mc, "SCHEMA_FILE", schema_path), \
+                 mock.patch.object(mc, "MIGRATIONS_DIR", empty_mig_dir):
+                result = mc.run()
+        self.assertEqual(len(result), 1)
+        level, message = result[0]
+        self.assertEqual(level, "note")
+        self.assertIn("немає файлів .sql", message)
+
+    def test_unreadable_migration_file_is_err_but_run_continues(self):
+        with tempfile.TemporaryDirectory() as schema_dir, tempfile.TemporaryDirectory() as mig_dir:
+            schema_path = os.path.join(schema_dir, "schema.sql")
+            self._write(schema_path, "create table ideas (id text primary key);")
+            # тека з іменем, що виглядає як файл міграції — потрапляє в
+            # migration_files() (endswith '.sql'), але read_text() на ній впаде.
+            os.mkdir(os.path.join(mig_dir, "2026-01-01-broken.sql"))
+            with mock.patch.object(mc, "SCHEMA_FILE", schema_path), \
+                 mock.patch.object(mc, "MIGRATIONS_DIR", mig_dir):
+                result = mc.run()
+        err_messages = [msg for level, msg in result if level == "err"]
+        self.assertEqual(len(err_messages), 1)
+        self.assertIn("2026-01-01-broken.sql", err_messages[0])
+        self.assertIn("не вдалось прочитати файл міграції", err_messages[0])
+
+    def test_schema_drift_present_suppresses_ok_drift_message(self):
+        with tempfile.TemporaryDirectory() as schema_dir, tempfile.TemporaryDirectory() as mig_dir:
+            schema_path = os.path.join(schema_dir, "schema.sql")
+            self._write(schema_path, "create table ideas (id text primary key);")
+            self._write(
+                os.path.join(mig_dir, "2026-01-01-add-note.sql"),
+                "alter table ideas add column note text;",
+            )
+            with mock.patch.object(mc, "SCHEMA_FILE", schema_path), \
+                 mock.patch.object(mc, "MIGRATIONS_DIR", mig_dir):
+                result = mc.run()
+        self.assertTrue(any(level == "err" and "ideas(note)" in msg for level, msg in result))
+        self.assertFalse(any(level == "ok" and "узгоджений" in msg for level, msg in result))
+
+    def test_zero_idempotency_warnings_yields_ok_message(self):
+        with tempfile.TemporaryDirectory() as schema_dir, tempfile.TemporaryDirectory() as mig_dir:
+            schema_path = os.path.join(schema_dir, "schema.sql")
+            self._write(schema_path, "create table ideas (id text primary key, note text);")
+            self._write(
+                os.path.join(mig_dir, "2026-01-01-add-note.sql"),
+                "alter table ideas add column if not exists note text;",
+            )
+            with mock.patch.object(mc, "SCHEMA_FILE", schema_path), \
+                 mock.patch.object(mc, "MIGRATIONS_DIR", mig_dir):
+                result = mc.run()
+        self.assertTrue(any(
+            level == "ok" and "без явно небезпечних конструкцій" in msg for level, msg in result
+        ))
+
+
+class MainTest(unittest.TestCase):
+    def test_prints_level_tab_message_for_each_run_result(self):
+        buf = io.StringIO()
+        with mock.patch.object(mc, "run", return_value=[("ok", "все гаразд"), ("warn", "обережно")]), \
+             contextlib.redirect_stdout(buf):
+            mc.main()
+        self.assertEqual(buf.getvalue(), "ok\tвсе гаразд\nwarn\tобережно\n")
 
 
 # ---------------------------------------------------------------------------
