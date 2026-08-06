@@ -116,6 +116,9 @@ is_allowed_path() {
     inbox/*|inbox) return 0 ;;
     logs/triage/*.progress) return 0 ;;
     agents/criteria/criteria*.md|agents/criteria/search-queries-*.md|agents/criteria/search-queries.md|agents/criteria/taxonomy.md|agents/criteria/availability.md) return 0 ;;
+    # Регламент глибокого дослідження і зовнішні брифи: редагуються руками
+    # власника; без allowlist некомічені правки відкочувались би в карантин.
+    agents/criteria/deep-research.md|agents/criteria/external/brief-*.md) return 0 ;;
     # Рантайм цього ж прогону (gitignored; тут — belt-and-braces на випадок
     # checkout без оновленого .gitignore): не блокувати самих себе.
     logs/locks/*|logs/launchd/*|logs/quarantine/*) return 0 ;;
@@ -138,10 +141,12 @@ is_allowed_path() {
 stage_allowed_paths() {
   local p
   for p in agents/catalogs logs/decisions.md logs/dedup-decisions.md \
-           agents/criteria/taxonomy.md agents/criteria/availability.md; do
+           agents/criteria/taxonomy.md agents/criteria/availability.md \
+           agents/criteria/deep-research.md; do
     [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
   done
-  for p in agents/criteria/criteria*.md agents/criteria/search-queries*.md; do
+  for p in agents/criteria/criteria*.md agents/criteria/search-queries*.md \
+           agents/criteria/external/brief-*.md; do
     [ -e "$p" ] && git add -A -- "$p" 2>/dev/null
   done
 }

@@ -33,6 +33,9 @@ expect_ok "agents/criteria/search-queries-*.md"        is_allowed_path "agents/c
 expect_ok "agents/criteria/search-queries.md"           is_allowed_path "agents/criteria/search-queries.md"
 expect_ok "agents/criteria/taxonomy.md"                 is_allowed_path "agents/criteria/taxonomy.md"
 expect_ok "agents/criteria/availability.md"              is_allowed_path "agents/criteria/availability.md"
+expect_ok "agents/criteria/deep-research.md"             is_allowed_path "agents/criteria/deep-research.md"
+expect_ok "agents/criteria/external/brief-*.md"          is_allowed_path "agents/criteria/external/brief-apps.md"
+expect_ok "agents/criteria/external/brief-*.md (deep-blocks)" is_allowed_path "agents/criteria/external/brief-deep-blocks.md"
 
 expect_ok "logs/locks (тека)"              is_allowed_path "logs/locks"
 expect_ok "logs/locks/* (файл локу)"       is_allowed_path "logs/locks/passive-income-collector.lock"
@@ -60,6 +63,7 @@ expect_fail "корінь: check.sh"              is_allowed_path "check.sh"
 expect_fail "корінь: AGENTS.md"             is_allowed_path "AGENTS.md"
 expect_fail ".github/*"                     is_allowed_path ".github/workflows/ci.yml"
 expect_fail "hooks/pre-commit"              is_allowed_path "hooks/pre-commit"
+expect_fail "agents/criteria/external/* поза brief-*" is_allowed_path "agents/criteria/external/notes.md"
 
 expect_fail "Фаза 4: registries/* більше не allowlist" is_allowed_path "registries/passive-income/ideas.md"
 expect_fail "Фаза 4: logs/runs/*"                        is_allowed_path "logs/runs/20260728-185055-claude-passive-income-analyst.md"
@@ -171,4 +175,4 @@ expect_eq \
 
 rm -rf "$STAGE_TMP"
 
-test_summary 52
+test_summary 56
