@@ -531,11 +531,16 @@ print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
   # Витіснені звіти (superseded_at не порожній) до health не беремо: питання
   # тут — «чи зараз щось зламано», а невдалий прогін, який власник уже
   # перекрив успішним, інакше тримав би тривогу ввімкненою цілий тиждень.
+  # Джоби синтезу тягнемо разом з успішними, а не саме лише failed: те саме
+  # правило, що вище для витіснених звітів, стосується і їх. Падіння, після
+  # якого синтез уже відпрацював успішно, — це історія, а не поломка; рахуючи
+  # всі падіння за тиждень, перевірка тримала тривогу ввімкненою цілих сім днів
+  # після фіксу, який вона ж і не помічала.
   local reports jobs tables_ok=true
   reports="$(_db_get "/research_reports?select=provider,stage,status,created_at&superseded_at=is.null&created_at=gte.$(_urlenc "$since")" 2>/dev/null)" || tables_ok=false
-  jobs="$(_db_get "/jobs?select=type,status,last_error,finished_at&type=eq.deep_research_synthesis&status=eq.failed&finished_at=gte.$(_urlenc "$since")" 2>/dev/null || echo "[]")"
+  jobs="$(_db_get "/jobs?select=type,status,last_error,finished_at&type=eq.deep_research_synthesis&status=in.(succeeded,failed)&finished_at=gte.$(_urlenc "$since")" 2>/dev/null || echo "[]")"
   python3 -c '
-import json, sys
+import datetime, json, sys
 
 tables_ok = sys.argv[3] == "true"
 try:
@@ -553,9 +558,27 @@ if not isinstance(jobs, list):
 
 bad = [r for r in reports if r.get("status") in ("error", "timeout")]
 providers = sorted({r.get("provider") or "?" for r in bad})
+
+FLOOR = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+def finished(job):
+    """finished_at як порівнюване значення; нерозбірне — у минуле, не в майбутнє."""
+    try:
+        parsed = datetime.datetime.fromisoformat(str(job.get("finished_at") or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return FLOOR
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=datetime.timezone.utc)
+
+failed = [j for j in jobs if j.get("status") == "failed"]
+succeeded = [j for j in jobs if j.get("status") == "succeeded"]
+last_success = max((finished(j) for j in succeeded), default=None)
+
+# Непокриті падіння — ті, після яких успішного синтезу ще не було.
+unresolved = [j for j in failed if last_success is None or finished(j) > last_success]
+
 last_error = ""
-if jobs:
-    newest = max(jobs, key=lambda j: j.get("finished_at") or "")
+if unresolved:
+    newest = max(unresolved, key=finished)
     last_error = " ".join(str(newest.get("last_error") or "").split())[:300]
 
 print(json.dumps({
@@ -563,7 +586,9 @@ print(json.dumps({
     "reports_total": len(reports),
     "reports_failed": len(bad),
     "failed_providers": providers,
-    "jobs_failed": len(jobs),
+    "jobs_failed": len(unresolved),
+    "jobs_failed_total": len(failed),
+    "last_success_at": last_success.isoformat() if last_success else "",
     "last_job_error": last_error,
 }))
 ' "$reports" "$jobs" "$tables_ok"

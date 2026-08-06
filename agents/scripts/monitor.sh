@@ -14,6 +14,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
+# monitor.sh — точка входу launchd, тому PATH тут теж голий (див. коментар у
+# doctor.sh). Сам монітор обходиться python3 і curl з /usr/bin, але все, що він
+# запускає далі, успадковує це середовище — саме так дайджест і отримав чужі ✘.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 # shellcheck source=agents/scripts/db.sh
 source "$SCRIPT_DIR/db.sh"
 # shellcheck source=agents/scripts/scripts-lib.sh

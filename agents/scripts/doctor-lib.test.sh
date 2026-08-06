@@ -151,6 +151,47 @@ expect_eq "classify_realtime_status: неочікуване значення -> 
   "err" "$(classify_realtime_status "TIMED_OUT")"
 
 # ---------------------------------------------------------------------------
+# classify_realtime_churn <reconnects> <escalations> <uptime_s>
+# ---------------------------------------------------------------------------
+
+# Той самий випадок, через який перевірку й переписали: 12 розривів за 38 годин,
+# кожен піднявся з першої спроби. Старий абсолютний поріг (>10) тут кричав.
+expect_eq "classify_realtime_churn: 12 розривів за 38 год, усі відновились одразу -> ok" \
+  "ok" "$(classify_realtime_churn 12 0 136800)"
+expect_eq "classify_realtime_churn: здоровий воркер із довгим аптаймом не набирає тривогу лічильником" \
+  "ok" "$(classify_realtime_churn 40 0 864000)"
+expect_eq "classify_realtime_churn: 3 розриви на годину -> flapping" \
+  "flapping" "$(classify_realtime_churn 3 0 3600)"
+expect_eq "classify_realtime_churn: рівно 2 на годину — ще в межах" \
+  "ok" "$(classify_realtime_churn 2 0 3600)"
+expect_eq "classify_realtime_churn: 0 розривів -> ok" \
+  "ok" "$(classify_realtime_churn 0 0 136800)"
+
+# Канал, що не піднімається з першої спроби, — поломка незалежно від аптайму.
+expect_eq "classify_realtime_churn: 3 невдалі перші спроби -> not_recovering навіть при великому аптаймі" \
+  "not_recovering" "$(classify_realtime_churn 5 3 864000)"
+expect_eq "classify_realtime_churn: 2 невдалі перші спроби — ще не тривога" \
+  "ok" "$(classify_realtime_churn 5 2 864000)"
+expect_eq "classify_realtime_churn: not_recovering має пріоритет над частотою" \
+  "not_recovering" "$(classify_realtime_churn 99 9 864000)"
+
+# Аптайм невідомий (у лозі немає маркера старту) або замалий для частоти —
+# лишається старий абсолютний поріг.
+expect_eq "classify_realtime_churn: аптайм невідомий, 12 розривів -> flapping (старий режим)" \
+  "flapping" "$(classify_realtime_churn 12 0 0)"
+expect_eq "classify_realtime_churn: аптайм невідомий, 10 розривів -> ok (межа старого порогу)" \
+  "ok" "$(classify_realtime_churn 10 0 0)"
+expect_eq "classify_realtime_churn: свіжий воркер, 11 розривів за 10 хв -> flapping" \
+  "flapping" "$(classify_realtime_churn 11 0 600)"
+expect_eq "classify_realtime_churn: свіжий воркер, 2 розриви за 10 хв -> ok" \
+  "ok" "$(classify_realtime_churn 2 0 600)"
+
+expect_eq "classify_realtime_churn: сміття замість чисел -> ok, а не падіння" \
+  "ok" "$(classify_realtime_churn "abc" "" "хтозна")"
+expect_eq "classify_realtime_churn: без аргументів узагалі -> ok" \
+  "ok" "$(classify_realtime_churn)"
+
+# ---------------------------------------------------------------------------
 # classify_queue_state <due> <oldest_s> <busy_type> <stale_after_s>
 # ---------------------------------------------------------------------------
 
@@ -221,4 +262,4 @@ expect_eq "classify_websearch_probe: NO_SEARCH (модель чесно каже
 expect_eq "classify_websearch_probe: порожній вивід, elapsed НЕ на межі таймауту -> no_result, не timeout" \
   "no_result" "$(classify_websearch_probe "" 12 240)"
 
-test_summary 78
+test_summary 92

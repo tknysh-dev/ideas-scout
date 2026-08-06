@@ -19,6 +19,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
+# launchd дає джобам голий PATH (/usr/bin:/bin:/usr/sbin:/sbin) — без Homebrew і
+# без ~/.local/bin. Прогони це вже враховують: runner.sh і job-worker.sh
+# розширюють PATH самі, тому claude/node/npm вони знаходять. А doctor.sh цього не
+# робив — і, запущений із дайджесту через monitor.sh, щодня рапортував «claude
+# CLI не знайдено в PATH», поки агенти тим часом спокійно працювали. Три ✘ на
+# порожньому місці, які привчають ігнорувати всі ✘.
+# Рядок мусить лишатись ТАКИМ САМИМ, як у runner.sh і job-worker.sh: doctor
+# перевіряє наявність бінарників не «десь узагалі», а рівно там, де їх шукатиме
+# реальний прогін. Розійдуться — і перевірка знову почне брехати, тепер уже в
+# інший бік.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 # shellcheck source=agents/scripts/doctor-lib.sh
 source "$SCRIPT_DIR/doctor-lib.sh"
 
@@ -229,9 +241,16 @@ else
   # кілька рядків, решта хвоста — чужа історія, тому warning залипав ще довго
   # після вдалого фіксу. Рахуємо від маркера старту поточного процесу.
   start_line="$(grep -n "worker started" "$WORKER_LOG" | tail -1 | cut -d: -f1)"
+  WORKER_UPTIME_S=0
   if [ -n "$start_line" ]; then
     WORKER_LIFETIME="$(tail -n "+${start_line}" "$WORKER_LOG")"
     lifetime_scope="від старту воркера"
+    # Перший рядок життя процесу — сам маркер старту, з нього й беремо аптайм:
+    # без нього частоту розривів нема на що ділити.
+    worker_start_epoch="$(iso_to_epoch "$(printf '%s\n' "$WORKER_LIFETIME" | head -1 | awk '{print $1}')")"
+    if [ "${worker_start_epoch:-0}" -gt 0 ] && [ "$worker_start_epoch" -le "$NOW_EPOCH" ]; then
+      WORKER_UPTIME_S=$((NOW_EPOCH - worker_start_epoch))
+    fi
   else
     # Воркер ще не перезапускався після появи маркера — старий (неточний) режим.
     WORKER_LIFETIME="$(tail -200 "$WORKER_LOG")"
@@ -240,9 +259,21 @@ else
 
   reconnects="$(printf '%s\n' "$WORKER_LIFETIME" | grep -c "realtime reconnect" || true)"
   case "$reconnects" in ''|*[!0-9]*) reconnects=0 ;; esac
-  if [ "$reconnects" -gt 10 ]; then
-    warn "${reconnects} перепідключень Realtime ${lifetime_scope} — канал не тримається; шукай причину в мережі або на боці Supabase"
-  fi
+  # `reconnect #1` — канал упав і одразу піднявся; #2 і далі означає, що перша
+  # спроба не вдалась, тобто розрив був не миттєвий.
+  escalations="$(printf '%s\n' "$WORKER_LIFETIME" | grep -cE 'realtime reconnect #([2-9]|[0-9]{2,})' || true)"
+  case "$escalations" in ''|*[!0-9]*) escalations=0 ;; esac
+
+  case "$(classify_realtime_churn "$reconnects" "$escalations" "$WORKER_UPTIME_S")" in
+    not_recovering)
+      warn "${escalations} разів Realtime-канал не піднявся з першої спроби — перепідключення йшли по колу; шукай причину в мережі або на боці Supabase" ;;
+    flapping)
+      if [ "$WORKER_UPTIME_S" -gt 0 ]; then
+        warn "Realtime рветься надто часто: ${reconnects} розривів за $(human_age "$WORKER_UPTIME_S") роботи воркера — канал не тримається; шукай причину в мережі або на боці Supabase"
+      else
+        warn "${reconnects} перепідключень Realtime ${lifetime_scope} — канал не тримається; шукай причину в мережі або на боці Supabase"
+      fi ;;
+  esac
 
   fatals="$(printf '%s\n' "$WORKER_LIFETIME" | grep -c "^.*fatal:" || true)"
   case "$fatals" in ''|*[!0-9]*) fatals=0 ;; esac
@@ -591,13 +622,13 @@ else
   if [ -z "$DR_JSON" ]; then
     note "стан глибокого дослідження перевірити не вдалось — Supabase не відповіла вище"
   else
-    read -r DR_TABLES DR_FAILED DR_TOTAL DR_JOBS DR_PROVIDERS <<<"$(python3 -c "
+    read -r DR_TABLES DR_FAILED DR_TOTAL DR_JOBS DR_JOBS_TOTAL DR_PROVIDERS <<<"$(python3 -c "
 import json, sys
 d = json.loads(sys.argv[1])
 print(str(d.get('tables_ok', False)).lower(), d.get('reports_failed', 0), d.get('reports_total', 0),
-      d.get('jobs_failed', 0),
+      d.get('jobs_failed', 0), d.get('jobs_failed_total', 0),
       ','.join(d.get('failed_providers') or []) or '-')
-" "$DR_JSON" 2>/dev/null || echo "false 0 0 0 -")"
+" "$DR_JSON" 2>/dev/null || echo "false 0 0 0 0 -")"
 
     if [ "$DR_TABLES" != "true" ]; then
       # Цей запит читає й колонки, додані пізнішими міграціями, тому «немає
@@ -615,12 +646,18 @@ print(str(d.get('tables_ok', False)).lower(), d.get('reports_failed', 0), d.get(
       hint "./agents/scripts/db.sh deep-research-health   # повний стан звітів"
     fi
 
+    # DR_JOBS — падіння, після яких успішного синтезу ще НЕ було, тобто ті, що
+    # чекають на розбір просто зараз. Перекриті успіхом падіння лишаються видимі
+    # окремим note: зникнути безслідно вони не мають (це історія прогонів), але
+    # й тримати ✘ тиждень після фіксу — теж ні.
     if [ "${DR_JOBS:-0}" -gt 0 ]; then
       DR_ERROR="$(python3 -c "
 import json, sys
 print(json.loads(sys.argv[1]).get('last_job_error') or '')
 " "$DR_JSON" 2>/dev/null || echo "")"
-      warn "синтезів глибокого дослідження, що впали за тиждень: ${DR_JOBS}${DR_ERROR:+ — остання помилка: ${DR_ERROR}}"
+      warn "синтезів глибокого дослідження, що впали й ще не перекриті успішним прогоном: ${DR_JOBS}${DR_ERROR:+ — остання помилка: ${DR_ERROR}}"
+    elif [ "${DR_JOBS_TOTAL:-0}" -gt 0 ]; then
+      note "синтез глибокого дослідження падав за тиждень (${DR_JOBS_TOTAL} раз(и)), але після останнього падіння вже відпрацював успішно"
     fi
   fi
 fi
