@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check.sh — одна команда, що перед комітом ганяє всі статичні перевірки й
+# check.sh — одна команда, що перед push'ем ганяє всі статичні перевірки й
 # тести: синтаксис і shellcheck shell-скриптів, компільованість і ruff
 # python-скриптів агентів, усі набори тестів, контракт промптів, узгодженість
 # міграцій зі схемою, валідність launchd-plist, пошук секретів, і типи/lint/
@@ -12,7 +12,7 @@
 #
 # ГОЛОВНЕ ПРАВИЛО: кожен новий вид коду в репозиторії (нова мова, новий
 # підкаталог зі скриптами чи власним package.json) має отримати тут свою
-# перевірку — інакше поламаний код мовчки долетить до коміту.
+# перевірку — інакше поламаний код мовчки долетить до remote.
 
 set -uo pipefail
 
@@ -22,17 +22,24 @@ cd "$REPO_ROOT" || exit 2
 
 FAST=0
 COVERAGE=0
+SECRETS_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --fast) FAST=1 ;;
     --coverage) COVERAGE=1 ;;
+    --secrets) SECRETS_ONLY=1 ;;
     -h|--help)
       cat <<'EOF'
-Використання: check.sh [--fast]
+Використання: check.sh [--fast|--secrets]
 
   --fast  пропустити повільне: tsc --noEmit, lint, прод-збірку порталу і
-          npm audit. Тести й shell/python-перевірки лишаються. Цей режим
-          використовує pre-commit hook — щоб коміт не чекав на прогін порталу.
+          npm audit. Тести й shell/python-перевірки лишаються.
+
+  --secrets
+          лише пошук секретів у відстежуваних файлах, нічого більше. Цей
+          режим використовує pre-commit hook: коміт має лишатись дешевим,
+          а секрет, який туди потрапив, лишається в історії назавжди —
+          на відміну від решти помилок, які ловить pre-push.
 
   --coverage
           додатково зібрати покриття тестами (портал, python, воркер) і
@@ -40,7 +47,8 @@ while [ $# -gt 0 ]; do
           порогів немає — мета побачити, які ділянки не зачеплені.
 
 Без прапорців ганяє все: shell (bash -n, shellcheck), python (py_compile,
-ruff), портал (tsc, lint, test) і воркер (test).
+ruff), портал (tsc, lint, test) і воркер (test). Саме так його запускає
+pre-push hook.
 
 Коди виходу: 0 — усе чисто (NOTE не рахуються за помилку); 1 — є хоча б
 одна помилка; 2 — помилка використання самого скрипта (невідомий прапорець).
@@ -65,7 +73,7 @@ fi
 section() { printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RESET"; }
 ok()   { OK_COUNT=$((OK_COUNT + 1));   printf '  %s✔%s  %s\n' "$C_OK" "$C_RESET" "$1"; }
 # warn не валить прогін: це відоме, вже наявне занепокоєння (напр. міграція без
-# IF NOT EXISTS), яке треба бачити, але яке не має блокувати коміт.
+# IF NOT EXISTS), яке треба бачити, але яке не має блокувати push.
 warn() { WARN_COUNT=$((WARN_COUNT + 1)); printf '  %s▲%s  %s\n' "$C_WARN" "$C_RESET" "$1"; }
 err()  { ERR_COUNT=$((ERR_COUNT + 1));  printf '  %s✘%s  %s\n' "$C_ERR" "$C_RESET" "$1"; }
 note() { printf '  %s·  %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
@@ -110,7 +118,47 @@ START_EPOCH="$(date +%s)"
 step_start() { STEP_EPOCH="$(date +%s)"; note "$1…"; }
 step_elapsed() { echo "$(( $(date +%s) - STEP_EPOCH ))с"; }
 
-printf '%sideas-scout check%s  %s%s\n' "$C_BOLD" "$C_RESET" "$(date '+%F %H:%M')" "$([ "$FAST" -eq 1 ] && echo "  (--fast)")"
+# Секрети в репозиторії заборонені (AGENTS.md, README). .gitignore прикриває
+# env-файли, але не ключ, вставлений у код чи в лог. Шукаємо за формою відомих
+# токенів — і лише у файлах, які git реально відстежує.
+scan_secrets() {
+  step_start "пошук секретів у відстежуваних файлах"
+  local hits
+  hits="$(git ls-files -z 2>/dev/null | xargs -0 grep -nIE \
+    -e 'eyJhbGciOiJ[A-Za-z0-9_-]{10,}' \
+    -e '\b[0-9]{8,10}:AA[A-Za-z0-9_-]{30,}' \
+    -e '\bsk-(ant-)?[A-Za-z0-9_-]{20,}' \
+    -e '\bgh[pousr]_[A-Za-z0-9]{30,}' \
+    2>/dev/null)"
+  if [ -z "$hits" ]; then
+    ok "секретів за відомими формами не знайдено ($(step_elapsed))"
+  else
+    err "схоже на секрет у відстежуваних файлах ($(step_elapsed)):"
+    printf '%s\n' "$hits" | cut -c1-160 | sed 's/^/      /'
+  fi
+}
+
+summary() {
+  local elapsed=$(( $(date +%s) - START_EPOCH ))
+  printf '\n%s%s%s  (%sс)\n' "$C_BOLD" "Підсумок" "$C_RESET" "$elapsed"
+  printf '  %s%d ок%s  ·  %s%d попереджень%s  ·  %s%d проблем%s\n\n' \
+    "$C_OK" "$OK_COUNT" "$C_RESET" "$C_WARN" "$WARN_COUNT" "$C_RESET" "$C_ERR" "$ERR_COUNT" "$C_RESET"
+
+  if [ "$ERR_COUNT" -gt 0 ]; then
+    echo "Є помилки — дивись рядки з ✘ вище."
+    exit 1
+  fi
+  echo "Усе чисто."
+  exit 0
+}
+
+printf '%sideas-scout check%s  %s%s\n' "$C_BOLD" "$C_RESET" "$(date '+%F %H:%M')" "$([ "$FAST" -eq 1 ] && echo "  (--fast)")$([ "$SECRETS_ONLY" -eq 1 ] && echo "  (--secrets)")"
+
+if [ "$SECRETS_ONLY" -eq 1 ]; then
+  section "Секрети"
+  scan_secrets
+  summary
+fi
 
 # ---------------------------------------------------------------------------
 section "Shell"
@@ -118,7 +166,7 @@ section "Shell"
 shopt -s nullglob
 SHELL_FILES=("$REPO_ROOT/agents/scripts"/*.sh "$REPO_ROOT/dev.sh" \
              "$REPO_ROOT/shared/migrations/apply.sh" "$REPO_ROOT/check.sh" \
-             "$REPO_ROOT/hooks/pre-commit")
+             "$REPO_ROOT/hooks"/*)
 shopt -u nullglob
 
 for f in "${SHELL_FILES[@]}"; do
@@ -311,7 +359,7 @@ section "Конфігурація і секрети"
 # ---------------------------------------------------------------------------
 # plutil стоїть і в install-launchd.sh, але там він спрацьовує аж при
 # встановленні. Зламаний plist означає, що джоб тихо ніколи не запуститься —
-# це треба ловити на коміті, а не через тиждень мовчазної тиші.
+# це треба ловити на push'і, а не через тиждень мовчазної тиші.
 if command -v plutil >/dev/null 2>&1; then
   shopt -s nullglob
   PLISTS=("$REPO_ROOT/agents/launchd"/*.plist)
@@ -325,22 +373,7 @@ else
   note "plutil недоступний — валідність plist не перевірено"
 fi
 
-# Секрети в репозиторії заборонені (AGENTS.md, README). .gitignore прикриває
-# env-файли, але не ключ, вставлений у код чи в лог. Шукаємо за формою відомих
-# токенів — і лише у файлах, які git реально відстежує.
-step_start "пошук секретів у відстежуваних файлах"
-SECRET_HITS="$(git ls-files -z 2>/dev/null | xargs -0 grep -nIE \
-  -e 'eyJhbGciOiJ[A-Za-z0-9_-]{10,}' \
-  -e '\b[0-9]{8,10}:AA[A-Za-z0-9_-]{30,}' \
-  -e '\bsk-(ant-)?[A-Za-z0-9_-]{20,}' \
-  -e '\bgh[pousr]_[A-Za-z0-9]{30,}' \
-  2>/dev/null)"
-if [ -z "$SECRET_HITS" ]; then
-  ok "секретів за відомими формами не знайдено ($(step_elapsed))"
-else
-  err "схоже на секрет у відстежуваних файлах ($(step_elapsed)):"
-  printf '%s\n' "$SECRET_HITS" | cut -c1-160 | sed 's/^/      /'
-fi
+scan_secrets
 
 # ---------------------------------------------------------------------------
 section "Портал (dashboard/)"
@@ -521,14 +554,4 @@ except Exception:
 fi
 
 # ---------------------------------------------------------------------------
-TOTAL_ELAPSED=$(( $(date +%s) - START_EPOCH ))
-printf '\n%s%s%s  (%sс)\n' "$C_BOLD" "Підсумок" "$C_RESET" "$TOTAL_ELAPSED"
-printf '  %s%d ок%s  ·  %s%d попереджень%s  ·  %s%d проблем%s\n\n' \
-  "$C_OK" "$OK_COUNT" "$C_RESET" "$C_WARN" "$WARN_COUNT" "$C_RESET" "$C_ERR" "$ERR_COUNT" "$C_RESET"
-
-if [ "$ERR_COUNT" -gt 0 ]; then
-  echo "Є помилки — дивись рядки з ✘ вище. Коміт краще притримати."
-  exit 1
-fi
-echo "Усе чисто."
-exit 0
+summary
