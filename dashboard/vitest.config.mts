@@ -11,6 +11,11 @@ export default defineConfig({
     environment: "jsdom",
     include: ["src/components/**/*.test.tsx"],
     setupFiles: ["./src/components/test-setup.ts"],
+    // Стан не має перетікати між тестами одного файлу — див. коментар у
+    // test-setup.ts про плаваючий провал.
+    restoreMocks: true,
+    unstubGlobals: true,
+    unstubEnvs: true,
     coverage: {
       provider: "v8",
       // Тільки те, що vitest справді виконує: компоненти й сторінки. Раніше

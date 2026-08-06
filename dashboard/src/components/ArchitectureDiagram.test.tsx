@@ -236,4 +236,96 @@ describe("ArchitectureDiagram — помилка рендеру mermaid", () => 
 
     await screen.findByText(/Не вдалося намалювати діаграму: не вдалося намалювати/);
   });
+
+  test("mermaid.render падає не з Error, а з рядком — показує «Невідома помилка»", async () => {
+    // catch(err) не гарантує Error: throw string — валідний JS, і код це явно
+    // обробляє (err instanceof Error ? ... : "Невідома помилка").
+    mermaidRender.mockRejectedValue("щось пішло не так");
+    render(<ArchitectureDiagram />);
+
+    await screen.findByText(/Не вдалося намалювати діаграму: Невідома помилка/);
+  });
+});
+
+describe("ArchitectureDiagram — mermaid повертає розмітку без <svg>", () => {
+  test("розмітка без кореневого svg — без падіння і без помилки, просто нічого стилізувати", async () => {
+    // container.querySelector("svg") поверне null: перевіряємо, що код не
+    // намагається виставити style на null-елемент і не падає в catch.
+    // Дивимось лише на першу діаграму — mockResolvedValueOnce стосується
+    // рівно одного виклику, а другий iде за замовчуванням (FAKE_SVG);
+    // глобальні твердження про обидві діаграми зайві для цієї гілки.
+    mermaidRender.mockResolvedValueOnce({ svg: "<div>раптом не svg</div>" });
+    render(<ArchitectureDiagram />);
+
+    const firstContainer = document.querySelectorAll(".overflow-x-auto")[0] as HTMLElement;
+    await waitFor(() => expect(firstContainer.textContent).toContain("раптом не svg"));
+    expect(firstContainer.querySelector("svg")).toBeNull();
+  });
+});
+
+describe("ArchitectureDiagram — клік по вузлу без предка g.node", () => {
+  test("клік по елементу поза будь-яким g.node — безпечний, попап не відкривається", async () => {
+    await renderReady();
+    // g.node з іншим класом у фікстурі FAKE_SVG — closest("g.node") на ньому не знайде нічого.
+    const node = document.getElementById("arch-svg-x-flowchart-owner-9")!;
+    fireEvent.click(node);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("ArchitectureDiagram — клавіші на вузлі, відмінні від Enter/Space", () => {
+  test("Tab на вузлі попап не відкриває", async () => {
+    await renderReady();
+    const node = document.getElementById("arch-svg-x-flowchart-owner-1")!;
+    fireEvent.keyDown(node, { key: "Tab" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("пробіл на вузлі теж відкриває попап (не лише Enter)", async () => {
+    await renderReady();
+    const node = document.getElementById("arch-svg-x-flowchart-owner-1")!;
+    fireEvent.keyDown(node, { key: " " });
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.getAttribute("aria-label")).toBe("Власник");
+  });
+});
+
+describe("ArchitectureDiagram — попап: клавіша, відмінна від Escape", () => {
+  test("будь-яка інша клавіша попап не закриває", async () => {
+    await renderReady();
+    fireEvent.click(document.getElementById("arch-svg-x-flowchart-owner-1")!);
+    await screen.findByRole("dialog");
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(screen.getByRole("dialog")).toBeDefined();
+  });
+});
+
+describe("ArchitectureDiagram — застарілий запит doc після закриття/перевідкриття", () => {
+  test("loadArchDoc, що відповідає вже після закриття й повторного відкриття, не перезаписує актуальний вміст", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    loadArchDoc.mockReturnValueOnce(
+      new Promise((r) => {
+        resolveFirst = r;
+      }),
+    );
+    await renderReady();
+
+    fireEvent.click(document.getElementById("arch-svg-x-flowchart-collector__cfg-5")!);
+    await screen.findByRole("dialog");
+    expect(screen.getByText("Читаю файл…")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Закрити" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    loadArchDoc.mockResolvedValueOnce({ content: "# Свіжий вміст", changed: null, error: null });
+    fireEvent.click(document.getElementById("arch-svg-x-flowchart-collector__cfg-5")!);
+    await screen.findByRole("dialog");
+    await screen.findByText("Свіжий вміст");
+
+    resolveFirst({ content: "# Застарілий вміст", changed: null, error: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("Застарілий вміст")).toBeNull();
+    expect(screen.getByText("Свіжий вміст")).toBeDefined();
+  });
 });

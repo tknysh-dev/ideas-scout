@@ -79,6 +79,18 @@ describe("DecisionPanel — перше рішення (approved_pending)", () =>
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  test("сервер повертає помилку на одноклікове «Прийняти» (без діалогу) — помилка з відступом mt-2, а не в діалозі", async () => {
+    // start() для "accepted" без isRevision не відкриває діалог узагалі, тому
+    // ця помилка рендериться в гілці error && !dialog поза DecisionDialog.
+    decideIdea.mockResolvedValue({ error: "Немає з'єднання." });
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Прийняти" }));
+
+    const error = await screen.findByText("Немає з'єднання.");
+    expect(error.className).toContain("mt-2");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   test("сервер повертає помилку — діалог лишається відкритим із текстом помилки", async () => {
     decideIdea.mockResolvedValue({ error: "База недоступна." });
     render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
@@ -115,5 +127,102 @@ describe("DecisionPanel — перегляд уже ухваленого ріш�
     fireEvent.click(within(dialog).getByRole("button", { name: "Прийняти" }));
     expect(decideIdea).not.toHaveBeenCalled();
     expect(screen.getByText("Зміна вже ухваленого рішення вимагає причини.")).toBeDefined();
+  });
+
+  test("зміна вже ухваленого рішення з причиною — відправляється як «accepted» без коду відмови", async () => {
+    // rejectionCode лишається undefined саме для дії "accepted" — це та гілка
+    // потрійного оператора в submit(), якої без цього тесту не торкались.
+    decideIdea.mockResolvedValue({});
+    render(<DecisionPanel ideaId="idea-2" currentStatus="rejected" />);
+    fireEvent.click(screen.getByRole("button", { name: /Прийняти/ }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByPlaceholderText(/Коротко поясни рішення/), {
+      target: { value: "Передумали" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Прийняти" }));
+
+    await waitFor(() =>
+      expect(decideIdea).toHaveBeenCalledWith({
+        ideaId: "idea-2",
+        action: "accepted",
+        reason: "Передумали",
+        rejectionCode: undefined,
+      }),
+    );
+  });
+
+  test("перегляд рішення з відхиленням — діалог показує попередження про перезапис", () => {
+    render(<DecisionPanel ideaId="idea-2" currentStatus="accepted" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    expect(
+      screen.getByText("Ідея вже має рішення — цей запис перекриє попереднє."),
+    ).toBeDefined();
+  });
+});
+
+describe("DecisionPanel — bare/compact режими", () => {
+  test("compact=true — менший padding (p-4 замість p-5)", () => {
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" compact />);
+    const root = screen.getByRole("button", { name: "Прийняти" }).closest("div.rounded-lg");
+    expect(root?.className).toContain("p-4");
+    expect(root?.className).not.toContain("p-5");
+  });
+
+  test("bare=true — без рамки/підкладки, повідомлення про рішення без відступу mb-3", async () => {
+    decideIdea.mockResolvedValue({});
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" bare />);
+    fireEvent.click(screen.getByRole("button", { name: "Прийняти" }));
+
+    const message = await screen.findByText(/Рішення записано: прийняти/);
+    expect(message.className).not.toContain("mb-3");
+  });
+
+  test("bare=true — помилка одноклікового рішення (без діалогу) показується з text-right", async () => {
+    decideIdea.mockResolvedValue({ error: "Немає з'єднання." });
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" bare />);
+    fireEvent.click(screen.getByRole("button", { name: "Прийняти" }));
+
+    const error = await screen.findByText("Немає з'єднання.");
+    expect(error.className).toContain("text-right");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("DecisionPanel — діалог: клавіатура і клік по затемненню", () => {
+  test("Escape закриває діалог", async () => {
+    // Закриття йде через exit-анімацію AnimatePresence — вузол зникає з DOM
+    // не синхронно з подією, тому потрібен waitFor (як і в сусідніх тестах).
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    expect(screen.getByRole("dialog")).toBeDefined();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  test("будь-яка інша клавіша діалог не закриває", () => {
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+
+    fireEvent.keyDown(document, { key: "Enter" });
+    expect(screen.getByRole("dialog")).toBeDefined();
+  });
+
+  test("mousedown прямо по затемненню (не по картці) закриває діалог", async () => {
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    const backdrop = screen.getByRole("dialog");
+
+    fireEvent.mouseDown(backdrop);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  test("mousedown усередині картки діалог не закриває", () => {
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    const dialog = screen.getByRole("dialog");
+
+    fireEvent.mouseDown(within(dialog).getByRole("button", { name: "Скасувати" }));
+    expect(screen.getByRole("dialog")).toBeDefined();
   });
 });
