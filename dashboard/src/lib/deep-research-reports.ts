@@ -227,14 +227,22 @@ function asObject(raw: string): Record<string, unknown> | null {
   }
 }
 
+interface SlicedObject {
+  slice: string;
+  /** Чи було поза дужками щось, крім пробілів — щоб не звинувачувати «прозу» там, де відрізались самі відступи. */
+  hadProse: boolean;
+}
+
 // Найзовнішній {...}, що містить очікуване поле: рятує, коли модель домішала
 // прозу до вмісту огорожі.
-function sliceObject(raw: string): string | null {
+function sliceObject(raw: string): SlicedObject | null {
   const first = raw.indexOf("{");
   const last = raw.lastIndexOf("}");
   if (first === -1 || last <= first) return null;
   const slice = raw.slice(first, last + 1);
-  return /"(criteria|competitors)"/.test(slice) ? slice : null;
+  if (!/"(criteria|competitors)"/.test(slice)) return null;
+  const hadProse = raw.slice(0, first).trim() !== "" || raw.slice(last + 1).trim() !== "";
+  return { slice, hadProse };
 }
 
 function parseCandidate(raw: string): { data: Record<string, unknown> | null; repairs: string[] } {
@@ -245,9 +253,9 @@ function parseCandidate(raw: string): { data: Record<string, unknown> | null; re
   let text = raw;
 
   const sliced = sliceObject(text);
-  if (sliced && sliced !== text) {
-    text = sliced;
-    repairs.push("у блоці була зайва проза — узято сам обʼєкт");
+  if (sliced && sliced.slice !== text) {
+    text = sliced.slice;
+    if (sliced.hadProse) repairs.push("у блоці була зайва проза — узято сам обʼєкт");
     const data = asObject(text);
     if (data) return { data, repairs };
   }

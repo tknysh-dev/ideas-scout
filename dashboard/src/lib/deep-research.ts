@@ -83,6 +83,19 @@ export const VERDICT_TONE: Record<CriterionVerdict, CriterionTone> = {
   noted: "noted",
 };
 
+// Вердикт приходить у CriteriaVerdictRow з бази — той самий захист, що й
+// statusMeta() у lib/status.ts: значення поза словником рендериться як є,
+// а не валить компонент на undefined.
+export function verdictMeta(verdict: CriterionVerdict) {
+  return (
+    TONE_META[VERDICT_TONE[verdict]] ?? {
+      label: verdict,
+      hint: "Вердикт поза словником shared/contracts.md",
+      token: "analyzing",
+    }
+  );
+}
+
 export const RESOLUTION_META: Record<SynthesisResolution, { label: string; hint: string }> = {
   consensus: {
     label: "Моделі зійшлись",
@@ -97,6 +110,19 @@ export const RESOLUTION_META: Record<SynthesisResolution, { label: string; hint:
     hint: "Розбіжність не вдалось розв'язати доказами — узято найсуворіший вердикт, щоб слабка ідея не пройшла непоміченою.",
   },
 };
+
+export function resolutionMeta(resolution: SynthesisResolution) {
+  return (
+    RESOLUTION_META[resolution] ?? {
+      label: resolution,
+      hint: "Резолюція поза словником shared/contracts.md",
+    }
+  );
+}
+
+export function resolutionToken(resolution: SynthesisResolution): string {
+  return RESOLUTION_TOKEN[resolution] ?? "analyzing";
+}
 
 // Вступний рядок над плашками моделей — рендериться один раз на секцію
 // (CriteriaAnalysis, DeepResearchBlocks), а не над кожним критерієм.

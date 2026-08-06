@@ -117,14 +117,18 @@ class DashboardBaseUrlTest(unittest.TestCase):
             result = digest.dashboard_base_url()
         self.assertEqual(result, "")
 
-    def test_hook_without_expected_suffix_kept_whole(self):
-        # split() на відсутньому маркері не ріже нічого — повертається весь hook.
+    def test_hook_without_expected_suffix_returns_empty(self):
+        # РАНІШЕ (ВІДОМИЙ ДЕФЕКТ): split() на відсутньому маркері не різав
+        # нічого — повертався ВЕСЬ hook як "базова адреса", хоча "/other/path"
+        # тут явно не /api/telegram/webhook і не має жодного стосунку до
+        # порталу. Тепер відсутність очікуваного суфіксу — сигнал "не той
+        # хук", і функція повертає "" (посилання в дайджесті просто пропустяться).
         completed = subprocess.CompletedProcess(args=["security"], returncode=0, stdout="tok123\n", stderr="")
         response = _urlopen_ctx({"result": {"url": "https://foo.vercel.app/other/path/"}})
         with mock.patch.object(digest.subprocess, "run", return_value=completed), \
              mock.patch.object(digest.urllib.request, "urlopen", return_value=response):
             result = digest.dashboard_base_url()
-        self.assertEqual(result, "https://foo.vercel.app/other/path")
+        self.assertEqual(result, "")
 
 
 class IdeaLineTest(unittest.TestCase):

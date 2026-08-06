@@ -114,7 +114,7 @@ def format_doctor_report(stdout, returncode, stderr="", warnings_only=False) -> 
 
 
 def _render_warnings_only(head, counts, items) -> str:
-    """Лише 🟡/🔴 зі своїми секціями й підказками, без підсумкового вироку."""
+    """Лише 🟡/🔴 зі своїми секціями й підказками, плюс підсумковий рядок."""
     out = []
     pending_section = None
     keep = False
@@ -138,6 +138,11 @@ def _render_warnings_only(head, counts, items) -> str:
         return "✅ <b>Здоров'я системи</b>\nЗауважень немає."
     counts_line = (f"{counts[1]} попереджень · {counts[2]} проблем" if counts else "")
     title = f"{head} <b>На що глянути</b>" + (f"\n{counts_line}" if counts_line else "")
+    if counts:
+        # Підсумковий рядок ("N ок · ..."), сам "tail"-елемент, жодною
+        # гілкою вище не обробляється (kind "tail" тут узагалі не згадано) —
+        # без цього дайджест обривався б одразу після останньої підказки.
+        out.append(f"{counts[0]} ок · {counts[1]} попереджень · {counts[2]} проблем")
     return "\n".join([title] + out)
 
 

@@ -3,8 +3,7 @@ import Pill from "@/components/Pill";
 import VerdictDetails from "@/components/VerdictDetails";
 import {
   DEEP_BLOCKS,
-  TONE_META,
-  VERDICT_TONE,
+  verdictMeta,
   type CriterionVerdicts,
   type DeepResearchData,
 } from "@/lib/deep-research";
@@ -35,7 +34,7 @@ export default function DeepResearchBlocks({
 
       <ul className="space-y-3">
         {blocks.map(({ block, entry }, index) => {
-          const meta = entry.synthesis ? TONE_META[VERDICT_TONE[entry.synthesis.verdict]] : null;
+          const meta = entry.synthesis ? verdictMeta(entry.synthesis.verdict) : null;
           return (
             <Card as="li" key={block.key} index={index} padding="sm" exclude={ideaId}>
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">

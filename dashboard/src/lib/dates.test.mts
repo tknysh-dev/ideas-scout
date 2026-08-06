@@ -22,8 +22,12 @@ test("formatDate: кастомний фолбек підставляється �
   assert.equal(formatDate(null, "short", "немає даних"), "немає даних");
 });
 
-test("formatDate: невалідний рядок дати не кидає виняток, повертає 'Invalid Date'", () => {
-  assert.equal(formatDate("не-дата"), "Invalid Date");
+test("formatDate: невалідний рядок дати не кидає виняток, повертає фолбек «—»", () => {
+  assert.equal(formatDate("не-дата"), "—");
+});
+
+test("formatDate: невалідний рядок дати з кастомним фолбеком повертає його", () => {
+  assert.equal(formatDate("не-дата", "short", "немає даних"), "немає даних");
 });
 
 test("formatDate: часовий пояс Europe/Warsaw зсуває дату біля півночі UTC (зимовий час, UTC+1)", () => {
@@ -43,5 +47,5 @@ test("formatDateTime додає години й хвилини за тим са�
 test("formatDateTime: null і невалідний вхід поводяться як formatDate", () => {
   assert.equal(formatDateTime(null), "—");
   assert.equal(formatDateTime(null, "short", "н/д"), "н/д");
-  assert.equal(formatDateTime("гілбіш"), "Invalid Date");
+  assert.equal(formatDateTime("гілбіш"), "—");
 });

@@ -21,6 +21,7 @@ telegram_bot_test.py (Keychain). Жоден тест не ходить у мер
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -1183,9 +1184,6 @@ class RunTriageTest(BotStateTestCase):
         self.assertTrue(d["nudged"])
 
     def test_no_verdict_unknown_status_falls_back_to_generic_hint(self):
-        # Факт: у фолбеку "status or f'код {rc}'" ключ "" вже перехоплений
-        # RUN_FAILURE_HINTS[""] раніше — тож rc тут фактично мертвий код,
-        # видно лише сам статус.
         d = make_draft(id="d1", track="app-ideas", panel_msg_id=1, state="running")
         bot.STATE["draft"] = d
         with mock.patch.object(bot.subprocess, "run", return_value=self._completed(3)), \
@@ -1194,6 +1192,14 @@ class RunTriageTest(BotStateTestCase):
             bot.run_triage(dict(d))
         text = self.mocks["edit"].call_args.args[1]
         self.assertIn("runner.sh: weird_status", text)
+
+    def test_generic_hint_source_has_no_dead_rc_fallback(self):
+        # "" завжди перехоплений RUN_FAILURE_HINTS[""] раніше, тож у момент
+        # побудови generic-підказки status непорожній і "status or f'код {rc}'"
+        # — мертвий код, який ніколи не спрацьовує. Перевіряємо, що його
+        # прибрано з джерела, а не лише що поточний тест-кейс його не зачіпає.
+        source = inspect.getsource(bot.run_triage)
+        self.assertNotIn("код {rc}", source)
 
     def test_no_verdict_status_ok_reports_agent_silent(self):
         d = make_draft(id="d1", track="app-ideas", panel_msg_id=1, state="running")

@@ -177,12 +177,15 @@ test("backoffFor: нуль і від'ємні значення трактуют�
   assert.equal(backoffFor(-100), 1_000);
 });
 
-test("backoffFor: дробові значення не падають (документує фактичну поведінку)", () => {
-  // attempt=1.5 -> Math.max(1.5,1)=1.5 -> Math.min(1.5,5)=1.5 -> index=0.5 ->
-  // RECONNECT_BACKOFF_MS[0.5] є undefined, бо масив індексується лише цілими.
-  // Викликач завжди передає ціле число (reconnectAttempt), тож на практиці
-  // це не трапляється — фіксуємо як задокументовану межу, не як бажану поведінку.
-  assert.equal(backoffFor(1.5), undefined);
+test("backoffFor: дробові значення округлюються вниз до цілого attempt", () => {
+  // attempt=1.5 -> floor -> 1 -> перший інтервал масиву.
+  assert.equal(backoffFor(1.5), 1_000);
+  assert.equal(backoffFor(4.9), 60_000);
+});
+
+test("REGRESSION (дефект 25): backoffFor з дробовим attempt повертає число, а не undefined", () => {
+  assert.equal(backoffFor(1.5), 1_000);
+  assert.notEqual(backoffFor(1.5), undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -319,16 +322,11 @@ test("commandForJob: executable завжди один із чотирьох ві
   }
 });
 
-test("commandForJob: успадковані ключі Object.prototype НЕ мають проходити allowlist (сумнівна поведінка)", () => {
-  // ФАКТ: JOB_HANDLERS — звичайний obj-literal, тож успадковує Object.prototype.
-  // `JOB_HANDLERS["toString"]` не undefined (це успадкована функція), тож
-  // перевірка `if (!handler) throw` пропускає її. Наслідок: замість очікуваного
-  // "Непідтримуваний тип job" викликач отримує { stdin: null } без жодного
-  // executable/args — сама по собі не exec-дірка (spawn(undefined) впаде), але
-  // порушує заявлений інваріант "лише 4 дозволені типи або виняток".
+test("commandForJob: успадковані ключі Object.prototype НЕ проходять allowlist", () => {
+  // JOB_HANDLERS має __proto__:null, тож JOB_HANDLERS["toString"] тепер
+  // справді undefined — allowlist більше не пропускає успадковані ключі.
   for (const type of ["toString", "constructor", "hasOwnProperty", "valueOf"]) {
-    const result = commandForJob({ type });
-    assert.equal(result.executable, undefined, `${type}: executable лишається undefined, не з ужитку`);
+    assert.throws(() => commandForJob({ type }), /Непідтримуваний тип job/, `${type} має кидати виняток`);
   }
 });
 
@@ -464,11 +462,38 @@ test("вичерпання MAX_RECONNECT_ATTEMPTS викликає onFatal і б
   assert.equal(fatalCalls, 1);
   assert.match(emits.at(-1), /fatal: realtime не піднявся за 6 спроб/);
 
-  // Після fatal подальші помилки не повинні планувати нові таймери.
-  const scheduledBefore = timers.scheduled.filter((e) => !e.cleared && !e.fired).length;
+  // Лічильник спроб скидається після fatal, тож наступна помилка знову
+  // планує reconnect #1, а не б'є fatal вдруге негайно.
   lastCh.listener("CHANNEL_ERROR");
-  const scheduledAfter = timers.scheduled.filter((e) => !e.cleared && !e.fired).length;
-  assert.equal(scheduledAfter, scheduledBefore, "після fatal лічильник спроб більше не зростає — reconnectTimer лишається null, але stopping теж лишається false: це задокументована межа, не catch-all guard");
+  assert.equal(fatalCalls, 1, "одна помилка після fatal не б'є fatal вдруге негайно");
+  assert.match(emits.at(-1), /reconnect #1/);
+});
+
+test("REGRESSION (дефект 26): лічильник спроб скидається після fatal — наступний CHANNEL_ERROR не викликає onFatal негайно вдруге", async () => {
+  const supabase = fakeSupabaseWithCalls();
+  const timers = timerHarness();
+  let fatalCalls = 0;
+  const supervisor = createRealtimeSupervisor({
+    supabase,
+    onEvent: () => {},
+    onFatal: () => { fatalCalls += 1; },
+    emit: () => {},
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  });
+
+  supervisor.start();
+  for (let i = 0; i < 6; i += 1) {
+    const chIndex = supabase.channels.length - 1;
+    supabase.channels[chIndex].listener("CHANNEL_ERROR");
+    await timers.fireNext();
+  }
+  const lastCh = supabase.channels.at(-1);
+  lastCh.listener("CHANNEL_ERROR"); // attempt=7 -> fatal #1, лічильник має скинутись
+  assert.equal(fatalCalls, 1);
+
+  lastCh.listener("CHANNEL_ERROR"); // без скидання це теж миттєво fatal #2
+  assert.equal(fatalCalls, 1, "після одного fatal лічильник скинуто — наступна помилка знову лише планує reconnect #1");
 });
 
 test("teardown посеред очікування reconnect: stop() скасовує таймер і блокує його ефект", async () => {
@@ -764,7 +789,7 @@ test("drain(): Supabase повертає помилку на insert у runs -> j
   assert.ok(lines.some((l) => l.includes("worker error: insert відхилено PGRST102")));
 });
 
-test("drain(): job зникає між insert run і attach (0 рядків оновлено) -> кидає помилку, ЩО job лишається без finishJob (сумнівно)", async () => {
+test("drain(): job зникає між insert run і attach (0 рядків оновлено) -> щойно вставлений run позначається 'failed' напряму", async () => {
   const job = { id: "job-4", type: "infrastructure_dry_run", claim_token: "tok-4", attempt_count: 1 };
   const supabase = makeSupabaseMock({
     claimQueue: [job],
@@ -782,18 +807,19 @@ test("drain(): job зникає між insert run і attach (0 рядків он
   const lines = await captureStdout(() => worker.drain());
 
   assert.equal(supabase.calls.runsInsert.length, 1, "run-рядок встиг створитися до втрати job'а");
-  assert.ok(
-    lines.some((l) => l.includes(`worker error: Не вдалося прив'язати run`) && l.includes("job-4")),
-  );
-  // ФАКТ (сумнівно): на цій гілці finishJob() НЕ викликається — job лишається
-  // у статусі "running" з lease без фінального fields-запису, а run-рядок,
-  // щойно вставлений як status:"running", теж ніколи не оновлюється. Job
-  // "зависає" до природного витікання lease, а не позначається failed одразу.
+  assert.ok(lines.some((l) => l.includes(`job=job-4`) && l.includes("failed") && l.includes("lease втрачено")));
+  // job (таблиця jobs) уже не наш, тому finishJob через updateClaim теж
+  // провалиться — job лишається "running" до природного витікання lease.
+  // Але щойно вставлений run-рядок більше не висне: він позначається "failed" напряму.
   assert.equal(
     supabase.calls.jobsUpdate.filter((c) => c.fields.status === "failed").length,
     0,
-    "жодного явного 'failed' запису для job-4 не сталося",
+    "у jobs явного 'failed' немає — job не наш, updateClaim на ньому б знову провалився",
   );
+  const runUpdate = supabase.calls.runsUpdate.at(-1);
+  assert.ok(runUpdate, "runs-рядок отримує фінальне оновлення, а не лишається 'running' назавжди");
+  assert.equal(runUpdate.fields.status, "failed");
+  assert.equal(runUpdate.filters.run_id, supabase.calls.runsInsert[0].run_id);
 });
 
 test("drain(): job зі структурою payload, що не є обʼєктом (null, скаляр) — не ламає виконання insert-фази", async () => {

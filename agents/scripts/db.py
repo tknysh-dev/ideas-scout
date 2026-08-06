@@ -123,11 +123,11 @@ def insert_inbox(draft_id: str, submitted_at: str, raw_text: str, source: str = 
         "raw_text": raw_text,
         "source": source,
     }
-    if track:
+    if track is not None:
         payload["track"] = track
-    if mode:
+    if mode is not None:
         payload["mode"] = mode
-    if target_card_id:
+    if target_card_id is not None:
         payload["target_card_id"] = target_card_id
     rows = _request("POST", "/inbox", payload)
     return rows[0] if rows else {}

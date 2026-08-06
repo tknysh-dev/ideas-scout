@@ -80,38 +80,49 @@ test("сирота: parent_id вказує на неіснуючу ідею — 
   assert.deepEqual(result[0].children, []);
 });
 
-test("цикл A→B→A: жоден вузол не потрапляє в дерево (не крашиться, не висне)", () => {
+test("цикл A→B→A: обидва вузли стають власними коренями (не зникають, не крашиться, не висне)", () => {
   const a = idea({ id: "A", parent_id: "B" });
   const b = idea({ id: "B", parent_id: "A" });
   const result = buildIdeaTree([a, b], matchAll, "asc");
-  // Ні A, ні B не задовольняють умову "корінь" (немає parent_id або
-  // parent_id не знайдено), тому цикл просто випадає з дерева цілком —
-  // без стека, без нескінченного циклу, але й без видимого попередження.
-  assert.deepEqual(result, []);
+  // Жоден вузол циклу не задовольняє звичайну умову "корінь" (parent_id
+  // заданий і знайдений), тож без спеціального опрацювання цикл випав би з
+  // дерева цілком; натомість isInCycle() підхоплює обидва як власні корені,
+  // без дітей одне в одного (інакше вони дублювались би нескінченно).
+  assert.deepEqual(
+    result.map((n) => n.id),
+    ["A", "B"],
+  );
+  assert.deepEqual(result[0].children, []);
+  assert.deepEqual(result[1].children, []);
 });
 
-test("цикл із трьох вузлів A→B→C→A так само зникає повністю", () => {
+test("цикл із трьох вузлів A→B→C→A так само лишається видимим — усі три власні корені", () => {
   const a = idea({ id: "A", parent_id: "C" });
   const b = idea({ id: "B", parent_id: "A" });
   const c = idea({ id: "C", parent_id: "B" });
   const result = buildIdeaTree([a, b, c], matchAll, "asc");
-  assert.deepEqual(result, []);
+  assert.deepEqual(
+    result.map((n) => n.id),
+    ["A", "B", "C"],
+  );
 });
 
-test("вузол, що є власним батьком (parent_id === id), теж зникає", () => {
+test("вузол, що є власним батьком (parent_id === id), теж лишається видимим як власний корінь", () => {
   const self = idea({ id: "S", parent_id: "S" });
   const result = buildIdeaTree([self], matchAll, "asc");
-  assert.deepEqual(result, []);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, "S");
+  assert.deepEqual(result[0].children, []);
 });
 
-test("цикл не заважає іншим коренями лишатись видимими", () => {
+test("цикл не заважає іншим коренями лишатись видимими — і сам цикл теж лишається видимим", () => {
   const untouched = idea({ id: "U" });
   const a = idea({ id: "A", parent_id: "B" });
   const b = idea({ id: "B", parent_id: "A" });
   const result = buildIdeaTree([untouched, a, b], matchAll, "asc");
   assert.deepEqual(
     result.map((n) => n.id),
-    ["U"],
+    ["U", "A", "B"],
   );
 });
 

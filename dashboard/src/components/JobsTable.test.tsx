@@ -58,12 +58,10 @@ describe("JobsTable — усі відомі статуси", () => {
     expect(screen.getByText(label)).toBeDefined();
   });
 
-  test("невідомий статус поза словником STATUS_META — компонент падає (немає фолбеку, на відміну від statusMeta())", () => {
-    // Задокументована сумнівна поведінка: JobsTable.tsx:41 звертається до
-    // status.tone без перевірки, чи STATUS_META[job.status] взагалі існує —
-    // на відміну від lib/status.ts, де для IdeaStatus є явний фолбек.
+  test("невідомий статус поза словником STATUS_META — компонент не падає, показує сирий статус (jobStatusMeta мирує фолбек із statusMeta())", () => {
     const unknown = job({ id: "job-1", status: "queued" as JobStatus });
-    expect(() => render(<JobsTable jobs={[unknown]} />)).toThrow();
+    expect(() => render(<JobsTable jobs={[unknown]} />)).not.toThrow();
+    expect(screen.getByText("queued")).toBeDefined();
   });
 });
 

@@ -130,19 +130,17 @@ describe("розбір page (parsePage)", () => {
     expect(findByType(el, Pagination)[0].props.page).toBe(1);
   });
 
-  // Number.parseInt("2.9", 10) === 2 — дробова частина обрізається, а не
-  // округлюється й не відхиляється. Задокументовано як є.
-  test("page='2.9' -> Number.parseInt обрізає до 2, а не округлює й не відхиляє", async () => {
+  // Строгий парсинг: рядок мусить складатися лише з цифр, інакше — сторінка 1.
+  test("page='2.9' -> невалідна (не суцільні цифри), fallback на 1", async () => {
     getServiceClient.mockReturnValue(mockSupabase({ pageResult: { data: ROWS, count: 100, error: null } }));
     const el = await RunsPage({ searchParams: Promise.resolve({ page: "2.9" }) });
-    expect(findByType(el, Pagination)[0].props.page).toBe(2);
+    expect(findByType(el, Pagination)[0].props.page).toBe(1);
   });
 
-  // Number.parseInt("5abc", 10) === 5 — суфікс сміття ігнорується без помилки.
-  test("page='5abc' -> parseInt читає числовий префікс, суфікс ігнорується", async () => {
+  test("page='5abc' -> невалідна (суфікс сміття), fallback на 1", async () => {
     getServiceClient.mockReturnValue(mockSupabase({ pageResult: { data: ROWS, count: 100, error: null } }));
     const el = await RunsPage({ searchParams: Promise.resolve({ page: "5abc" }) });
-    expect(findByType(el, Pagination)[0].props.page).toBe(5);
+    expect(findByType(el, Pagination)[0].props.page).toBe(1);
   });
 
   test("pageCount рахується як Math.max(1, Math.ceil(total/PAGE_SIZE)) — total=0 -> pageCount=1", async () => {

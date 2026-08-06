@@ -76,12 +76,16 @@ describe("ownerLogin — авторизацію налаштовано", () => {
     await expect(ownerLogin()).resolves.toEqual({ login: "octocat" });
   });
 
-  // Порівняння регістрозалежне: GitHub логіни регістронезалежні на своєму
-  // боці, але цей код їх не нормалізує — задокументовано як є.
-  test("порівняння регістрозалежне: 'Octocat' !== 'octocat' -> заборона", async () => {
+  // GitHub логіни регістронезалежні на своєму боці — порівняння тут теж має
+  // ігнорувати регістр.
+  test("порівняння регістронезалежне: 'Octocat' === 'octocat' -> успіх", async () => {
     auth.mockResolvedValue({ user: { login: "Octocat" } });
-    await expect(ownerLogin()).resolves.toEqual({
-      error: "Цей акаунт не має права створювати завдання.",
-    });
+    await expect(ownerLogin()).resolves.toEqual({ login: "Octocat" });
+  });
+
+  test("порівняння регістронезалежне і в іншу сторону: allowedLogin у верхньому регістрі -> успіх", async () => {
+    getAuthEnv.mockReturnValue({ ...AUTH_ENV, allowedLogin: "OCTOCAT" });
+    auth.mockResolvedValue({ user: { login: "octocat" } });
+    await expect(ownerLogin()).resolves.toEqual({ login: "octocat" });
   });
 });

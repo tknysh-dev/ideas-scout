@@ -85,6 +85,9 @@ const OUTPUT_LIMIT = 64 * 1024;
  */
 
 const JOB_HANDLERS = Object.freeze({
+  // Прибирає прототип Object, інакше JOB_HANDLERS["toString"] тощо теж
+  // проходять allowlist як успадковані властивості.
+  __proto__: null,
   infrastructure_dry_run: Object.freeze({
     executable: join(REPO_ROOT, "agents/scripts/infrastructure-dry-run.sh"),
     args: [],
@@ -143,7 +146,7 @@ export function buildRunId(jobId, jobType = "infrastructure_dry_run", date = new
  * @returns {number}
  */
 export function backoffFor(attempt) {
-  const index = Math.min(Math.max(attempt, 1), RECONNECT_BACKOFF_MS.length) - 1;
+  const index = Math.min(Math.max(Math.floor(attempt), 1), RECONNECT_BACKOFF_MS.length) - 1;
   return RECONNECT_BACKOFF_MS[index];
 }
 
@@ -304,7 +307,23 @@ export function createJobWorker({ supabase, workerId, spawnFn = spawn }) {
     }
 
     const attached = await updateClaim(job, { run_id: runId });
-    if (!attached) throw new Error(`Не вдалося прив'язати run ${runId} до job ${job.id}`);
+    if (!attached) {
+      // Lease job'а зник між insert run і цим update: сам job уже не наш (наступний
+      // updateClaim/finishJob теж провалиться), тож без цього щойно вставлений
+      // run назавжди лишається "running" — позначаємо його failed напряму.
+      const lostLeaseError = `Не вдалося прив'язати run ${runId} до job ${job.id}: lease втрачено`;
+      await /** @type {RunsQueryBuilder} */ (supabase.from("runs"))
+        .update({
+          finished_at: new Date().toISOString(),
+          status: "failed",
+          errors: [lostLeaseError],
+          notes: "Lease job втрачено між insert run і attach-update.",
+          meta: { job_id: job.id, worker_id: workerId, attempt: job.attempt_count, ...publicJobMeta(job) },
+        })
+        .eq("run_id", runId);
+      log(`job=${job.id} run=${runId} failed: ${lostLeaseError}`);
+      return;
+    }
 
     const heartbeat = setInterval(async () => {
       try {
@@ -453,6 +472,9 @@ export function createRealtimeSupervisor({
       // шлях, який не лишає процес живим, але глухим до черги.
       emit(`fatal: realtime не піднявся за ${MAX_RECONNECT_ATTEMPTS} спроб — виходжу під рестарт launchd`);
       onFatal();
+      // Без цього наступний CHANNEL_ERROR одразу знову перевищує MAX і б'є fatal
+      // повторно; скидання дозволяє новому цілому циклу спроб перед наступним fatal.
+      reconnectAttempt = 0;
       return;
     }
     const delay = immediate ? 0 : backoffFor(reconnectAttempt);

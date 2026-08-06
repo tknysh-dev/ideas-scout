@@ -112,12 +112,7 @@ describe("DeepResearchBlocks — один блок із синтезом", () =>
     expect(item.querySelectorAll("p")).toHaveLength(0);
   });
 
-  // Задокументована сумнівна поведінка: DeepResearchBlocks.tsx:38 —
-  // VERDICT_TONE[verdict] для вердикту поза словником CriterionVerdict дає
-  // undefined, TONE_META[undefined] теж undefined, і meta стає falsy навіть
-  // при заданому synthesis. Компонент тихо показує «лише моделі» замість
-  // реального (хай і невідомого) вердикту — без падіння, але оманливо.
-  test("невідоме значення verdict (поза словником CriterionVerdict) — тихо показує «лише моделі» замість вердикту", () => {
+  test("невідоме значення verdict (поза словником CriterionVerdict) — показує сирий вердикт замість «лише моделі» (verdictMeta мирує фолбек)", () => {
     const data = makeData({
       [KEY_A]: {
         synthesis: row({ criterion_key: KEY_A, verdict: "unexpected_verdict" as CriterionVerdict }),
@@ -125,7 +120,8 @@ describe("DeepResearchBlocks — один блок із синтезом", () =>
       },
     });
     expect(() => render(<DeepResearchBlocks data={data} />)).not.toThrow();
-    expect(screen.getByText("лише моделі")).toBeDefined();
+    expect(screen.queryByText("лише моделі")).toBeNull();
+    expect(screen.getByText("unexpected_verdict")).toBeDefined();
   });
 });
 

@@ -161,8 +161,10 @@ def _as_object(raw: str) -> dict | None:
 def _balance_brackets(raw: str) -> str:
     """Дозакриває дужки блока, обірваного на півслові."""
     curly = square = 0
+    stack: list[str] = []
+    comma_at_depth: dict[int, int] = {}
     in_string = escaped = False
-    for char in raw:
+    for i, char in enumerate(raw):
         if escaped:
             escaped = False
             continue
@@ -174,15 +176,38 @@ def _balance_brackets(raw: str) -> str:
             continue
         if in_string:
             continue
-        curly += char == "{"
-        curly -= char == "}"
-        square += char == "["
-        square -= char == "]"
+        if char == "{":
+            curly += 1
+            stack.append("{")
+        elif char == "}":
+            curly -= 1
+            if stack:
+                stack.pop()
+        elif char == "[":
+            square += 1
+            stack.append("[")
+        elif char == "]":
+            square -= 1
+            if stack:
+                stack.pop()
+        elif char == ",":
+            comma_at_depth[len(stack)] = i
     if curly <= 0 and square <= 0:
         return raw
     text = raw
     if in_string:
-        # Обрив усередині значення: відрізаємо недописаний запис цілком.
+        # Обрив усередині значення: відрізаємо недописаний запис цілком, до
+        # межі з попереднім елементом на ТІЙ САМІЙ глибині вкладеності — а не
+        # по останній комі в УСЬОМУ тексті: кома всередині самого недописаного
+        # запису (між його ж полями) інакше розрізає запис навпіл замість
+        # межі елементів масиву/обʼєкта. Якщо на цій глибині межі немає
+        # (обрив стався в першому елементі контейнера — рятувати нема від
+        # чого), лишаємо стару поведінку "по останній комі в тексті": тут
+        # коректно відновити запис однаково не вдасться.
+        parent_depth = len(stack) - 1
+        comma = comma_at_depth.get(parent_depth)
+        if comma is not None:
+            return text[:comma] + "".join("]" if ch == "[" else "}" for ch in reversed(stack[:parent_depth]))
         comma = text.rfind(",")
         if comma > 0:
             text = text[:comma]

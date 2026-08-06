@@ -136,6 +136,14 @@ class CheckSchemaDriftTest(unittest.TestCase):
     def test_check_value_list_new_value_missing_from_schema_is_err(self):
         # це той самий клас розсинхрону, що стався з rejection_code/NO_MARKET:
         # міграція додає значення в CHECK, а schema.sql лишається зі старим переліком.
+        #
+        # РАНІШЕ (ВІДОМИЙ ДЕФЕКТ): assertIn("NO_MARKET", message) проходив
+        # завжди, незалежно від того, чи check_schema_drift ЩОСЬ реально
+        # порівняв — повідомлення й так містить хардкоджену згадку "уже
+        # стався з rejection_code/NO_MARKET" наприкінці (посилання на цей
+        # самий інцидент), тож тест не гарантував, що саме NO_MARKET
+        # потрапив у ДИНАМІЧНУ частину (обчислений diff), а не в статичний
+        # хвіст. Перевіряємо саме динамічний фрагмент "немає в schema.sql: …".
         schema = """
         create table ideas (
           id text primary key,
@@ -152,7 +160,7 @@ class CheckSchemaDriftTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         level, message = result[0]
         self.assertEqual(level, "err")
-        self.assertIn("NO_MARKET", message)
+        self.assertIn("немає в schema.sql: NO_MARKET", message)
         self.assertIn("ideas.rejection_code", message)
 
     def test_check_value_list_matching_is_clean(self):

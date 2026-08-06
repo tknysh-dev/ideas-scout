@@ -54,7 +54,7 @@ export default async function IdeaPage({
   }
 
   const [
-    { data: idea },
+    { data: idea, error: ideaError },
     { data: sources },
     { data: events },
     { data: verdictRows },
@@ -88,6 +88,9 @@ export default async function IdeaPage({
       .limit(1),
   ]);
 
+  // Розрізняємо "запит до бази впав" від "ідеї справді немає" — інакше збій
+  // мережі чи БД показував би той самий 404, що й видалена картка.
+  if (ideaError) throw new Error(ideaError.message);
   if (!idea) notFound();
 
   const record = idea as Idea;

@@ -1,7 +1,7 @@
 import type { Element, ElementContent, Root } from "hast";
 // Відносний шлях замість "@/lib/idea-refs": плейн `node --test` (без next-резолвера
 // tsconfig-шляхів) не вміє резолвити аліас "@/*", а сам модуль лишається тим самим.
-import { IDEA_ID_PATTERN } from "./idea-refs.ts";
+import { createIdeaIdPattern } from "./idea-refs.ts";
 
 const SKIP_TAGS = new Set(["code", "pre", "a"]);
 
@@ -44,12 +44,12 @@ export default function rehypeIdeaRefs(known: Set<string>) {
 }
 
 function split(value: string, known: Set<string>): ElementContent[] | null {
-  IDEA_ID_PATTERN.lastIndex = 0;
+  const pattern = createIdeaIdPattern();
   let match: RegExpExecArray | null;
   let cursor = 0;
   const out: ElementContent[] = [];
 
-  while ((match = IDEA_ID_PATTERN.exec(value))) {
+  while ((match = pattern.exec(value))) {
     if (!known.has(match[0])) continue;
     if (match.index > cursor) {
       out.push({ type: "text", value: value.slice(cursor, match.index) });

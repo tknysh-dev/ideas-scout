@@ -51,7 +51,7 @@ afterEach(() => {
   }
 });
 
-const validAccept = { ideaId: "PI-1", action: "accepted" as const, reason: "" };
+const validAccept = { ideaId: "PI-001", action: "accepted" as const, reason: "" };
 
 // --- assertOwner: гілки перевірки авторизації -----------------------------
 
@@ -59,7 +59,7 @@ test("decideIdea: немає auth env, NODE_ENV=development -> авториза�
   clearAuthEnv();
   mutableEnv.NODE_ENV = "development";
   mockState.queue = [
-    { data: { id: "PI-1", status: "approved_pending", rejection_code: null }, error: null },
+    { data: { id: "PI-001", status: "approved_pending", rejection_code: null }, error: null },
     { error: null },
     { error: null },
   ];
@@ -92,7 +92,7 @@ test("decideIdea: сесія і логін співпадають -> дія тр
   setAuthEnv("owner-login");
   mockAuthState.session = { user: { login: "owner-login" } };
   mockState.queue = [
-    { data: { id: "PI-1", status: "approved_pending", rejection_code: null }, error: null },
+    { data: { id: "PI-001", status: "approved_pending", rejection_code: null }, error: null },
     { error: null },
     { error: null },
   ];
@@ -105,8 +105,18 @@ test("decideIdea: сесія і логін співпадають -> дія тр
 test("decideIdea: невалідний input -> помилка валідації, Supabase не викликається", async () => {
   clearAuthEnv();
   mutableEnv.NODE_ENV = "development";
-  const result = await decideIdea({ ideaId: "PI-1", action: "postponed" as never, reason: "" });
+  const result = await decideIdea({ ideaId: "PI-001", action: "postponed" as never, reason: "" });
   assert.equal(result.error, "Невідома дія.");
+  assert.equal(mockState.calls.length, 0);
+});
+
+// Симетрично з fetchDeepResearchPrompt/loadResearchableIdea в actions/deep-research.ts:
+// формат ideaId звіряється з IDEA_ID_RE до будь-якого звернення в базу.
+test("decideIdea: ideaId не відповідає формату -> помилка валідації, Supabase не викликається", async () => {
+  clearAuthEnv();
+  mutableEnv.NODE_ENV = "development";
+  const result = await decideIdea({ ideaId: "'; drop table ideas;--", action: "accepted", reason: "" });
+  assert.equal(result.error, "Некоректний ID ідеї.");
   assert.equal(mockState.calls.length, 0);
 });
 
@@ -138,11 +148,11 @@ test("decideIdea: перехід статусу заборонено (та са�
   clearAuthEnv();
   mutableEnv.NODE_ENV = "development";
   mockState.queue = [
-    { data: { id: "PI-1", status: "accepted", rejection_code: null }, error: null },
+    { data: { id: "PI-001", status: "accepted", rejection_code: null }, error: null },
   ];
   // reason непорожній, бо для current !== "approved_pending" isRevision === true,
   // а без причини спрацював би інший guard ("Зміна вже ухваленого рішення...").
-  const result = await decideIdea({ ideaId: "PI-1", action: "accepted", reason: "передумав" });
+  const result = await decideIdea({ ideaId: "PI-001", action: "accepted", reason: "передумав" });
   assert.equal(result.error, "Ідея вже в статусі «Прийнята».");
   assert.ok(!mockState.calls.some((c) => c.method === "update"));
 });
@@ -151,7 +161,7 @@ test("decideIdea: перегляд без причини -> «Зміна вже 
   clearAuthEnv();
   mutableEnv.NODE_ENV = "development";
   mockState.queue = [
-    { data: { id: "PI-1", status: "accepted", rejection_code: null }, error: null },
+    { data: { id: "PI-001", status: "accepted", rejection_code: null }, error: null },
   ];
   const result = await decideIdea(validAccept);
   assert.equal(result.error, "Зміна вже ухваленого рішення вимагає причини.");
@@ -161,7 +171,7 @@ test("decideIdea: помилка оновлення статусу -> повід
   clearAuthEnv();
   mutableEnv.NODE_ENV = "development";
   mockState.queue = [
-    { data: { id: "PI-1", status: "approved_pending", rejection_code: null }, error: null },
+    { data: { id: "PI-001", status: "approved_pending", rejection_code: null }, error: null },
     { error: { message: "write failed" } },
   ];
   const result = await decideIdea(validAccept);
@@ -173,7 +183,7 @@ test("decideIdea: статус оновлено, але подію записа�
   clearAuthEnv();
   mutableEnv.NODE_ENV = "development";
   mockState.queue = [
-    { data: { id: "PI-1", status: "approved_pending", rejection_code: null }, error: null },
+    { data: { id: "PI-001", status: "approved_pending", rejection_code: null }, error: null },
     { error: null },
     { error: { message: "events table locked" } },
   ];
@@ -185,7 +195,7 @@ test("decideIdea: повний успіх -> порожній результат
   clearAuthEnv();
   mutableEnv.NODE_ENV = "development";
   mockState.queue = [
-    { data: { id: "PI-1", status: "approved_pending", rejection_code: null }, error: null },
+    { data: { id: "PI-001", status: "approved_pending", rejection_code: null }, error: null },
     { error: null },
     { error: null },
   ];
@@ -198,11 +208,11 @@ test("decideIdea: перегляд ухваленого рішення (rejected
   clearAuthEnv();
   mutableEnv.NODE_ENV = "development";
   mockState.queue = [
-    { data: { id: "PI-1", status: "rejected", rejection_code: "LEGAL" }, error: null },
+    { data: { id: "PI-001", status: "rejected", rejection_code: "LEGAL" }, error: null },
     { error: null },
     { error: null },
   ];
-  const result = await decideIdea({ ideaId: "PI-1", action: "accepted", reason: "передумав" });
+  const result = await decideIdea({ ideaId: "PI-001", action: "accepted", reason: "передумав" });
   assert.deepEqual(result, {});
   const update = mockState.calls.find((c) => c.method === "update" && c.table === "ideas");
   assert.deepEqual(update?.args[0], {

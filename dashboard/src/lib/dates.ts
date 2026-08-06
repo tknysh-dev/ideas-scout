@@ -10,7 +10,9 @@ export function formatDate(
   fallback = "—",
 ) {
   if (!value) return fallback;
-  return new Date(value).toLocaleDateString("uk-UA", {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleDateString("uk-UA", {
     timeZone: TIME_ZONE,
     year: "numeric",
     month,
@@ -24,7 +26,9 @@ export function formatDateTime(
   fallback = "—",
 ) {
   if (!value) return fallback;
-  return new Date(value).toLocaleString("uk-UA", {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleString("uk-UA", {
     timeZone: TIME_ZONE,
     year: "numeric",
     month,

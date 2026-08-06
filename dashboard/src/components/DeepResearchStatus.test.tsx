@@ -78,19 +78,15 @@ describe("DeepResearchStatus — завершені статуси (failed/cance
     expect(link.getAttribute("href")).toBe("/runs?tab=history");
   });
 
-  // Сумнівна поведінка: ActiveSynthesisJob["status"] типізований як union із
-  // чотирьох значень, але рантайм-дані з БД цим не перевіряються. Значення
-  // поза словником не потрапляє в ACTIVE_STATUSES (isActive=false), а далі
-  // `failed = job.status === "failed"` теж хибне для будь-якого невідомого
-  // рядка — тож невідомий статус мовчки показується як "скасовано", хоча
-  // насправді це може бути зовсім інший (майбутній) статус синтезу.
-  test("невідомий статус (не зі словника) -> трактується як 'скасовано', компонент не падає", () => {
+  test("невідомий статус (не зі словника) -> плашка 'Статус синтезу невідомий', компонент не падає", () => {
     render(
       <DeepResearchStatus
         job={job({ status: "archived" as unknown as ActiveSynthesisJob["status"] })}
       />,
     );
-    expect(screen.getByText("Синтез скасовано")).toBeDefined();
+    expect(screen.getByText("Статус синтезу невідомий")).toBeDefined();
+    expect(screen.queryByText("Синтез скасовано")).toBeNull();
+    expect(screen.getByText(/статус «archived»/)).toBeDefined();
   });
 });
 

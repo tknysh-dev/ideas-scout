@@ -180,6 +180,20 @@ test("проза всередині блоку не заважає", () => {
   assert.ok(result.reports[0].notes.some((n) => /зайва проза/.test(n)));
 });
 
+// sliceObject відрізає й самі пробіли/переноси навколо {...}: коли всередині
+// огорожі більше нічого немає (реальний зайвий текст — сама зайва кома, а не
+// проза), відрізана рамка не мала б породжувати мітку "зайва проза".
+test("зайві пробіли навколо {...} без реальної прози — «зайва проза» не згадується", () => {
+  const broken = criteriaJson.replace(/\}\s*\]/, "},\n  ]");
+  const result = parse([
+    { provider: "ChatGPT", text: "```json\n  \n" + broken + "\n\n  \n```" },
+  ]);
+  const report = result.reports[0];
+  assert.equal(report.status, "ok");
+  assert.ok(report.notes.some((n) => /зайві коми/.test(n)), "реальний ремонт зафіксовано");
+  assert.ok(!report.notes.some((n) => /зайва проза/.test(n)), "але вигаданої прози нема");
+});
+
 test("блок, обірваний на середині, дає те, що встигло дійти", () => {
   const truncated = criteriaJson.slice(0, criteriaJson.indexOf('"d_demand"') + 40);
   const result = parse([{ provider: "ChatGPT", text: "```json\n" + truncated }]);

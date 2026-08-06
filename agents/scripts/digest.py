@@ -75,7 +75,11 @@ def dashboard_base_url() -> str:
             json.JSONDecodeError, TimeoutError):
         return ""
     hook = info.get("url") or ""
-    return hook.split("/api/telegram/webhook")[0].rstrip("/") if hook else ""
+    if "/api/telegram/webhook" not in hook:
+        # Хук без очікуваного суфіксу — не той хук чи він змінився: краще
+        # лишити картки без посилань, ніж дати посилання на неправильний хост.
+        return ""
+    return hook.split("/api/telegram/webhook")[0].rstrip("/")
 
 
 def idea_line(idea: dict, base_url: str) -> str:

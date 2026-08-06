@@ -524,21 +524,16 @@ class ProcessUpdateTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             bot.process_update({"update_id": 123.0})
 
-    def test_update_id_bool_true_does_not_raise(self):
-        # Факт: isinstance(True, int) є True в Python, тож update_id=True
-        # проходить перевірку типу без винятку.
-        with patch.object(bot, "on_message") as mock_msg, \
-             patch.object(bot, "on_callback") as mock_cb:
+    def test_update_id_bool_true_raises_type_error(self):
+        # bool — підклас int, тож isinstance(True, int) є True. Явне виключення
+        # bool тримає поведінку в парі з TS-вебхуком (Number.isSafeInteger(true)
+        # === false), який те саме update_id: true відхиляє.
+        with self.assertRaises(TypeError):
             bot.process_update({"update_id": True})
-        mock_msg.assert_not_called()
-        mock_cb.assert_not_called()
 
-    def test_update_id_bool_false_does_not_raise(self):
-        with patch.object(bot, "on_message") as mock_msg, \
-             patch.object(bot, "on_callback") as mock_cb:
+    def test_update_id_bool_false_raises_type_error(self):
+        with self.assertRaises(TypeError):
             bot.process_update({"update_id": False})
-        mock_msg.assert_not_called()
-        mock_cb.assert_not_called()
 
     def test_valid_update_id_no_message_or_callback_noop(self):
         with patch.object(bot, "on_message") as mock_msg, \
@@ -572,22 +567,23 @@ class ProcessUpdateTest(unittest.TestCase):
             bot.process_update(upd)
         mock_cb.assert_not_called()
 
-    def test_message_not_a_dict_raises_attribute_error(self):
-        # Факт: перевіряється лише тип верхнього рівня (update_id). Якщо
-        # message виявляється не словником, падає AttributeError, а не
-        # TypeError з єдиного вхідного бар'єра функції.
+    def test_message_not_a_dict_raises_type_error(self):
+        # message приходить з інтернету недовіреним — той самий TypeError
+        # з бар'єра функції, а не AttributeError від .get() на не-словнику.
         upd = {"update_id": 1, "message": "oops"}
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(TypeError):
             bot.process_update(upd)
 
     def test_message_chat_not_a_dict_raises_attribute_error(self):
+        # Факт: перевіряється лише message цілком, а не вкладений chat —
+        # вкладене поле-не-словник і далі падає AttributeError.
         upd = {"update_id": 1, "message": {"chat": "oops"}}
         with self.assertRaises(AttributeError):
             bot.process_update(upd)
 
-    def test_callback_query_not_a_dict_raises_attribute_error(self):
+    def test_callback_query_not_a_dict_raises_type_error(self):
         upd = {"update_id": 1, "callback_query": "oops"}
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(TypeError):
             bot.process_update(upd)
 
     def test_message_missing_chat_key_ignored_not_dispatched(self):

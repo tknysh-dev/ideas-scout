@@ -12,6 +12,7 @@ import {
   type DecideIdeaInput,
   type DecisionAction,
 } from "@/lib/decisions-logic";
+import { isValidIdeaId } from "@/lib/deep-research-logic";
 import type { IdeaStatus } from "@/lib/types";
 
 export type { DecideIdeaInput, DecisionAction };
@@ -48,6 +49,9 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   if (authError) return { error: authError };
 
   const { ideaId, action, rejectionCode } = input;
+  // Симетрично з actions/deep-research.ts: формат ID перевіряємо до звернення
+  // в базу, а не покладаємось лише на те, що UI підставляє коректний id.
+  if (!isValidIdeaId(ideaId)) return { error: "Некоректний ID ідеї." };
   const reason = input.reason.trim();
 
   const inputError = validateDecisionInput({ ideaId, action, reason, rejectionCode });

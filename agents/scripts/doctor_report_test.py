@@ -191,7 +191,7 @@ class RenderWarningsOnlyTest(unittest.TestCase):
             ("check", "·", "⚪ quiet"),
         ]
         text = doctor_report._render_warnings_only("🔴", ("1", "1", "1"), items)
-        self.assertNotIn("ок", text.split("\n", 2)[-1].split("warn")[0])
+        self.assertNotIn("✅ ок", text)
         self.assertIn("🟡 warn", text)
         self.assertIn("🔴 err", text)
         self.assertNotIn("⚪ quiet", text)
@@ -233,15 +233,20 @@ class RenderWarningsOnlyTest(unittest.TestCase):
         self.assertNotIn("Порожня секція", text)
         self.assertNotIn("рядок з підсумком", text)
 
-    def test_tail_items_never_shown(self):
-        # kind "tail" не обробляється жодною гілкою _render_warnings_only —
-        # підсумковий рядок doctor.sh у --warnings-only не потрапляє нікуди.
+    def test_tail_items_ignored_but_summary_still_appended_from_counts(self):
+        # kind "tail" (тут — власний рядок doctor.sh) сам по собі й далі не
+        # обробляється жодною гілкою _render_warnings_only. РАНІШЕ (ВІДОМИЙ
+        # ДЕФЕКТ) через це весь підсумковий рядок губився: у --warnings-only
+        # дайджест обривався одразу після останньої підказки, без "N ок ·
+        # M попереджень · K проблем" узагалі. Тепер підсумок будується не з
+        # items, а напряму з counts і додається завжди, коли є хоч один
+        # некiлькісний check.
         items = [
             ("check", "✘", "🔴 err"),
             ("tail", "", "3 ок · 1 попереджень · 1 проблем"),
         ]
         text = doctor_report._render_warnings_only("🔴", ("3", "1", "1"), items)
-        self.assertNotIn("3 ок", text)
+        self.assertIn("3 ок · 1 попереджень · 1 проблем", text)
 
     def test_title_includes_counts_line(self):
         items = [("check", "✘", "🔴 err")]

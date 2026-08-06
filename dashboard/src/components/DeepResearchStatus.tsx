@@ -18,6 +18,7 @@ export interface ActiveSynthesisJob {
 type ActivePhase = "pending" | "running";
 
 const ACTIVE_STATUSES = new Set<ActiveSynthesisJob["status"]>(["pending", "running"]);
+const TERMINAL_STATUSES = new Set<ActiveSynthesisJob["status"]>(["failed", "cancelled"]);
 
 const PHASE: Record<ActivePhase, { title: string; body: string }> = {
   pending: {
@@ -94,19 +95,28 @@ export default function DeepResearchStatus({ job }: { job: ActiveSynthesisJob })
   }
 
   const failed = job.status === "failed";
+  // Рантайм-статус із бази не обмежений типом ActiveSynthesisJob["status"] —
+  // значення поза ACTIVE_STATUSES/TERMINAL_STATUSES не можна мовчки видавати
+  // за "скасовано": власник має бачити, що стан синтезу саме невпізнаний.
+  const unknown = !TERMINAL_STATUSES.has(job.status);
 
   return (
     <section aria-live="polite" className="mb-8 rounded-lg border border-line bg-paper-raised p-5">
       <div className="flex flex-wrap items-center gap-2">
-        <Pill label={failed ? "Синтез не вдався" : "Синтез скасовано"} token="rejected" />
+        <Pill
+          label={unknown ? "Статус синтезу невідомий" : failed ? "Синтез не вдався" : "Синтез скасовано"}
+          token="rejected"
+        />
         <span className="font-mono text-[11px] text-ink-dim">
           {failed ? "востаннє спробували" : "поставлено"} {formatDateTime(job.created_at)}
         </span>
       </div>
       <p className="mt-2 max-w-2xl text-sm text-ink-dim">
-        {failed
-          ? "Останній запуск синтезу на M1 завершився помилкою після всіх повторних спроб воркера, тож картку не переписано — вона лишається такою, якою була до цієї спроби."
-          : "Останній запуск синтезу скасували, не діждавшись результату, тож картку не переписано — вона лишається такою, якою була до цієї спроби."}
+        {unknown
+          ? `Останній запуск синтезу має статус «${job.status}», якого ця сторінка не впізнає — можливо, дашборд відстав від бекенду.`
+          : failed
+            ? "Останній запуск синтезу на M1 завершився помилкою після всіх повторних спроб воркера, тож картку не переписано — вона лишається такою, якою була до цієї спроби."
+            : "Останній запуск синтезу скасували, не діждавшись результату, тож картку не переписано — вона лишається такою, якою була до цієї спроби."}
       </p>
       {job.last_error && (
         <p className="mt-2 max-w-2xl overflow-x-auto rounded-md border border-line bg-paper p-2 font-mono text-xs text-ink-dim">

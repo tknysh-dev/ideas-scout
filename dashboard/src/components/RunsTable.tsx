@@ -20,7 +20,11 @@ function RunErrors({ errors }: { errors: unknown }) {
 }
 
 function TokenUsage({ usage }: { usage: unknown }) {
-  if (!usage || typeof usage !== "object") return <span className="text-ink-dim">—</span>;
+  // typeof [] === "object" — без цієї перевірки масив проходить далі й
+  // Object.entries() розбирає його за числовими індексами ("0: a, 1: b").
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return <span className="text-ink-dim">—</span>;
+  }
   const entries = Object.entries(usage as Record<string, unknown>);
   if (entries.length === 0) return <span className="text-ink-dim">—</span>;
   return (

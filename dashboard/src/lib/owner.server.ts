@@ -19,7 +19,9 @@ export async function ownerLogin(): Promise<OwnerCheck> {
 
   const session = await auth();
   if (!session?.user) return { error: "Потрібен вхід у дашборд." };
-  if (session.user.login !== authEnv.allowedLogin) {
+  // GitHub логіни регістронезалежні на своєму боці — порівнюємо в нижньому регістрі,
+  // інакше allow-list розрізняв би 'Octocat' і 'octocat' як різні акаунти.
+  if (session.user.login?.toLowerCase() !== authEnv.allowedLogin.toLowerCase()) {
     return { error: "Цей акаунт не має права створювати завдання." };
   }
   return { login: session.user.login };

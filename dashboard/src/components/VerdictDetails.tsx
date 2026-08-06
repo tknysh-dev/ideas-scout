@@ -4,11 +4,11 @@ import Prose from "@/components/Prose";
 import { formatDate } from "@/lib/dates";
 import {
   DISAGREEMENT_META,
-  RESOLUTION_META,
-  RESOLUTION_TOKEN,
   TONE_META,
-  VERDICT_TONE,
   parseEvidence,
+  resolutionMeta,
+  resolutionToken,
+  verdictMeta,
   type CriterionVerdicts,
   type EvidenceItem,
 } from "@/lib/deep-research";
@@ -50,7 +50,7 @@ function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {
 // DeepResearchTabs) — та сама розмітка, що в VerdictDetails, але без
 // синтезу: тут усі поля беруться з самого рядка моделі, а не з synthesis.
 export function VerdictRowDetails({ row }: { row: CriteriaVerdictRow }) {
-  const meta = TONE_META[VERDICT_TONE[row.verdict]];
+  const meta = verdictMeta(row.verdict);
   const evidence = parseEvidence(row.evidence);
 
   return (
@@ -94,7 +94,7 @@ export default function VerdictDetails({ entry }: { entry: CriterionVerdicts }) 
       {models.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {models.map((row) => {
-            const meta = TONE_META[VERDICT_TONE[row.verdict]];
+            const meta = verdictMeta(row.verdict);
             return <Pill key={row.provider} label={`${row.provider}: ${meta.label}`} token={meta.token} />;
           })}
           {disagreement && <Pill label={DISAGREEMENT_META.label} token={TONE_META.owner.token} />}
@@ -103,8 +103,8 @@ export default function VerdictDetails({ entry }: { entry: CriterionVerdicts }) 
 
       {synthesis?.resolution && (
         <div className="space-y-1">
-          <Pill label={RESOLUTION_META[synthesis.resolution].label} token={RESOLUTION_TOKEN[synthesis.resolution]} />
-          <p className="text-xs text-ink-dim">{RESOLUTION_META[synthesis.resolution].hint}</p>
+          <Pill label={resolutionMeta(synthesis.resolution).label} token={resolutionToken(synthesis.resolution)} />
+          <p className="text-xs text-ink-dim">{resolutionMeta(synthesis.resolution).hint}</p>
         </div>
       )}
 

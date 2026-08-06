@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { getServiceClient } from "@/lib/supabase/service";
-import { IDEA_ID_PATTERN, type IdeaRef } from "@/lib/idea-refs";
+import { createIdeaIdPattern, type IdeaRef } from "@/lib/idea-refs";
 
 // Довідник тягнемо цілком і один раз на рендер: id ідей розкидані по всіх
 // текстах усіх карток сторінки, тож окремий запит на картку дав би десятки
@@ -31,8 +31,7 @@ export async function resolveIdeaRefs(
 ): Promise<Record<string, IdeaRef>> {
   const mentioned = new Set<string>();
   for (const text of texts) {
-    IDEA_ID_PATTERN.lastIndex = 0;
-    for (const match of text.match(IDEA_ID_PATTERN) ?? []) mentioned.add(match);
+    for (const match of text.match(createIdeaIdPattern()) ?? []) mentioned.add(match);
   }
   if (exclude) mentioned.delete(exclude);
   if (mentioned.size === 0) return {};

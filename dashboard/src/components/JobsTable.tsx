@@ -14,6 +14,17 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   deep_research_synthesis: "Синтез глибокого дослідження",
 };
 
+// Статус приходить із бази — той самий захист, що й statusMeta() у
+// lib/status.ts: значення поза словником рендериться як є, а не валить рядок.
+function jobStatusMeta(status: JobRow["status"]) {
+  return (
+    STATUS_META[status] ?? {
+      label: status,
+      tone: "text-ink-dim",
+    }
+  );
+}
+
 function jobLabel(job: JobRow) {
   const base = JOB_TYPE_LABELS[job.type];
   if (!base) return job.type;
@@ -38,7 +49,7 @@ export default function JobsTable({ jobs }: { jobs: JobRow[] }) {
         </thead>
         <tbody>
           {jobs.map((job) => {
-            const status = STATUS_META[job.status];
+            const status = jobStatusMeta(job.status);
             return (
               <tr key={job.id} className="border-b border-line/60 last:border-0">
                 <td className="px-4 py-3 font-mono text-xs text-ink-dim">

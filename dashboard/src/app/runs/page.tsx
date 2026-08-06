@@ -23,9 +23,15 @@ const TABS = {
 
 type TabKey = keyof typeof TABS;
 
+// Number.parseInt читає числовий префікс і мовчки відкидає решту ("5abc" -> 5,
+// "2.9" -> 2) — з URL query це радше сміття, ніж сторінка, тому приймаємо лише
+// рядок, що складається виключно з цифр.
+const PAGE_RE = /^\d+$/;
+
 function parsePage(value: string | undefined) {
-  const page = Number.parseInt(value ?? "1", 10);
-  return Number.isFinite(page) && page > 0 ? page : 1;
+  if (value === undefined || !PAGE_RE.test(value)) return 1;
+  const page = Number(value);
+  return page > 0 ? page : 1;
 }
 
 export default async function RunsPage({

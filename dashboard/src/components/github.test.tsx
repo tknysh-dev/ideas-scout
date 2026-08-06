@@ -182,20 +182,33 @@ describe("fetchConfigFile", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  // isAllowedPath — наївна перевірка префікса (`path.startsWith(root + "/")`),
-  // без нормалізації "..": "shared/../secrets.env" ПРОХОДИТЬ перевірку, бо
-  // рядок починається з "shared/", і йде далі рядком у GitHub Contents API.
-  // На відміну від config-files.ts (де є додаткова перевірка виходу за межі
-  // локального кореня через resolve()), тут такого другого бар'єру немає —
-  // єдина лінія захисту від виходу за ALLOWED_ROOTS лежить на боці GitHub API.
-  // Задокументовано як є, продакшн-код не міняю.
-  test("шлях із '..' проходить наївну перевірку префікса і летить у GitHub API як є", async () => {
+  // isAllowedPath нормалізує ".."-сегменти (posix.normalize) перед перевіркою
+  // кореня: "shared/../secrets.env" зводиться до "secrets.env", який уже не
+  // входить у ALLOWED_ROOTS, тому в GitHub API нічого не летить.
+  test("шлях із '..', що виходить за межі дозволеного кореня, відхиляється без звернення в мережу", async () => {
+    await expect(fetchConfigFile("shared/../secrets.env")).rejects.toThrow(
+      "Шлях поза дозволеними директоріями",
+    );
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  // Перевірка дозволеності дивиться на нормалізований шлях, але сам запит
+  // летить із шляхом як є — тут нормалізація нічого не забороняє, лише
+  // визначає, чи шлях лишається всередині ALLOWED_ROOTS.
+  test("шлях із '..', що після нормалізації лишається в межах дозволеного кореня, проходить", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
       jsonResponse({ content: Buffer.from("x").toString("base64"), sha: "s" }),
     );
-    await fetchConfigFile("shared/../secrets.env");
+    await fetchConfigFile("shared/foo/../contracts.md");
     const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toContain("/contents/shared/../secrets.env?ref=main");
+    expect(url).toContain("/contents/shared/foo/../contracts.md?ref=main");
+  });
+
+  test("шлях, що піднімається вище кореня репозиторію ('../secrets.env'), відхиляється", async () => {
+    await expect(fetchConfigFile("../secrets.env")).rejects.toThrow(
+      "Шлях поза дозволеними директоріями",
+    );
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test("декодує base64-вміст і повертає sha", async () => {

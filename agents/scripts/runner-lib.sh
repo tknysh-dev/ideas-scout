@@ -71,9 +71,9 @@ in_work_hours() {
 
 # build_run_id: чиста побудова run_id з готової позначки часу аргументом
 # (не викликає date сама) — щоб бути детермінованою й тестованою. Позначку
-# часу runner.sh бере через `date +%Y%m%d-%H%M%S` БЕЗ -u (локальний час, не
-# UTC) — не змінювати це тут, розсинхрон з UTC-мітками в БД існує, але це
-# окреме питання, не цієї функції.
+# часу runner.sh бере через `date -u +%Y%m%d-%H%M%S` (UTC, дефект 34: раніше
+# був локальний час і run_id сортувались інакше, ніж UTC-мітки started_at/
+# finished_at у runs).
 build_run_id() {
   local stamp="$1" provider="$2" track="$3" agent="$4"
   printf '%s-%s-%s-%s' "$stamp" "$provider" "$track" "$agent"

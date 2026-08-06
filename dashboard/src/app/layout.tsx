@@ -33,11 +33,23 @@ export const metadata: Metadata = {
 async function getPendingDecisionsCount(): Promise<number> {
   const supabase = getServiceClient();
   if (!supabase) return 0;
-  const { count } = await supabase
-    .from("ideas")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "approved_pending");
-  return count ?? 0;
+  // Цей layout рендериться на кожній сторінці порталу — і мережевий збій
+  // (проміс реджектиться), і помилка в тілі відповіді ({error, count:null})
+  // мають лише занулити бейдж, а не класти весь портал чи ховати збій мовчки.
+  try {
+    const { count, error } = await supabase
+      .from("ideas")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "approved_pending");
+    if (error) {
+      console.error("getPendingDecisionsCount: supabase error", error);
+      return 0;
+    }
+    return count ?? 0;
+  } catch (error) {
+    console.error("getPendingDecisionsCount: request failed", error);
+    return 0;
+  }
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

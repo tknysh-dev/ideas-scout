@@ -150,7 +150,7 @@ export interface HandoffPromptInput {
 // чуже вікно як частина «дослідницького завдання».
 function stripMaintainerHeader(template: string): string {
   const separator = template.match(/^---\s*$/m);
-  if (!separator?.index) return template;
+  if (separator?.index === undefined) return template;
   return template.slice(separator.index + separator[0].length).trimStart();
 }
 

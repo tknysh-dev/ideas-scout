@@ -13,9 +13,16 @@ export default function CompetitorsSection({
 }) {
   if (competitors.length === 0) return null;
 
-  const counts = { active: 0, stale: 0, dead: 0 };
+  // liveness приходить із бази без рантайм-перевірки проти LIVENESS_META —
+  // значення поза словником рахуємо окремо, а не мовчки випускаємо із сум.
+  const counts = { active: 0, stale: 0, dead: 0, unknown: 0 };
   for (const competitor of competitors) {
-    if (competitor.liveness) counts[competitor.liveness] += 1;
+    if (!competitor.liveness) continue;
+    if (competitor.liveness in LIVENESS_META) {
+      counts[competitor.liveness as keyof typeof LIVENESS_META] += 1;
+    } else {
+      counts.unknown += 1;
+    }
   }
 
   return (
@@ -25,12 +32,15 @@ export default function CompetitorsSection({
       </h2>
       <p className="mb-3 text-sm text-ink-dim">
         Живих: {counts.active} · Застиглих: {counts.stale} · Мертвих: {counts.dead}
+        {counts.unknown > 0 ? ` · Невідомих: ${counts.unknown}` : ""}
       </p>
 
       <ul className="space-y-3">
         {competitors.map((competitor, index) => {
           const evidence = parseEvidence(competitor.evidence);
-          const liveness = competitor.liveness ? LIVENESS_META[competitor.liveness] : null;
+          const liveness = competitor.liveness
+            ? LIVENESS_META[competitor.liveness] ?? { label: competitor.liveness, token: "transferred" }
+            : null;
           const hasMeta = Boolean(competitor.pricing || competitor.last_activity);
           const hasDetails =
             hasMeta ||

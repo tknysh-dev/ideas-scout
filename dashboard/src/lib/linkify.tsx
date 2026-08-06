@@ -1,6 +1,6 @@
 import { Children, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import IdeaRefPill from "@/components/IdeaRefPill";
-import { IDEA_ID_PATTERN, type IdeaRef } from "@/lib/idea-refs";
+import { createIdeaIdPattern, type IdeaRef } from "@/lib/idea-refs";
 
 const SKIP_TAGS = new Set(["code", "pre"]);
 
@@ -69,12 +69,12 @@ export function linkify(node: ReactNode, refs: Record<string, IdeaRef>): ReactNo
 }
 
 function splitText(value: string, refs: Record<string, IdeaRef>): ReactNode {
-  IDEA_ID_PATTERN.lastIndex = 0;
+  const pattern = createIdeaIdPattern();
   const out: ReactNode[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = IDEA_ID_PATTERN.exec(value))) {
+  while ((match = pattern.exec(value))) {
     const ref = refs[match[0]];
     if (!ref) continue;
     if (match.index > cursor) out.push(value.slice(cursor, match.index));

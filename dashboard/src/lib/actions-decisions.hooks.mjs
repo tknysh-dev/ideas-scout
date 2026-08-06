@@ -7,9 +7,9 @@
 //   OAuth), зайве й неможливе в node --test.
 // - "@/lib/supabase/service" -> тестовий дублер: справжній service.ts починається
 //   з `import "server-only"`, який кидає виняток поза Server Component.
-// - "@/lib/config", "@/lib/decisions-logic" -> ті самі модулі, що й у проді,
-//   лише резолвляться напряму (плейн Node не знає про tsconfig path alias "@/*",
-//   це робить лише бандлер Next).
+// - "@/lib/config", "@/lib/decisions-logic", "@/lib/deep-research-logic" -> ті
+//   самі модулі, що й у проді, лише резолвляться напряму (плейн Node не знає
+//   про tsconfig path alias "@/*", це робить лише бандлер Next).
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === "next/cache") {
     return nextResolve(new URL("./actions-test-mock-next-cache.mts", import.meta.url).href, context);
@@ -25,6 +25,9 @@ export async function resolve(specifier, context, nextResolve) {
   }
   if (specifier === "@/lib/decisions-logic") {
     return nextResolve(new URL("./decisions-logic.ts", import.meta.url).href, context);
+  }
+  if (specifier === "@/lib/deep-research-logic") {
+    return nextResolve(new URL("./deep-research-logic.ts", import.meta.url).href, context);
   }
   return nextResolve(specifier, context);
 }

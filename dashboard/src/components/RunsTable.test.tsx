@@ -162,14 +162,10 @@ describe("RunsTable — токени (колонка «Токени», TokenUsag
     expect(cells[5].textContent).toBe("prompt: 0, completion: -1, total: 999999999");
   });
 
-  // Задокументована сумнівна поведінка: перевірка `typeof usage === "object"`
-  // пропускає масиви (typeof [] === "object"), тож token_usage-масив не падає
-  // у фолбек "—", а розбирається через Object.entries як обʼєкт з
-  // числовими ключами — "0: a, 1: b" замість очікуваного "—" чи списку значень.
-  test("token_usage — непорожній масив (не план-обʼєкт) — розбирається як обʼєкт з індексами, не як «—»", () => {
+  test("token_usage — непорожній масив (не план-обʼєкт) — «—», а не розбір через Object.entries за індексами", () => {
     render(<RunsTable runs={[run({ run_id: "r1", token_usage: ["a", "b"] })]} />);
     const cells = dataCells(screen.getAllByRole("row")[1]);
-    expect(cells[5].textContent).toBe("0: a, 1: b");
+    expect(cells[5].textContent).toBe("—");
   });
 
   test("token_usage — порожній масив — «—» (той самий шлях, що й порожній обʼєкт)", () => {

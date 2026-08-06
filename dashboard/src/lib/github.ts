@@ -1,4 +1,5 @@
 import "server-only";
+import { posix } from "node:path";
 import { getGithubEnv } from "@/lib/config";
 
 const ALLOWED_ROOTS = ["agents/prompts", "agents/criteria", "agents/catalogs", "shared"];
@@ -19,8 +20,15 @@ export interface GithubCommitInfo {
   message: string | null;
 }
 
+// Нормалізуємо ".."-сегменти рядково (posix.normalize, без файлової системи):
+// "shared/../secrets.env" звівся б до "secrets.env" і вже не пройшов би
+// перевірку кореня — на відміну від наївного startsWith, що пропускав його як є.
 function isAllowedPath(path: string): boolean {
-  return ALLOWED_ROOTS.some((root) => path === root || path.startsWith(`${root}/`));
+  const normalized = posix.normalize(path);
+  if (normalized === ".." || normalized.startsWith("../") || normalized.startsWith("/")) {
+    return false;
+  }
+  return ALLOWED_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`));
 }
 
 async function ghFetch(path: string, revalidate = 300) {

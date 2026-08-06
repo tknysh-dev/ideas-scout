@@ -202,7 +202,10 @@ function textOf(node: unknown): string {
   return "";
 }
 
-function ideaQuery(result: { data: Idea | null | { id: string; title: string } }) {
+function ideaQuery(result: {
+  data: Idea | null | { id: string; title: string };
+  error?: { message: string } | null;
+}) {
   return { select: () => ({ eq: () => ({ maybeSingle: async () => result }) }) };
 }
 function listQuery(result: { data: unknown[] | null }) {
@@ -224,6 +227,7 @@ function jobsQuery(result: { data: unknown[] | null }) {
 
 function mockSupabase({
   idea: ideaRow,
+  ideaError = null,
   sources = [],
   events = [],
   verdictRows = [],
@@ -232,6 +236,7 @@ function mockSupabase({
   parent = null,
 }: {
   idea: Idea | null;
+  ideaError?: { message: string } | null;
   sources?: SourceRow[];
   events?: EventRow[];
   verdictRows?: CriteriaVerdictRow[];
@@ -240,7 +245,7 @@ function mockSupabase({
   parent?: { id: string; title: string } | null;
 }) {
   const from = vi.fn();
-  from.mockReturnValueOnce(ideaQuery({ data: ideaRow }));
+  from.mockReturnValueOnce(ideaQuery({ data: ideaRow, error: ideaError }));
   from.mockReturnValueOnce(listQuery({ data: sources }));
   from.mockReturnValueOnce(listQuery({ data: events }));
   from.mockReturnValueOnce(verdictsQuery({ data: verdictRows }));
@@ -272,14 +277,16 @@ describe("notFound()", () => {
     await expect(call("ZZZ")).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
   });
 
-  // Сторінка деструктурує лише `data` з відповіді на запит ideas, `error`
-  // ігнорується: якщо сам запит впав, data теж null, і шлях збігається з
-  // "ідеї не існує" — notFound(), а не окреме повідомлення про помилку.
-  // Сумнівна поведінка: власник бачить звичайний 404, а не текст помилки БД.
-  test("помилка запиту (data: null, error задано) -> та сама поведінка, що й 'ідеї немає' — notFound(), без падіння й без ConfigNotice", async () => {
-    const supabase = mockSupabase({ idea: null });
+  // Сторінка тепер розрізняє "запит до ideas упав" (error задано) від "ідеї
+  // справді немає" (data: null, error: null) — перше кидає помилку (і її
+  // підхопить error boundary), а не показує той самий 404, що й видалена картка.
+  test("помилка запиту ideas (data: null, error задано) -> кидає помилку, а не notFound()/ConfigNotice", async () => {
+    const supabase = mockSupabase({
+      idea: null,
+      ideaError: { message: "з'єднання з базою розірвано" },
+    });
     getServiceClient.mockReturnValue(supabase);
-    await expect(call("I-1")).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
+    await expect(call("I-1")).rejects.toThrow("з'єднання з базою розірвано");
   });
 
   test("id передається в запит ideas як є", async () => {

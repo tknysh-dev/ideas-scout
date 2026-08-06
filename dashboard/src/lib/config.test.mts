@@ -63,12 +63,16 @@ test("getDataEnv: порожній рядок замість URL -> null (falsy)
   assert.equal(getDataEnv(), null);
 });
 
-// Фактична поведінка: значення не трімиться. Рядок із самих пробілів —
-// truthy у JS, тому пройде як "валідний", хоч по суті це сміття.
-test("getDataEnv: значення з самих пробілів проходить як валідне (не трімиться) — задокументовано як є", () => {
+test("getDataEnv: значення з самих пробілів трактується як відсутнє -> null", () => {
   process.env.SUPABASE_URL = "   ";
   process.env.SUPABASE_SERVICE_KEY = "secret-key";
-  assert.deepEqual(getDataEnv(), { url: "   ", key: "secret-key" });
+  assert.equal(getDataEnv(), null);
+});
+
+test("getDataEnv: значення з зайвими пробілами навколо валідного тексту трімиться", () => {
+  process.env.SUPABASE_URL = "  https://x.supabase.co  ";
+  process.env.SUPABASE_SERVICE_KEY = "secret-key";
+  assert.deepEqual(getDataEnv(), { url: "https://x.supabase.co", key: "secret-key" });
 });
 
 // --- getAuthEnv ---------------------------------------------------------
@@ -118,10 +122,7 @@ test("getAuthEnv: ALLOWED_GITHUB_LOGIN — порожній рядок -> null",
   assert.equal(getAuthEnv(), null);
 });
 
-// Так само не трімиться — пробіли в allowedLogin пройдуть як валідне
-// значення й потім НІКОЛИ не збіжаться з реальним GitHub login (він без
-// пробілів). Ефективно те саме, що replace, тільки не так очевидно.
-test("getAuthEnv: значення з зайвими пробілами проходить як валідне, не трімиться", () => {
+test("getAuthEnv: значення з зайвими пробілами навколо allowedLogin трімиться", () => {
   process.env.AUTH_SECRET = "s";
   process.env.AUTH_GITHUB_ID = "id";
   process.env.AUTH_GITHUB_SECRET = "cs";
@@ -130,8 +131,19 @@ test("getAuthEnv: значення з зайвими пробілами прох
     secret: "s",
     clientId: "id",
     clientSecret: "cs",
-    allowedLogin: "  octocat  ",
+    allowedLogin: "octocat",
   });
+});
+
+// Рядок із самих пробілів раніше проходив як "валідний" ALLOWED_GITHUB_LOGIN,
+// який потім НІКОЛИ не збігався з реальним GitHub login — allow-list ефективно
+// блокував усіх, мовчки. Тепер трактується так само, як відсутня змінна.
+test("getAuthEnv: ALLOWED_GITHUB_LOGIN з самих пробілів -> null (fail closed)", () => {
+  process.env.AUTH_SECRET = "s";
+  process.env.AUTH_GITHUB_ID = "id";
+  process.env.AUTH_GITHUB_SECRET = "cs";
+  process.env.ALLOWED_GITHUB_LOGIN = "   ";
+  assert.equal(getAuthEnv(), null);
 });
 
 // --- getConfigSource ------------------------------------------------------
@@ -186,5 +198,10 @@ test("getGithubEnv: токен не заданий -> null", () => {
 
 test("getGithubEnv: порожній рядок замість токена -> null", () => {
   process.env.GITHUB_TOKEN = "";
+  assert.equal(getGithubEnv(), null);
+});
+
+test("getGithubEnv: рядок із самих пробілів замість токена -> null", () => {
+  process.env.GITHUB_TOKEN = "   ";
   assert.equal(getGithubEnv(), null);
 });

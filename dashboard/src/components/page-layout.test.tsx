@@ -91,32 +91,29 @@ test("нуль рішень (count: 0) -> Sidebar отримує 0, а не фо
 });
 
 // Supabase-клієнт на мережеву/серверну помилку зазвичай РЕЗОЛВИТЬ проміс з
-// { data: null, count: null, error: {...} }, а не реджектить його. layout.tsx
-// error взагалі не перевіряє — лише `count ?? 0`, тож помилка тихо стає
-// нулем: бейдж "рішень чекає" в Sidebar показує 0 замість реального стану.
-// Портал у цьому випадку НЕ падає.
-test("помилка Supabase (запит резолвиться з error, count: null) -> тихо трактується як 0, портал не падає", async () => {
+// { data: null, count: null, error: {...} }, а не реджектить його.
+// getPendingDecisionsCount() перевіряє error і логує його, але все одно
+// деградує до 0 — бейдж "рішень чекає" показує 0 замість реального стану,
+// портал при цьому НЕ падає.
+test("помилка Supabase (запит резолвиться з error, count: null) -> деградує до 0, портал не падає", async () => {
   const supabase = mockSupabase({ count: null, error: { message: "розрив з'єднання" } });
   getServiceClient.mockReturnValue(supabase);
   const el = await RootLayout({ children: <div /> });
   expect(findByType(el, Sidebar)[0].props.pendingDecisions).toBe(0);
 });
 
-// ФІКСУЄМО РИЗИК (з опису завдання): getPendingDecisionsCount() не має
-// try/catch навколо await. Якщо базовий HTTP-виклик супабейс-клієнта не
-// резолвиться в об'єкт { error }, а РЕДЖЕКТИТЬ проміс (fetch кинув виняток,
-// а не повернув відповідь з тілом-помилкою — саме так поводиться
-// supabase-js, коли мережа справді недоступна, а не сервер відповів 4xx/5xx),
-// виняток пробивається крізь RootLayout без обробки. Оскільки цей layout
-// рендериться на КОЖНІЙ сторінці порталу, така відмова кладе весь портал
-// повністю (Next.js покаже глобальний error boundary), а не тільки один
-// віджет лічильника.
-test("мережевий збій (проміс супабейс-запиту реджектиться) -> RootLayout кидає виняток, портал падає повністю", async () => {
+// Мережевий збій (fetch кинув виняток, а не повернув відповідь з тілом-
+// помилкою — так поводиться supabase-js, коли мережа справді недоступна)
+// раніше пробивав RootLayout без обробки й клав увесь портал на кожній
+// сторінці. Тепер try/catch навколо запиту ловить виняток так само, як
+// error у тілі відповіді, — портал лишається живим, бейдж показує 0.
+test("мережевий збій (проміс супабейс-запиту реджектиться) -> pendingDecisions=0, портал не падає", async () => {
   const eq = vi.fn(() => Promise.reject(new Error("fetch failed")));
   const select = vi.fn(() => ({ eq }));
   const from = vi.fn(() => ({ select }));
   getServiceClient.mockReturnValue({ from });
-  await expect(RootLayout({ children: <div /> })).rejects.toThrow("fetch failed");
+  const el = await RootLayout({ children: <div /> });
+  expect(findByType(el, Sidebar)[0].props.pendingDecisions).toBe(0);
 });
 
 describe("authDisabled у Sidebar", () => {

@@ -59,23 +59,21 @@ def say(level: str, message: str) -> None:
 def _strip_comments(text: str) -> str:
     """Вирізає `-- ...` до кінця рядка, не займаючи лапок: коментарі в схемі
     самі містять коми й дужки ('PI-0001, APP-0013'), і якщо їх не прибрати
-    заздалегідь, вони збивають підрахунок top-level ком і дужок нижче."""
+    заздалегідь, вони збивають підрахунок top-level ком і дужок нижче.
+
+    Подвоєна лапка '' (SQL-екранування) не потребує окремого розпізнавання:
+    кожна лапка просто перемикає in_str, і дві лапки підряд перемикають його
+    туди-й-назад — той самий стан, що й при явному пропуску пари."""
     out = []
     in_str = False
     i = 0
     n = len(text)
     while i < n:
         ch = text[i]
-        if in_str:
+        if ch == "'":
+            in_str = not in_str
             out.append(ch)
-            if ch == "'":
-                if i + 1 < n and text[i + 1] == "'":
-                    out.append(text[i + 1])
-                    i += 1
-                else:
-                    in_str = False
-        elif ch == "'":
-            in_str = True
+        elif in_str:
             out.append(ch)
         elif ch == "-" and i + 1 < n and text[i + 1] == "-":
             nl = text.find("\n", i)
@@ -128,16 +126,10 @@ def _split_top_level(body: str) -> list[str]:
     n = len(body)
     while i < n:
         ch = body[i]
-        if in_str:
+        if ch == "'":
+            in_str = not in_str
             buf.append(ch)
-            if ch == "'":
-                if i + 1 < n and body[i + 1] == "'":
-                    buf.append(body[i + 1])
-                    i += 1
-                else:
-                    in_str = False
-        elif ch == "'":
-            in_str = True
+        elif in_str:
             buf.append(ch)
         elif ch == "(":
             depth += 1
@@ -213,16 +205,44 @@ def _split_statements(text: str) -> list[str]:
     return stmts
 
 
+_FUNCTION_START = re.compile(r"create (?:or replace )?function", re.IGNORECASE)
+_DOLLAR_TAG = re.compile(r"\$\w*\$")
+
+
+def _strip_function_bodies(text: str) -> str:
+    """Вирізає тіло КОЖНОЇ CREATE FUNCTION окремо, за власним $$-тегом.
+
+    Закривний тег шукається як НАСТУПНЕ входження ТОГО САМОГО тега після
+    відкривного — а не по фіксованому "$$ language ...;" одразу за ним: якщо
+    функція закінчується просто "$$;" (LANGUAGE стоїть перед AS $$, а не
+    після, як у claim_next_job), пошук по фіксованій хвостовій формі
+    проскакує повз власний закривний $$ і зʼїдає все аж до наступної функції."""
+    out = []
+    pos = 0
+    for m in _FUNCTION_START.finditer(text):
+        if m.start() < pos:
+            continue
+        tag_match = _DOLLAR_TAG.search(text, m.end())
+        if not tag_match:
+            continue
+        tag = tag_match.group(0)
+        close_idx = text.find(tag, tag_match.end())
+        if close_idx == -1:
+            continue
+        semi = text.find(";", close_idx + len(tag))
+        if semi == -1:
+            continue
+        out.append(text[pos:m.start()])
+        pos = semi + 1
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def _count_unrecognized_statements(text: str) -> int:
     """Скільки інструкцій поза CREATE TABLE/ALTER ... ADD COLUMN лишились
     нерозпізнаними — функції з $$...$$ прибираємо окремо: усередині них теж є
     ';', і статистика по statements їх інакше порве на шматки."""
-    text = re.sub(
-        r"create (?:or replace )?function.*?\$\$.*?\$\$ language \w+\s*;",
-        "",
-        text,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
+    text = _strip_function_bodies(text)
     count = 0
     for stmt in _split_statements(text):
         if not stmt.strip():
@@ -238,7 +258,7 @@ def parse_schema(text: str) -> tuple[dict[str, set[str]], int]:
     unparsed = 0
     consumed: list[tuple[int, int]] = []
 
-    for m in re.finditer(r"create table\s+(?:if not exists\s+)?(\w+)\s*\(", text, re.IGNORECASE):
+    for m in re.finditer(r'create table\s+(?:if not exists\s+)?"?(\w+)"?\s*\(', text, re.IGNORECASE):
         name = m.group(1)
         open_idx = m.end() - 1
         end_idx = _find_matching_paren(text, open_idx)
@@ -345,11 +365,20 @@ def fetch_db_tables() -> dict[str, set[str]] | None:
         say("warn", "у відповіді PostgREST немає ключа definitions — формат OpenAPI змінився, звірку пропущено")
         return None
 
-    return {
-        name: set((props or {}).get("properties", {}).keys())
-        for name, props in definitions.items()
-        if isinstance(props, dict)
-    }
+    _no_properties = object()
+    tables: dict[str, set[str]] = {}
+    for name, props in definitions.items():
+        if not isinstance(props, dict):
+            continue
+        properties = props.get("properties", _no_properties)
+        if properties is _no_properties:
+            properties = {}
+        elif not isinstance(properties, dict):
+            say("warn", f"у визначенні таблиці {name} 'properties' має неочікуваний тип"
+                f" ({type(properties).__name__} замість обʼєкта) — колонки цієї таблиці не звірено")
+            continue
+        tables[name] = set(properties.keys())
+    return tables
 
 
 # ---------------------------------------------------------------------------

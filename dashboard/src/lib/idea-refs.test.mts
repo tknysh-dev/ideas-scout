@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { IDEA_ID_PATTERN } from "./idea-refs.ts";
+import { createIdeaIdPattern } from "./idea-refs.ts";
 
-// Патерн стейтфулний (global flag -> lastIndex), тож перед кожним
-// самостійним використанням його скидаємо — так само, як роблять
-// linkify.tsx і rehype-idea-refs.ts.
+// createIdeaIdPattern() повертає новий регекс на кожен виклик — не спільний
+// стейтфулний singleton, тож ніякого lastIndex скидати не треба.
 function matches(value: string): string[] {
-  IDEA_ID_PATTERN.lastIndex = 0;
-  return [...value.matchAll(IDEA_ID_PATTERN)].map((m) => m[0]);
+  return [...value.matchAll(createIdeaIdPattern())].map((m) => m[0]);
 }
 
 test("типовий id (2 літери, 4 цифри) розпізнається", () => {
@@ -73,19 +71,16 @@ test("літери, приліплені до попереднього слов�
   assert.deepEqual(matches("щосьXPI-0001"), ["XPI-0001"]);
 });
 
-// Патерн — модульний singleton із /g. Якщо не скинути lastIndex,
-// exec() на новому рядку продовжує з позиції попереднього виклику й може
-// пропустити збіг на початку рядка. Саме тому і лінкіфай, і rehype-плагін
-// явно виставляють lastIndex = 0 перед кожним використанням.
-test("без скидання lastIndex повторний exec() на новому рядку губить збіг (задокументована пастка)", () => {
-  IDEA_ID_PATTERN.lastIndex = 0;
-  IDEA_ID_PATTERN.exec("PI-0001 десь в кінці рядка PI-0002");
-  assert.ok(IDEA_ID_PATTERN.lastIndex > 0);
+// Раніше патерн був модульним singleton-ом із /g: exec() на одному рядку
+// зсував lastIndex, і наступний виклик на НОВОМУ рядку без явного скидання
+// губив збіг на початку. createIdeaIdPattern() віддає свіжий регекс щоразу,
+// тож два незалежні виклики більше не діляться станом.
+test("createIdeaIdPattern(): два незалежні виклики не діляться lastIndex", () => {
+  const first = createIdeaIdPattern();
+  first.exec("PI-0001 десь в кінці рядка PI-0002");
+  assert.ok(first.lastIndex > 0);
 
-  const secondCallWithoutReset = IDEA_ID_PATTERN.exec("APP-0013 новий рядок");
-  assert.equal(secondCallWithoutReset, null);
-
-  IDEA_ID_PATTERN.lastIndex = 0;
-  const afterReset = IDEA_ID_PATTERN.exec("APP-0013 новий рядок");
-  assert.equal(afterReset?.[0], "APP-0013");
+  const second = createIdeaIdPattern();
+  assert.equal(second.lastIndex, 0);
+  assert.equal(second.exec("APP-0013 новий рядок")?.[0], "APP-0013");
 });

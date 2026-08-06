@@ -105,17 +105,12 @@ describe("VerdictDetails — розбіжність моделей (disagreement
 });
 
 describe("VerdictDetails — невідоме значення verdict у моделі (поза словником CriterionVerdict)", () => {
-  // Задокументована сумнівна поведінка (третій випадок такого патерну в
-  // проєкті, поряд із JobsTable і CompetitorsSection): на відміну від
-  // DeepResearchBlocks.tsx, де TONE_META[VERDICT_TONE[verdict]] підстраховано
-  // тернаром (meta ? ... : "лише моделі"), тут `const meta = TONE_META[...]`
-  // використовується одразу без перевірки — невідомий вердикт дає
-  // TONE_META[undefined]===undefined, і `meta.label` валить рендер.
-  test("вердикт поза словником — компонент падає при рендері", () => {
+  test("вердикт поза словником — компонент не падає, показує сирий вердикт замість лейбла (verdictMeta мирує фолбек)", () => {
     const badEntry = entry(null, [
-      verdictRow({ id: "m1", criterion_key: "1", verdict: "unexpected_verdict" as CriterionVerdict }),
+      verdictRow({ id: "m1", criterion_key: "1", provider: "openai", verdict: "unexpected_verdict" as CriterionVerdict }),
     ]);
-    expect(() => render(<VerdictDetails entry={badEntry} />)).toThrow();
+    expect(() => render(<VerdictDetails entry={badEntry} />)).not.toThrow();
+    expect(screen.getByText("openai: unexpected_verdict")).toBeDefined();
   });
 
   test("synthesis.verdict поза словником НЕ впливає на VerdictDetails — синтезний verdict тут не використовується (лише resolution/score/detail)", () => {
@@ -154,7 +149,7 @@ describe("VerdictDetails — резолюція синтезу (resolution)", ()
     expect(screen.queryByText(RESOLUTION_META.consensus.label)).toBeNull();
   });
 
-  test("невідоме значення resolution (поза RESOLUTION_META) — компонент падає при рендері", () => {
+  test("невідоме значення resolution (поза RESOLUTION_META) — компонент не падає, показує сиру резолюцію (resolutionMeta мирує фолбек)", () => {
     const badEntry = entry(
       verdictRow({
         id: "s1",
@@ -163,7 +158,8 @@ describe("VerdictDetails — резолюція синтезу (resolution)", ()
       }),
       [],
     );
-    expect(() => render(<VerdictDetails entry={badEntry} />)).toThrow();
+    expect(() => render(<VerdictDetails entry={badEntry} />)).not.toThrow();
+    expect(screen.getByText("future_case")).toBeDefined();
   });
 });
 
@@ -313,9 +309,10 @@ describe("VerdictRowDetails — вердикт (обов'язкова пігул
     },
   );
 
-  test("невідоме значення verdict (поза словником CriterionVerdict) — компонент падає при рендері", () => {
+  test("невідоме значення verdict (поза словником CriterionVerdict) — компонент не падає, показує сирий вердикт", () => {
     const badRow = verdictRow({ id: "r1", criterion_key: "1", verdict: "unexpected_verdict" as CriterionVerdict });
-    expect(() => render(<VerdictRowDetails row={badRow} />)).toThrow();
+    expect(() => render(<VerdictRowDetails row={badRow} />)).not.toThrow();
+    expect(screen.getByText("unexpected_verdict")).toBeDefined();
   });
 });
 

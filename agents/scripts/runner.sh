@@ -292,9 +292,11 @@ fi
 # run_id
 # ---------------------------------------------------------------------------
 
-# date тут БЕЗ -u (локальний час) — навмисно, не міняти на UTC (build_run_id
-# у runner-lib.sh це документує).
-RUN_ID="$(build_run_id "$(date +%Y%m%d-%H%M%S)" "$PROVIDER" "$TRACK" "$AGENT")"
+# date -u (UTC) — дефект 34: раніше тут був локальний час, і run_id сортувались
+# інакше, ніж started_at/finished_at у runs (ті завжди UTC). build_run_id сама
+# чиста й не викликає date — це навмисно, щоб лишатись детермінованою й
+# тестованою (runner-lib.sh).
+RUN_ID="$(build_run_id "$(date -u +%Y%m%d-%H%M%S)" "$PROVIDER" "$TRACK" "$AGENT")"
 echo "runner.sh: run_id=$RUN_ID"
 
 # Реєстрація — умова спостережуваності, а не формальність: write_status пише в

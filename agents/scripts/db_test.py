@@ -321,12 +321,25 @@ class InsertInboxTest(unittest.TestCase):
         self.assertEqual(called_body["target_card_id"], "c1")
 
     @mock.patch.object(db, "_request")
-    def test_falsy_optional_fields_omitted(self, mock_request):
+    def test_none_optional_fields_omitted(self, mock_request):
         mock_request.return_value = [{"draft_id": "d1"}]
-        db.insert_inbox("d1", "2024-01-01T00:00:00Z", "текст", track="", mode=None)
+        db.insert_inbox("d1", "2024-01-01T00:00:00Z", "текст", track=None, mode=None)
         called_body = mock_request.call_args[0][2]
         self.assertNotIn("track", called_body)
         self.assertNotIn("mode", called_body)
+
+    @mock.patch.object(db, "_request")
+    def test_empty_string_optional_field_is_sent_not_dropped(self, mock_request):
+        # РАНІШЕ (ВІДОМИЙ ДЕФЕКТ): `if track:` відкидав track="" за
+        # хибкістю (falsy), хоча викликач явно передав порожній рядок, а не
+        # "не чіпай це поле" (для цього є default None) — запис у payload
+        # мовчки губився. Тепер розрізняється None (не передано) і "" (явно
+        # передано порожнє значення).
+        mock_request.return_value = [{"draft_id": "d1"}]
+        db.insert_inbox("d1", "2024-01-01T00:00:00Z", "текст", track="", mode="")
+        called_body = mock_request.call_args[0][2]
+        self.assertEqual(called_body["track"], "")
+        self.assertEqual(called_body["mode"], "")
 
     @mock.patch.object(db, "_request")
     def test_returns_empty_dict_when_no_rows(self, mock_request):

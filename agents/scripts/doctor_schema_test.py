@@ -49,6 +49,18 @@ class StripCommentsTest(unittest.TestCase):
         text = "default 'it''s ok'"
         self.assertEqual(ds._strip_comments(text), text)
 
+    def test_doubled_quote_does_not_expose_comment_marker_to_output(self):
+        # Раніше _strip_comments/_split_top_level мали окремий lookahead на
+        # подвоєну лапку — перевірено вичерпним перебором (символи ' - , ( )
+        # a \n, довжина <=8), що для ЦІЄЇ конкретної форми toggle-по-символу
+        # алгоритму жоден вхід не відрізняє його від коду з lookahead: дві
+        # лапки підряд перемикають in_str туди-й-назад, лишаючи той самий
+        # стан для символу одразу за ними — включно з "--" одразу після
+        # подвоєної лапки, як тут. Код спрощено (прибрано lookahead), тест
+        # фіксує саме цю рівність поведінок, а не її відсутність.
+        text = "default 'it''s' -- comment, with comma\nnext"
+        self.assertEqual(ds._strip_comments(text), "default 'it''s' \nnext")
+
     def test_line_comment_without_trailing_newline_is_dropped_to_end(self):
         # "--"-коментар, що йде до самого кінця файлу без \n після себе:
         # nl == -1 -> break, а не нескінченний цикл чи IndexError.
@@ -242,20 +254,18 @@ class ParseSchemaUnparsedBucket(unittest.TestCase):
         # рахується двічі: раз явним err, раз загальним підрахунком.
         self.assertEqual(unparsed, 2)
 
-    def test_KNOWN_DEFECT_quoted_table_name_disappears_without_a_named_trace(self):
-        """ВІДОМИЙ ДЕФЕКТ: create table "ideas" (лапки навколо імені) не
-        відповідає регексу `create table\\s+(?:if not exists\\s+)?(\\w+)\\s*\\(`
-        (\\w+ не матчить лапку) — уся таблиця, з усіма колонками, зникає з
-        tables. unparsed при цьому таки зростає на 1 (через
-        _count_unrecognized_statements), тож факт "щось не розпізнано" не
-        губиться зовсім — але жодне повідомлення НЕ називає, яку саме таблицю
-        загубили: параметр name у той момент ще не існує (регекс на CREATE
-        TABLE не спрацював), кажучи лише сумарну цифру."""
+    def test_quoted_table_name_is_parsed(self):
+        # РАНІШЕ (ВІДОМИЙ ДЕФЕКТ): create table "ideas" (лапки навколо імені)
+        # не відповідав регексу `create table\s+(?:if not exists\s+)?(\w+)\s*\(`
+        # (\w+ не матчить лапку) — уся таблиця, з усіма колонками, зникала з
+        # tables, а unparsed зростав на 1 без жодного повідомлення, яку саме
+        # таблицю загубили. Регекс тепер терпить необовʼязкові лапки навколо
+        # ідентифікатора, тож таблиця розпізнається штатно.
         sql = 'create table "ideas" (id text primary key, title text not null);'
         tables, unparsed = ds.parse_schema(sql)
-        self.assertEqual(tables, {})
-        self.assertEqual(unparsed, 1)
-        self.assertEqual(ds.lines, [])  # немає жодного err/note із назвою "ideas" тут
+        self.assertEqual(tables, {"ideas": {"id", "title"}})
+        self.assertEqual(unparsed, 0)
+        self.assertEqual(ds.lines, [])
 
     def test_empty_segment_from_double_comma_is_skipped_without_crash(self):
         sql = "create table t (id text,, name text);"
@@ -296,22 +306,18 @@ class ParseSchemaFunctionStripSwallowsBetweenFunctions(unittest.TestCase):
     def setUp(self):
         _clear_lines()
 
-    def test_KNOWN_DEFECT_unknown_statement_between_two_functions_is_swallowed(self):
-        """ВІДОМИЙ ДЕФЕКТ. Регекс у _count_unrecognized_statements:
-        `create (?:or replace )?function.*?\\$\\$.*?\\$\\$ language \\w+\\s*;`
-        нежадібний, але не прив'язаний до ОДНІЄЇ функції: якщо перша функція
-        закривається як `$$;` (без "language ..." одразу після, бо
-        `language plpgsql` стоїть ПЕРЕД `as $$`, як у claim_next_job у
-        реальному shared/schema.sql), пошук .*? тягнеться далі — аж до
-        `$$ language ...;` НАСТУПНОЇ функції. Весь текст між ними (тут —
-        свідомо зіпсована інструкція `drop table ...`) вирізається одним
-        шматком і ніколи не потрапляє під перевірку _RECOGNIZED_STATEMENT.
-
-        Наслідок: якщо між двома CREATE FUNCTION у shared/schema.sql
-        з'явиться справді нерозпізнана конструкція, unparsed про це
-        промовчить. У реальному файлі це поки не шкодить (там між функціями
-        лежать лише CREATE INDEX/ALTER ADD CONSTRAINT, які й так були б
-        визнані) — але це випадковість розташування, а не гарантія розбору."""
+    def test_unknown_statement_between_two_functions_is_flagged_unparsed(self):
+        # РАНІШЕ (ВІДОМИЙ ДЕФЕКТ): регекс у _count_unrecognized_statements
+        # `create (?:or replace )?function.*?\$\$.*?\$\$ language \w+\s*;`
+        # нежадібний, але не був прив'язаний до ОДНІЄЇ функції: якщо перша
+        # функція закривається як `$$;` (без "language ..." одразу після, бо
+        # `language plpgsql` стоїть ПЕРЕД `as $$`, як у claim_next_job у
+        # реальному shared/schema.sql), пошук .*? тягнувся далі — аж до
+        # `$$ language ...;` НАСТУПНОЇ функції, зʼїдаючи все між ними одним
+        # шматком. _strip_function_bodies тепер закриває кожну функцію лише
+        # НАСТУПНИМ входженням її ЖЕ dollar-тега, тож текст між функціями
+        # (тут — свідомо зіпсована `drop table ...`) лишається в remainder
+        # і потрапляє під перевірку _RECOGNIZED_STATEMENT як і належить.
         sql = (
             "create or replace function f1(p integer)\n"
             "returns void\n"
@@ -333,9 +339,7 @@ class ParseSchemaFunctionStripSwallowsBetweenFunctions(unittest.TestCase):
         )
         tables, unparsed = ds.parse_schema(sql)
         self.assertEqual(tables, {})
-        # Мало б бути 1 (drop table нерозпізнаний) — фактично 0, бо його
-        # проковтнуло разом із тілами функцій.
-        self.assertEqual(unparsed, 0)
+        self.assertEqual(unparsed, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -595,25 +599,44 @@ class FetchDbTablesOpenApiParsing(unittest.TestCase):
         self.assertEqual(result, {"ideas": {"id"}})
         self.assertNotIn("weird", result)
 
-    def test_KNOWN_DEFECT_properties_as_a_list_crashes_instead_of_being_reported(self):
-        """ВІДОМИЙ ДЕФЕКТ: `(props or {}).get("properties", {}).keys()`
-        припускає, що "properties" — завжди dict. Якщо PostgREST (чи
-        зіпсована відповідь) віддасть "properties" як список чи будь-що без
-        .keys(), fetch_db_tables впаде необробленим AttributeError замість
-        say("warn", ...) — на відміну від гілки "немає definitions" вище, тут
-        немає жодного захисту, і виклик з main() впаде з traceback, а не
-        видасть рівень/повідомлення в очікуваному контракті."""
+    def test_properties_as_a_list_warns_and_skips_table_instead_of_crashing(self):
+        # РАНІШЕ (ВІДОМИЙ ДЕФЕКТ): `(props or {}).get("properties", {}).keys()`
+        # припускав, що "properties" — завжди dict. Якщо PostgREST (чи
+        # зіпсована відповідь) віддавав "properties" як список чи будь-що без
+        # .keys(), fetch_db_tables падав необробленим AttributeError замість
+        # say("warn", ...) — на відміну від гілки "немає definitions", де це
+        # оброблено. Тепер неочікуваний тип "properties" не валить виклик:
+        # таблицю пропускають з попередженням, інші таблиці звіряються як і раніше.
         doc = {"definitions": {"ideas": {"properties": ["id", "title"]}}}
-        with self._mock_urlopen_returning(doc), self.assertRaises(AttributeError):
-            ds.fetch_db_tables()
+        with self._mock_urlopen_returning(doc):
+            result = ds.fetch_db_tables()
+        self.assertEqual(result, {})
+        self.assertEqual(len(ds.lines), 1)
+        level, message = ds.lines[0].split("\t", 1)
+        self.assertEqual(level, "warn")
+        self.assertIn("ideas", message)
 
-    def test_KNOWN_DEFECT_properties_explicit_null_crashes(self):
-        """Той самий дефект, інший тригер: properties: null у JSON стає
-        Python None, і `.get("properties", {})` повертає саме None (ключ
-        присутній), а не {} — .keys() падає так само."""
+    def test_properties_explicit_null_warns_and_skips_table_instead_of_crashing(self):
+        # Той самий дефект, інший тригер: properties: null у JSON стає Python
+        # None, і `.get("properties", {})` повертав саме None (ключ
+        # присутній), а не {} — .keys() падав так само. Тепер — той самий
+        # warn-і-пропустити шлях, що й для списку вище.
         doc = {"definitions": {"ideas": {"properties": None}}}
-        with self._mock_urlopen_returning(doc), self.assertRaises(AttributeError):
-            ds.fetch_db_tables()
+        with self._mock_urlopen_returning(doc):
+            result = ds.fetch_db_tables()
+        self.assertEqual(result, {})
+        self.assertEqual(len(ds.lines), 1)
+        self.assertTrue(ds.lines[0].startswith("warn\t"))
+
+    def test_properties_missing_key_entirely_still_yields_empty_set_without_warn(self):
+        # Контроль: ключ "properties" ВІДСУТНІЙ у визначенні таблиці — це не
+        # "неочікуваний тип", а просто відсутність опису колонок; лишається
+        # тихим порожнім набором, як і до фіксу дефекту 5.
+        doc = {"definitions": {"table_without_properties": {}}}
+        with self._mock_urlopen_returning(doc):
+            result = ds.fetch_db_tables()
+        self.assertEqual(result, {"table_without_properties": set()})
+        self.assertEqual(ds.lines, [])
 
     def test_http_error_warns_and_returns_none(self):
         with mock.patch(

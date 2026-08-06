@@ -628,8 +628,10 @@ def run_triage(d):
         status, err = read_run_status(d["track"])
         why = RUN_FAILURE_HINTS.get(status)
         if not why:
+            # status тут завжди непорожній: "" уже перехоплено RUN_FAILURE_HINTS[""]
+            # вище, тож фолбек на rc з коду прогону не потрібен.
             why = ("Прогін відпрацював, але агент не записав вердикт"
-                   if status == "ok" else f"runner.sh: {status or f'код {rc}'}")
+                   if status == "ok" else f"runner.sh: {status}")
         note = f"\n\n❌ {esc(why)}"
         if err:
             note += f"\n<code>{esc(err[:400])}</code>"
@@ -797,15 +799,24 @@ def recover_interrupted_triage():
 
 
 def process_update(upd):
-    if not isinstance(upd, dict) or not isinstance(upd.get("update_id"), int):
+    update_id = upd.get("update_id") if isinstance(upd, dict) else None
+    # bool є підкласом int у Python (isinstance(True, int) — True) — без явного
+    # виключення update_id: true пройшов би перевірку типу, на відміну від
+    # TS-вебхука (Number.isSafeInteger(true) === false).
+    if (not isinstance(upd, dict) or not isinstance(update_id, int)
+            or isinstance(update_id, bool)):
         raise TypeError("очікував Telegram update з цілим update_id")
 
     if "message" in upd:
         msg = upd["message"]
+        if not isinstance(msg, dict):
+            raise TypeError("message має бути об'єктом")
         if str(msg.get("chat", {}).get("id")) == CHAT_ID:
             on_message(msg)
     elif "callback_query" in upd:
         cb = upd["callback_query"]
+        if not isinstance(cb, dict):
+            raise TypeError("callback_query має бути об'єктом")
         if str(cb.get("message", {}).get("chat", {}).get("id")) == CHAT_ID:
             on_callback(cb)
 

@@ -89,12 +89,7 @@ describe("CompetitorsSection — лічильник живучості", () => {
     expect(textOf(el)).toContain("Живих: 0 · Застиглих: 0 · Мертвих: 0");
   });
 
-  // Сумнівна поведінка: liveness — union-тип із трьох значень у схемі, але
-  // рантайм-дані з БД ним не перевіряються. Невідоме значення не падає (не
-  // NaN у видимих кошиках, бо ключа для нього просто немає в об'єкті
-  // {active,stale,dead}), але й ніде не рахується і не показується — власник
-  // не побачить жодного сигналу, що в конкурента взагалі є liveness-мітка.
-  test("невідоме значення liveness (не зі словника) -> лічильники нульові, Pill не рендериться, компонент не падає", () => {
+  test("невідоме значення liveness (не зі словника) -> рахується як «Невідомих», Pill рендериться з сирим значенням, компонент не падає", () => {
     const rows = [
       competitor({
         id: "c1",
@@ -104,8 +99,10 @@ describe("CompetitorsSection — лічильник живучості", () => {
     ];
     expect(() => build(rows)).not.toThrow();
     const el = build(rows);
-    expect(textOf(el)).toContain("Живих: 0 · Застиглих: 0 · Мертвих: 0");
-    expect(findByType(el, Pill)).toHaveLength(0);
+    expect(textOf(el)).toContain("Живих: 0 · Застиглих: 0 · Мертвих: 0 · Невідомих: 1");
+    const pills = findByType(el, Pill);
+    expect(pills).toHaveLength(1);
+    expect(pills[0].props).toMatchObject({ label: "archived" });
   });
 
   test("liveness='active' -> Pill із міткою та токеном LIVENESS_META.active", () => {
