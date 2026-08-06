@@ -29,6 +29,10 @@ export default defineConfig({
         // тестова інфраструктура telegram-webhook-route.test.mts, не прод-код
         "src/lib/telegram-webhook-route.mock-service.mts",
         "src/lib/telegram-webhook-route.hooks.mjs",
+        // Хендлер вебхука покриває node --test через resolve-хук, тож його
+        // міряє c8. Тут він має бути виключений, інакше карти двох парсерів
+        // знову складуться, а не об'єднаються.
+        "src/app/api/telegram/webhook/route.ts",
       ],
       reportsDirectory: "coverage/vitest",
       reporter: ["text", "json"],

@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --test src/lib/*.test.mts && vitest run",
-    "coverage:node": "c8 --reporter=text --reporter=json --report-dir=coverage/node --extension=.ts --extension=.tsx --extension=.mts --exclude=\"src/**/*.test.mts\" --exclude=\"src/lib/telegram-webhook-route.mock-service.mts\" --exclude=\"src/lib/telegram-webhook-route.hooks.mjs\" --include=\"src/lib/**\" --include=\"src/proxy.ts\" --include=\"src/auth.ts\" node --test src/lib/*.test.mts",
+    "coverage:node": "c8 --reporter=text --reporter=json --report-dir=coverage/node --extension=.ts --extension=.tsx --extension=.mts --exclude=\"src/**/*.test.mts\" --exclude=\"src/lib/telegram-webhook-route.mock-service.mts\" --exclude=\"src/lib/telegram-webhook-route.hooks.mjs\" --include=\"src/lib/**\" --include=\"src/proxy.ts\" --include=\"src/auth.ts\" --include=\"src/app/api/telegram/webhook/route.ts\" node --test src/lib/*.test.mts",
     "coverage:vitest": "vitest run --coverage",
     "coverage": "npm run coverage:node && npm run coverage:vitest && node scripts/merge-coverage.mjs",
     "deadcode": "knip"
