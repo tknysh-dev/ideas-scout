@@ -28,6 +28,7 @@ import contextlib
 import io
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -164,6 +165,311 @@ class PureFunctionsTest(unittest.TestCase):
         # "не ## 1." — заголовок має починатись з початку рядка.
         text = "текст ## 1. не в лічильнику\n"
         self.assertEqual(self.mod.keys_of(text), set())
+
+
+class ErrorBranchTest(unittest.TestCase):
+    """Дев'ять err-гілок скрипта: усі спрацьовують лише на зламаному стані
+    репозиторію, тож на справжньому дереві (OutputContractTest) недосяжні.
+
+    Ні `test_support.load_script`, ні `import` тут не годяться: обидва
+    прив'язують REPO_ROOT до реального шляху файлу (див. докстрінг файлу
+    вище). Натомість тут беремо текст джерела як є (SOURCE, той самий файл,
+    що й SCRIPT_PATH) і виконуємо його через compile()+exec() у просторі
+    імен, де `__file__` — вигаданий шлях усередині tempfile-дерева на три
+    рівні від кореня (agents/scripts/doctor_prompt_contract.py) — рівно
+    стільки ж, скільки production-код знімає dirname() від REPO_ROOT. Це не
+    вимагає жодної зміни production-файлу: `os.path.abspath` не звертається
+    до диска, лише нормалізує рядок шляху, а reads() всередині скрипта вже
+    йдуть у реальні файли, які ми заздалегідь кладемо в tempfile-дерево.
+
+    Кожен тест будує здорове дерево (_baseline_files) і псує рівно одну
+    річ — решта лишається робочою, щоб зламана гілка не тонула серед інших
+    err-рядків.
+    """
+
+    SOURCE = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    def run_against(self, root: Path) -> list[str]:
+        # Ім'я файлу навмисно НЕ "doctor_prompt_contract.py": coverage.py
+        # (inorout.py, should_trace) звіряє basename __file__ з basename
+        # co_filename і довіряє __file__ лише якщо вони збігаються — інакше
+        # трактує це як типовий "exec перемістив файл" випадок і трасує
+        # проти co_filename. Однакові basename тут зробили б coverage.py
+        # звітною проти tmp-шляху, який зникає разом із tempdir ще до звіту.
+        # REPO_ROOT рахується від __file__ (три dirname — та сама глибина,
+        # незалежно від імені файлу), тому підміна імені REPO_ROOT не чіпає.
+        fake_file = str(root / "agents" / "scripts" / "_doctor_prompt_contract_fixture.py")
+        code = compile(self.SOURCE, str(SCRIPT_PATH), "exec")
+        namespace = {"__file__": fake_file, "__name__": "_doctor_prompt_contract_fixture"}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exec(code, namespace)  # noqa: S102 — виконуємо те саме джерело, що й production-файл, лише з підміненим __file__
+        return namespace["lines"]
+
+    @staticmethod
+    def err_text(lines: list[str]) -> str:
+        errs = [msg for level, _, msg in (line.partition("\t") for line in lines) if level == "err"]
+        return "\n".join(errs)
+
+    @staticmethod
+    def _write_tree(root: Path, files: dict[str, str]) -> None:
+        for rel, content in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+    @staticmethod
+    def _baseline_files() -> dict[str, str]:
+        # Мінімальне здорове дерево: усі дев'ять перевірок дають "ok".
+        # Кожен тест бере цей словник і псує рівно один запис.
+        return {
+            "agents/prompts/deep-research-handoff.md": (
+                "Дослідження за {{CRITERIA_DOC}} і додатковим блоком {{DEEP_DOC}}.\n\n"
+                "Якщо пошук недоступний, напиши рівно: SEARCH UNAVAILABLE\n"
+            ),
+            "agents/prompts/deep-research-synthesis.md": "Синтезуй звіт: {{REPORT_TEXT}}\n",
+            "agents/prompts/deep-research-card.md": "Склади картку: {{CARD_TEXT}}\n",
+            "agents/prompts/collector.md": "Збирай дані по {{CRITERIA_DOC}} і {{SEARCH_QUERIES_DOC}}.\n",
+            "agents/prompts/analyst.md": "Аналізуй чернетку.\n",
+            "agents/prompts/revisor.md": "Перевір чернетку.\n",
+            "agents/prompts/triage.md": "Сортуй чернетки.\n",
+            "agents/criteria/deep-research.md": (
+                "# Критерії deep\n## 1. Перший блок\nопис\n## d_extra. Додатковий блок\nопис\n"
+            ),
+            "agents/criteria/criteria-passive-income.md": (
+                "# Критерії passive\n## 1. Перший критерій\nопис\n## 2. Другий критерій\nопис\n"
+            ),
+            "agents/criteria/criteria-apps.md": (
+                "# Критерії apps\n## 1. Перший критерій\nопис\n## 2. Другий критерій\nопис\n"
+            ),
+            "agents/criteria/external/brief-deep-blocks.md": (
+                "роль: зовнішній\n---\n## 1. Перший блок\nопис\n## d_extra. Додатковий блок\nопис\n"
+            ),
+            "agents/criteria/external/brief-passive-income.md": (
+                "роль: зовнішній\n---\n## 1. Перший критерій\nопис\n## 2. Другий критерій\nопис\n"
+            ),
+            "agents/criteria/external/brief-apps.md": (
+                "роль: зовнішній\n---\n## 1. Перший критерій\nопис\n## 2. Другий критерій\nопис\n"
+            ),
+            "agents/scripts/runner.sh": (
+                "#!/bin/bash\n"
+                'case "$TRACK" in\n'
+                "  passive-income)\n"
+                '    CRITERIA_DOC="agents/criteria/criteria-passive-income.md"\n'
+                '    SEARCH_QUERIES_DOC="agents/criteria/criteria-passive-income.md"\n'
+                "    ;;\n"
+                "  apps)\n"
+                '    CRITERIA_DOC="agents/criteria/criteria-apps.md"\n'
+                "    ;;\n"
+                "esac\n"
+            ),
+            "agents/scripts/deep-research.py": (
+                'REPORT_TEXT = "report"\nCARD_TEXT = "card"\nREFUSAL = "SEARCH UNAVAILABLE"\n'
+            ),
+            "dashboard/src/lib/deep-research-prompt.ts": (
+                'export const CRITERIA_DOC = "criteria";\nexport const DEEP_DOC = "deep";\n'
+            ),
+            "dashboard/src/lib/deep-research-reports.ts": ('export const REFUSAL_WORD = "SEARCH UNAVAILABLE";\n'),
+        }
+
+    def test_baseline_fixture_is_healthy(self):
+        # Підстраховка від самих тестів: якщо фікстура зламана, усі наступні
+        # тести тестували б не ту гілку. Жодного err на здоровому дереві бути
+        # не повинно.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_tree(root, self._baseline_files())
+            lines = self.run_against(root)
+            self.assertEqual(self.err_text(lines), "")
+
+    def test_missing_handoff_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            del files["agents/prompts/deep-research-handoff.md"]
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("немає промптів", errs)
+            self.assertIn("deep-research-handoff.md (портал)", errs)
+
+    def test_missing_synthesis_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            del files["agents/prompts/deep-research-synthesis.md"]
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("немає промптів", errs)
+            self.assertIn("deep-research-synthesis.md (синтез, виклик A)", errs)
+
+    def test_missing_card_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            del files["agents/prompts/deep-research-card.md"]
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("немає промптів", errs)
+            self.assertIn("deep-research-card.md (синтез, виклик B)", errs)
+
+    def test_missing_criteria_doc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            del files["agents/criteria/criteria-apps.md"]
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("немає документів критеріїв", errs)
+            self.assertIn("criteria-apps.md", errs)
+
+    def test_missing_renderer_of_template(self):
+        # Промпт є, а код, що мав би підставляти в нього плейсхолдери — ні.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            del files["dashboard/src/lib/deep-research-prompt.ts"]
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("немає dashboard/src/lib/deep-research-prompt.ts", errs)
+            self.assertIn("deep-research-handoff.md", errs)
+
+    def test_orphan_placeholder_in_template(self):
+        # Плейсхолдер додано в шаблон, але жоден код його не підставляє.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["agents/prompts/deep-research-synthesis.md"] += "Ще: {{UNUSED_ORPHAN}}\n"
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("deep-research-synthesis.md: плейсхолдери {{UNUSED_ORPHAN}}", errs)
+            self.assertIn("ніхто не підставляє", errs)
+
+    def test_missing_runner_sh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            del files["agents/scripts/runner.sh"]
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("немає agents/scripts/runner.sh", errs)
+
+    def test_missing_agent_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            del files["agents/prompts/collector.md"]
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("немає промпта collector.md", errs)
+
+    def test_agent_prompt_placeholder_not_in_runner(self):
+        # Плейсхолдер у промпті нічного агента, якого runner.sh не підставляє.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["agents/prompts/analyst.md"] = "Аналізуй {{NOT_IN_RUNNER}}.\n"
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("плейсхолдери, яких не підставляє runner.sh", errs)
+            self.assertIn("analyst.md: {{NOT_IN_RUNNER}}", errs)
+
+    def test_prompt_derives_criteria_filename_from_track(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["agents/prompts/triage.md"] = "Критерії: agents/criteria/criteria-{{TRACK}}.md\n"
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("промпти складають ім'я файлу критеріїв із назви треку", errs)
+            self.assertIn("triage.md", errs)
+
+    def test_runner_has_no_track_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            # Слова CRITERIA_DOC/SEARCH_QUERIES_DOC лишаються (щоб не зачепити
+            # перевірку плейсхолдерів collector.md), але без формату KEY="шлях".
+            files["agents/scripts/runner.sh"] = (
+                "#!/bin/bash\n# CRITERIA_DOC і SEARCH_QUERIES_DOC резолвляться десь-інде\necho \"$CRITERIA_DOC $SEARCH_QUERIES_DOC\"\n"
+            )
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("не знайдено мапінгу треків", errs)
+
+    def test_runner_mapped_doc_missing_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["agents/scripts/runner.sh"] = files["agents/scripts/runner.sh"].replace(
+                'CRITERIA_DOC="agents/criteria/criteria-apps.md"',
+                'CRITERIA_DOC="agents/criteria/criteria-missing.md"',
+            )
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("показує на неіснуючі документи", errs)
+            self.assertIn("criteria-missing.md", errs)
+
+    def test_refusal_word_missing_from_template(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["agents/prompts/deep-research-handoff.md"] = "Дослідження за {{CRITERIA_DOC}} і {{DEEP_DOC}}.\n"
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("слово відмови розійшлося", errs)
+            self.assertIn("«SEARCH UNAVAILABLE» немає в шаблоні", errs)
+
+    def test_refusal_word_missing_from_parser(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["dashboard/src/lib/deep-research-reports.ts"] = 'export const REFUSAL_WORD = "щось інше";\n'
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("слово відмови розійшлося", errs)
+            self.assertIn("не знає dashboard/src/lib/deep-research-reports.ts", errs)
+
+    def test_refusal_word_missing_from_synth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["agents/scripts/deep-research.py"] = 'REPORT_TEXT = "report"\nCARD_TEXT = "card"\n'
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("слово відмови розійшлося", errs)
+            self.assertIn("не знає agents/scripts/deep-research.py", errs)
+
+    def test_missing_external_brief(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            del files["agents/criteria/external/brief-apps.md"]
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("немає зовнішніх брифів", errs)
+            self.assertIn("brief-apps.md", errs)
+
+    def test_brief_does_not_cover_all_criteria(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["agents/criteria/external/brief-passive-income.md"] = "роль: зовнішній\n---\n## 1. Перший критерій\nопис\n"
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("зовнішні брифи розійшлись із внутрішніми чек-листами", errs)
+            self.assertIn("brief-passive-income.md: немає критеріїв 2", errs)
+
+    def test_brief_leaks_internal_kitchen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = self._baseline_files()
+            files["agents/criteria/external/brief-apps.md"] = (
+                "роль: зовнішній\n---\n## 1. Перший критерій\nВрахуй рівень AUTONOMY.\n## 2. Другий критерій\nопис\n"
+            )
+            self._write_tree(root, files)
+            errs = self.err_text(self.run_against(root))
+            self.assertIn("у зовнішні брифи просочилась внутрішня кухня", errs)
+            self.assertIn("brief-apps.md: AUTONOMY", errs)
 
 
 if __name__ == "__main__":
