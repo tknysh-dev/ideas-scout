@@ -1,0 +1,8 @@
+creation_rules:
+  # Обидва рецепієнти рівноправні: кожен відкриває файл самостійно.
+  # age1se… живе в Secure Enclave цього Mac і питає Touch ID на кожну розшифровку;
+  # age1jmaql… — резервний ключ у 1Password на випадок смерті машини.
+  - path_regex: \.encrypted\.env$
+    age: >-
+      age1se1q0awe3araf8gf0lgu7rgacdkc9a5sz4dwp50au67mzrvdw6p9c3z2dgs36u,
+      age1jmaqlseae8uuhqlxg3syhe0uwv0l703v7ktgnj0efysc6cmjgfcs0rpguz
