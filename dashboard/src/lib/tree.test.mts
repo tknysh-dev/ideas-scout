@@ -20,6 +20,7 @@ function idea(overrides: Partial<Idea> & { id: string }): Idea {
     status: "new",
     rejection_code: null,
     rejection_detail: null,
+    rejection_other_reason: null,
     rejection_codes_extra: [],
     missing_capabilities: [],
     ceiling_estimate: null,

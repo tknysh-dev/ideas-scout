@@ -356,7 +356,7 @@ class ParseSchemaRealFileRegression(unittest.TestCase):
         tables, unparsed = ds.parse_schema(text)
         self.assertEqual(len(tables), 9, f"таблиці: {sorted(tables)}")
         total_columns = sum(len(cols) for cols in tables.values())
-        self.assertEqual(total_columns, 135)
+        self.assertEqual(total_columns, 136)
         # 0 тут "правильний за випадковим збігом" — див.
         # ParseSchemaFunctionStripSwallowsBetweenFunctions вище: реальний
         # файл має функцію claim_next_job із тим самим "$$;" без "language"

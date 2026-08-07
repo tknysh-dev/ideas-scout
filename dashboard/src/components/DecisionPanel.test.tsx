@@ -4,12 +4,13 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 // decideIdea — серверна дія "use server", що тягне за собою "server-only",
 // next/cache і живий Supabase-клієнт: у компонентному тесті її замінюємо
 // повністю, інакше імпорт валиться ще на завантаженні модуля.
-const { decideIdea, routerRefresh } = vi.hoisted(() => ({
+const { decideIdea, fetchKnownRejectionReasons, routerRefresh } = vi.hoisted(() => ({
   decideIdea: vi.fn(),
+  fetchKnownRejectionReasons: vi.fn(),
   routerRefresh: vi.fn(),
 }));
 
-vi.mock("@/lib/actions/decisions", () => ({ decideIdea }));
+vi.mock("@/lib/actions/decisions", () => ({ decideIdea, fetchKnownRejectionReasons }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: routerRefresh }),
 }));
@@ -19,6 +20,8 @@ import DecisionPanel from "./DecisionPanel";
 beforeEach(() => {
   decideIdea.mockReset();
   routerRefresh.mockReset();
+  fetchKnownRejectionReasons.mockReset();
+  fetchKnownRejectionReasons.mockResolvedValue([]);
 });
 
 describe("DecisionPanel — перше рішення (approved_pending)", () => {
@@ -107,6 +110,105 @@ describe("DecisionPanel — перше рішення (approved_pending)", () =>
 
     await screen.findByText("База недоступна.");
     expect(screen.getByRole("dialog")).toBeDefined();
+  });
+});
+
+describe("DecisionPanel — код «Інше»", () => {
+  test("поле причини з'являється лише після вибору OTHER", async () => {
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    const dialog = screen.getByRole("dialog");
+
+    expect(within(dialog).queryByLabelText(/Що саме за причина/)).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText(/Код відмови/), { target: { value: "OTHER" } });
+    expect(within(dialog).getByLabelText(/Що саме за причина/)).toBeDefined();
+  });
+
+  test("OTHER без вписаної причини не відправляється", () => {
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Код відмови/), { target: { value: "OTHER" } });
+    fireEvent.change(within(dialog).getByPlaceholderText(/Коротко поясни рішення/), {
+      target: { value: "Пояснення" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Відхилити" }));
+
+    expect(decideIdea).not.toHaveBeenCalled();
+    expect(screen.getByText("Для коду «Інше» впиши, що саме за причина.")).toBeDefined();
+  });
+
+  test("раніше вжиті причини стають підказками того самого поля", async () => {
+    fetchKnownRejectionReasons.mockResolvedValue(["забагато ручної роботи", "надто вузька ніша"]);
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Код відмови/), { target: { value: "OTHER" } });
+
+    const input = within(dialog).getByLabelText(/Що саме за причина/) as HTMLInputElement;
+    await waitFor(() => {
+      const datalist = dialog.querySelector("datalist");
+      // Поле і список мають бути зв'язані — інакше підказки є в DOM, але браузер
+      // їх не покаже.
+      expect(datalist?.id).toBe(input.getAttribute("list"));
+      expect([...(datalist?.querySelectorAll("option") ?? [])].map((o) => o.value)).toEqual([
+        "забагато ручної роботи",
+        "надто вузька ніша",
+      ]);
+    });
+  });
+
+  test("OTHER із причиною відправляється окремим полем", async () => {
+    decideIdea.mockResolvedValue({});
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Код відмови/), { target: { value: "OTHER" } });
+    fireEvent.change(within(dialog).getByLabelText(/Що саме за причина/), {
+      target: { value: " надто вузька ніша " },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText(/Коротко поясни рішення/), {
+      target: { value: "Пояснення" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Відхилити" }));
+
+    await waitFor(() =>
+      expect(decideIdea).toHaveBeenCalledWith({
+        ideaId: "idea-1",
+        action: "rejected",
+        reason: "Пояснення",
+        rejectionCode: "OTHER",
+        otherReason: "надто вузька ніша",
+      }),
+    );
+  });
+
+  test("словниковий код відправляється без otherReason, навіть якщо поле встигли заповнити", async () => {
+    decideIdea.mockResolvedValue({});
+    render(<DecisionPanel ideaId="idea-1" currentStatus="approved_pending" />);
+    fireEvent.click(screen.getByRole("button", { name: "Відхилити" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Код відмови/), { target: { value: "OTHER" } });
+    fireEvent.change(within(dialog).getByLabelText(/Що саме за причина/), {
+      target: { value: "надто вузька ніша" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/Код відмови/), {
+      target: { value: "NOT_INTERESTED" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText(/Коротко поясни рішення/), {
+      target: { value: "Не мій напрямок" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Відхилити" }));
+
+    await waitFor(() =>
+      expect(decideIdea).toHaveBeenCalledWith({
+        ideaId: "idea-1",
+        action: "rejected",
+        reason: "Не мій напрямок",
+        rejectionCode: "NOT_INTERESTED",
+        otherReason: undefined,
+      }),
+    );
   });
 });
 

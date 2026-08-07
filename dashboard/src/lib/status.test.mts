@@ -9,6 +9,7 @@ import {
   SIGNAL_TYPE_META,
   STATUS_META,
   ideaTypeMeta,
+  rejectionLabel,
   statusMeta,
   trackLabel,
 } from "./status.ts";
@@ -59,10 +60,32 @@ test("REJECTION_META містить підпис для кожного коду 
     "AUTONOMY",
     "SATURATED",
     "NO_MARKET",
+    "NOT_INTERESTED",
+    "OTHER",
   ] as const) {
     assert.equal(typeof REJECTION_META[code], "string");
     assert.ok(REJECTION_META[code].length > 0);
   }
+});
+
+test("rejectionLabel: словниковий код — просто його підпис", () => {
+  assert.equal(rejectionLabel("LEGAL"), "Юридична заборона");
+  assert.equal(rejectionLabel("NOT_INTERESTED"), "Нецікавий напрямок");
+});
+
+// Без цього «Інше» в таблиці стоїть без жодної підказки, чим саме воно було.
+test("rejectionLabel: OTHER несе вписану причину в дужках", () => {
+  assert.equal(rejectionLabel("OTHER", "надто вузька ніша"), "Інше (надто вузька ніша)");
+});
+
+test("rejectionLabel: OTHER без причини лишається просто «Інше»", () => {
+  assert.equal(rejectionLabel("OTHER", "   "), "Інше");
+  assert.equal(rejectionLabel("OTHER", null), "Інше");
+});
+
+test("rejectionLabel: причина без коду OTHER ігнорується", () => {
+  assert.equal(rejectionLabel("SATURATED", "щось лишилось"), "Ринок насичений");
+  assert.equal(rejectionLabel(null, "щось лишилось"), "");
 });
 
 test("CONFIDENCE_META і SIGNAL_TYPE_META накривають усі відомі значення", () => {

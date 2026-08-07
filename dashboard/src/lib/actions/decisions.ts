@@ -53,8 +53,9 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   // в базу, а не покладаємось лише на те, що UI підставляє коректний id.
   if (!isValidIdeaId(ideaId)) return { error: "Некоректний ID ідеї." };
   const reason = input.reason.trim();
+  const otherReason = input.otherReason?.trim();
 
-  const inputError = validateDecisionInput({ ideaId, action, reason, rejectionCode });
+  const inputError = validateDecisionInput({ ideaId, action, reason, rejectionCode, otherReason });
   if (inputError) return { error: inputError };
 
   const supabase = getServiceClient();
@@ -62,7 +63,7 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
 
   const { data: idea, error: fetchError } = await supabase
     .from("ideas")
-    .select("id,status,rejection_code")
+    .select("id,status,rejection_code,rejection_other_reason")
     .eq("id", ideaId)
     .maybeSingle();
 
@@ -70,10 +71,18 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   if (!idea) return { error: "Ідею не знайдено." };
 
   const current = idea.status as IdeaStatus;
-  const transition = checkDecisionTransition(current, idea.rejection_code, action, reason, rejectionCode);
+  const transition = checkDecisionTransition(
+    current,
+    idea.rejection_code,
+    action,
+    reason,
+    rejectionCode,
+    idea.rejection_other_reason ?? null,
+    otherReason,
+  );
   if (transition.error) return { error: transition.error };
 
-  const updatePayload = buildIdeaUpdatePayload(action, current, rejectionCode, reason);
+  const updatePayload = buildIdeaUpdatePayload(action, current, rejectionCode, reason, otherReason);
 
   const { error: updateError } = await supabase
     .from("ideas")
@@ -83,7 +92,15 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   if (updateError) return { error: `Помилка оновлення статусу: ${updateError.message}` };
 
   const { error: eventError } = await supabase.from("events").insert(
-    buildDecisionEventRow(ideaId, current, action, rejectionCode, transition.isRevision ?? false, reason),
+    buildDecisionEventRow(
+      ideaId,
+      current,
+      action,
+      rejectionCode,
+      transition.isRevision ?? false,
+      reason,
+      otherReason,
+    ),
   );
 
   if (eventError) {
@@ -93,4 +110,33 @@ export async function decideIdea(input: DecideIdeaInput): Promise<DecideIdeaResu
   revalidatePath("/", "layout");
 
   return {};
+}
+
+/**
+ * Причини, які власник уже вписував під кодом «Інше» — підказки для того ж
+ * поля наступного разу. Список сам себе поповнює з ухвалених рішень, окремого
+ * довідника для нього немає (той самий підхід, що й у списку моделей глибокого
+ * дослідження: fetchKnownResearcherModels).
+ */
+export async function fetchKnownRejectionReasons(): Promise<string[]> {
+  const authError = await assertOwner();
+  if (authError) return [];
+
+  const supabase = getServiceClient();
+  if (!supabase) return [];
+
+  const { data } = await supabase
+    .from("ideas")
+    .select("rejection_other_reason,updated_at")
+    .eq("rejection_code", "OTHER")
+    .not("rejection_other_reason", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(500);
+
+  const seen = new Set<string>();
+  for (const row of data ?? []) {
+    const reason = String(row.rejection_other_reason ?? "").trim();
+    if (reason) seen.add(reason);
+  }
+  return [...seen];
 }

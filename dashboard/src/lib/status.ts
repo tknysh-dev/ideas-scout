@@ -75,7 +75,24 @@ export const REJECTION_META: Record<RejectionCode, string> = {
   AUTONOMY: "Не проходить поріг автономності підтримки",
   SATURATED: "Ринок насичений",
   NO_MARKET: "Немає ознак ринку/попиту",
+  NOT_INTERESTED: "Нецікавий напрямок",
+  OTHER: "Інше",
 };
+
+/**
+ * Підпис коду відмови для таблиці й картки. Для `OTHER` сам код нічого не
+ * пояснює, тому вписана власником причина йде поряд у дужках — інакше в списку
+ * стоїть просто «Інше» без жодної підказки, чим саме воно було.
+ */
+export function rejectionLabel(
+  code: RejectionCode | null | undefined,
+  otherReason?: string | null,
+): string {
+  if (!code) return "";
+  const label = REJECTION_META[code] ?? code;
+  const detail = otherReason?.trim();
+  return code === "OTHER" && detail ? `${label} (${detail})` : label;
+}
 
 export const CONFIDENCE_META: Record<Confidence, { label: string; tone: string }> = {
   high: { label: "Висока", tone: "high" },

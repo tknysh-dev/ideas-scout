@@ -1,10 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { EASE } from "@/components/motion";
-import { decideIdea, type DecisionAction } from "@/lib/actions/decisions";
+import {
+  decideIdea,
+  fetchKnownRejectionReasons,
+  type DecisionAction,
+} from "@/lib/actions/decisions";
+import { OTHER_REASON_MAX, OTHER_REJECTION_CODE } from "@/lib/decisions-logic";
 import { REJECTION_META, statusMeta } from "@/lib/status";
 import type { IdeaStatus, RejectionCode } from "@/lib/types";
 
@@ -56,6 +61,8 @@ export default function DecisionPanel({
   const router = useRouter();
   const [reason, setReason] = useState("");
   const [rejectionCode, setRejectionCode] = useState<RejectionCode | "">("");
+  const [otherReason, setOtherReason] = useState("");
+  const [knownReasons, setKnownReasons] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<DecisionAction | null>(null);
@@ -64,9 +71,29 @@ export default function DecisionPanel({
   // Рішення вже ухвалене — панель тепер переглядає його, а не виносить уперше.
   const isRevision = currentStatus !== "approved_pending";
 
-  function submit(action: DecisionAction, text: string, code: RejectionCode | undefined) {
+  // Раніше вжиті причини потрібні лише всередині діалогу відмови, тому тягнемо
+  // їх при його відкритті, а не на кожному рендері картки ідеї.
+  useEffect(() => {
+    if (dialog !== "rejected") return;
+    fetchKnownRejectionReasons()
+      .then(setKnownReasons)
+      .catch(() => {});
+  }, [dialog]);
+
+  function submit(
+    action: DecisionAction,
+    text: string,
+    code: RejectionCode | undefined,
+    other: string | undefined,
+  ) {
     startTransition(async () => {
-      const result = await decideIdea({ ideaId, action, reason: text, rejectionCode: code });
+      const result = await decideIdea({
+        ideaId,
+        action,
+        reason: text,
+        rejectionCode: code,
+        otherReason: other,
+      });
       if (result.error) {
         setError(result.error);
         return;
@@ -74,6 +101,7 @@ export default function DecisionPanel({
       setDone(action);
       setReason("");
       setRejectionCode("");
+      setOtherReason("");
       setDialog(null);
       router.refresh();
     });
@@ -88,14 +116,19 @@ export default function DecisionPanel({
       setDialog(action);
       return;
     }
-    submit(action, "", undefined);
+    submit(action, "", undefined, undefined);
   }
 
   function confirmDialog() {
     if (!dialog) return;
     const text = reason.trim();
+    const other = otherReason.trim();
     if (dialog === "rejected" && (!text || !rejectionCode)) {
       setError("Для відхилення обов'язково вкажи причину і код відмови.");
+      return;
+    }
+    if (dialog === "rejected" && rejectionCode === OTHER_REJECTION_CODE && !other) {
+      setError("Для коду «Інше» впиши, що саме за причина.");
       return;
     }
     if (isRevision && !text) {
@@ -103,7 +136,13 @@ export default function DecisionPanel({
       return;
     }
     setError(null);
-    submit(dialog, text, dialog === "rejected" ? (rejectionCode as RejectionCode) : undefined);
+    const isReject = dialog === "rejected";
+    submit(
+      dialog,
+      text,
+      isReject ? (rejectionCode as RejectionCode) : undefined,
+      isReject && rejectionCode === OTHER_REJECTION_CODE ? other : undefined,
+    );
   }
 
   const closeDialog = useCallback(() => {
@@ -175,10 +214,13 @@ export default function DecisionPanel({
             isRevision={isRevision}
             reason={reason}
             rejectionCode={rejectionCode}
+            otherReason={otherReason}
+            knownReasons={knownReasons}
             error={error}
             pending={pending}
             onReason={setReason}
             onCode={setRejectionCode}
+            onOtherReason={setOtherReason}
             onCancel={closeDialog}
             onConfirm={confirmDialog}
           />
@@ -193,10 +235,13 @@ function DecisionDialog({
   isRevision,
   reason,
   rejectionCode,
+  otherReason,
+  knownReasons,
   error,
   pending,
   onReason,
   onCode,
+  onOtherReason,
   onCancel,
   onConfirm,
 }: {
@@ -204,14 +249,18 @@ function DecisionDialog({
   isRevision: boolean;
   reason: string;
   rejectionCode: RejectionCode | "";
+  otherReason: string;
+  knownReasons: string[];
   error: string | null;
   pending: boolean;
   onReason: (value: string) => void;
   onCode: (value: RejectionCode | "") => void;
+  onOtherReason: (value: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const field = useRef<HTMLTextAreaElement>(null);
+  const listId = useId();
 
   useEffect(() => {
     field.current?.focus();
@@ -262,6 +311,28 @@ function DecisionDialog({
                   </option>
                 ))}
               </select>
+            </label>
+          )}
+
+          {action === "rejected" && rejectionCode === OTHER_REJECTION_CODE && (
+            <label className="flex flex-col gap-1 text-sm text-ink-dim">
+              {"Що саме за причина (обов'язково)"}
+              <input
+                list={listId}
+                value={otherReason}
+                maxLength={OTHER_REASON_MAX}
+                onChange={(event) => onOtherReason(event.target.value)}
+                placeholder="кілька слів — стоятиме в дужках біля «Інше»"
+                className="rounded-md border border-line bg-paper px-2 py-1.5 text-sm text-ink outline-none focus:border-accent"
+              />
+              <datalist id={listId}>
+                {knownReasons.map((value) => (
+                  <option key={value} value={value} />
+                ))}
+              </datalist>
+              <span className="text-xs">
+                Список поповнюється сам: раніше вписані причини з’являться тут наступного разу.
+              </span>
             </label>
           )}
 

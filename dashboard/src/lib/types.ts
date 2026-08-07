@@ -17,7 +17,11 @@ export type RejectionCode =
   | "CAPITAL"
   | "AUTONOMY"
   | "SATURATED"
-  | "NO_MARKET";
+  | "NO_MARKET"
+  // Два останні призначає лише власник із порталу — критеріям чек-листа вони
+  // не належать, тож у промптах агентів їх немає.
+  | "NOT_INTERESTED"
+  | "OTHER";
 export type Confidence = "high" | "medium" | "low";
 export type AuthorInterest = "none" | "affiliate" | "course_seller" | "tool_vendor";
 export type ResearchDepth = "initial" | "deep";
@@ -37,6 +41,7 @@ export interface Idea {
   status: IdeaStatus;
   rejection_code: RejectionCode | null;
   rejection_detail: string | null;
+  rejection_other_reason: string | null;
   rejection_codes_extra: string[];
   missing_capabilities: string[];
   ceiling_estimate: string | null;

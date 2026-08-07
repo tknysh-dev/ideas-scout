@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  OTHER_REASON_MAX,
   REJECTION_CODES,
   buildDecisionEventChange,
   buildDecisionEventRow,
@@ -83,6 +84,56 @@ test("validateDecisionInput: NO_MARKET приймається — код зі с
   );
 });
 
+test("validateDecisionInput: NOT_INTERESTED приймається без додаткових полів", () => {
+  assert.equal(REJECTION_CODES.includes("NOT_INTERESTED"), true);
+  assert.equal(
+    validateDecisionInput({
+      ideaId: "PI-1",
+      action: "rejected",
+      reason: "не мій напрямок",
+      rejectionCode: "NOT_INTERESTED",
+    }),
+    null,
+  );
+});
+
+test("validateDecisionInput: OTHER без вписаної причини відхиляється", () => {
+  assert.equal(
+    validateDecisionInput({
+      ideaId: "PI-1",
+      action: "rejected",
+      reason: "бо так",
+      rejectionCode: "OTHER",
+      otherReason: "   ",
+    }),
+    "Для коду «Інше» впиши, що саме за причина.",
+  );
+});
+
+test("validateDecisionInput: задовга причина для OTHER відхиляється", () => {
+  const message = validateDecisionInput({
+    ideaId: "PI-1",
+    action: "rejected",
+    reason: "бо так",
+    rejectionCode: "OTHER",
+    otherReason: "х".repeat(OTHER_REASON_MAX + 1),
+  });
+  assert.match(message ?? "", /не довша за/);
+});
+
+test("validateDecisionInput: OTHER із причиною проходить", () => {
+  assert.equal(
+    validateDecisionInput({
+      ideaId: "PI-1",
+      action: "rejected",
+      reason: "бо так",
+      rejectionCode: "OTHER",
+      otherReason: "забагато ручної роботи",
+    }),
+    null,
+  );
+});
+
 // --- checkDecisionTransition ------------------------------------------------
 
 test("checkDecisionTransition: статус поза OWNER_DECIDABLE_STATUSES відхиляється", () => {
@@ -115,6 +166,23 @@ test("checkDecisionTransition: повторне відхилення з ІНШИ
   assert.equal(result.isRevision, true);
 });
 
+test("checkDecisionTransition: повторний OTHER із тією самою причиною блокується", () => {
+  const result = checkDecisionTransition(
+    "rejected", "OTHER", "rejected", "знову", "OTHER", "забагато ручної роботи", "забагато ручної роботи",
+  );
+  assert.match(result.error ?? "", /вже в статусі/);
+});
+
+// Під OTHER ховаються різні причини — правка самого тексту має проходити, хоч
+// код відмови й не змінився.
+test("checkDecisionTransition: повторний OTHER з ІНШОЮ причиною дозволяється", () => {
+  const result = checkDecisionTransition(
+    "rejected", "OTHER", "rejected", "уточнив", "OTHER", "забагато ручної роботи", "надто вузька ніша",
+  );
+  assert.equal(result.error, undefined);
+  assert.equal(result.isRevision, true);
+});
+
 test("checkDecisionTransition: перегляд рішення (accepted -> rejected) без причини блокується", () => {
   const result = checkDecisionTransition("accepted", null, "rejected", "", "LEGAL");
   assert.match(result.error ?? "", /вимагає причини/);
@@ -137,7 +205,35 @@ test("checkDecisionTransition: перегляд рішення (rejected -> acce
 
 test("buildIdeaUpdatePayload: відхилення пише код і деталі", () => {
   const payload = buildIdeaUpdatePayload("rejected", "approved_pending", "LEGAL", "бо так");
-  assert.deepEqual(payload, { status: "rejected", rejection_code: "LEGAL", rejection_detail: "бо так" });
+  assert.deepEqual(payload, {
+    status: "rejected",
+    rejection_code: "LEGAL",
+    rejection_detail: "бо так",
+    rejection_other_reason: null,
+  });
+});
+
+test("buildIdeaUpdatePayload: OTHER пише вписану причину окремо від деталей", () => {
+  const payload = buildIdeaUpdatePayload(
+    "rejected",
+    "approved_pending",
+    "OTHER",
+    "довге пояснення в хронологію",
+    "  забагато ручної роботи  ",
+  );
+  assert.deepEqual(payload, {
+    status: "rejected",
+    rejection_code: "OTHER",
+    rejection_detail: "довге пояснення в хронологію",
+    rejection_other_reason: "забагато ручної роботи",
+  });
+});
+
+// Причина «Інше» описує рішення, якого вже немає: лишити її означало б показати
+// «Ринок насичений (забагато ручної роботи)» після зміни коду.
+test("buildIdeaUpdatePayload: зміна коду з OTHER на словниковий стирає вписану причину", () => {
+  const payload = buildIdeaUpdatePayload("rejected", "rejected", "SATURATED", "передумав", "стара");
+  assert.equal(payload.rejection_other_reason, null);
 });
 
 test("buildIdeaUpdatePayload: прийняття після відхилення очищує поля відмови", () => {
@@ -146,6 +242,7 @@ test("buildIdeaUpdatePayload: прийняття після відхилення
     status: "accepted",
     rejection_code: null,
     rejection_detail: null,
+    rejection_other_reason: null,
     rejection_codes_extra: [],
   });
 });
@@ -168,6 +265,13 @@ test("buildDecisionEventChange: відхилення додає код у дуж
   assert.equal(
     buildDecisionEventChange("approved_pending", "rejected", "LEGAL", false),
     "status: approved_pending -> rejected (LEGAL) — власник відхилив ідею",
+  );
+});
+
+test("buildDecisionEventChange: OTHER несе вписану причину в тих самих дужках", () => {
+  assert.equal(
+    buildDecisionEventChange("approved_pending", "rejected", "OTHER", false, "надто вузька ніша"),
+    "status: approved_pending -> rejected (OTHER: надто вузька ніша) — власник відхилив ідею",
   );
 });
 

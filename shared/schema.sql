@@ -40,10 +40,12 @@ create table ideas (
   rejection_code text check (
     rejection_code in (
       'NO_MONETIZATION', 'SOURCE_SUSPECT', 'LEGAL', 'CAPABILITY_GAP',
-      'CAPITAL', 'AUTONOMY', 'SATURATED', 'NO_MARKET'
+      'CAPITAL', 'AUTONOMY', 'SATURATED', 'NO_MARKET',
+      'NOT_INTERESTED', 'OTHER'
     )
   ),
   rejection_detail text,
+  rejection_other_reason text,             -- лише для rejection_code = 'OTHER'
   rejection_codes_extra text[] not null default '{}',  -- супутні коди при подвійному провалі (правило "г", agents/criteria/criteria-passive-income.md)
 
   missing_capabilities text[] not null default '{}',   -- посилання на розділи agents/catalogs/ai-capabilities.md
@@ -83,6 +85,7 @@ create table ideas (
 );
 
 comment on column ideas.rejection_codes_extra is 'Один первинний rejection_code (тригерить ревізора) + список супутніх кодів тут; ревізор сканує обидва поля.';
+comment on column ideas.rejection_other_reason is 'Коротка причина для rejection_code = OTHER; портал збирає з цієї ж колонки список раніше вжитих причин.';
 comment on column ideas.ceiling_flag is 'review = стеля/зусилля виносяться власнику на ручну оцінку (критерій 6, нефатальний, не rejection_code).';
 
 -- ============================================================================

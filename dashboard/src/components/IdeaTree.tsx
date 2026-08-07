@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { IdeaNode } from "@/lib/tree";
-import { CONFIDENCE_META, REJECTION_META } from "@/lib/status";
+import { CONFIDENCE_META, rejectionLabel } from "@/lib/status";
 import StatusBadge from "./StatusBadge";
 import { formatDate } from "@/lib/dates";
 
@@ -21,7 +21,7 @@ const GRID =
   "xl:grid-cols-[minmax(0,5.5rem)_minmax(0,2fr)_minmax(0,6.5rem)_minmax(9rem,1fr)_minmax(0,6rem)_minmax(8rem,1fr)_minmax(0,7rem)]";
 
 function IdeaRow({ node, depth }: { node: IdeaNode; depth: number }) {
-  const rejectionLabel = node.rejection_code ? REJECTION_META[node.rejection_code] : "";
+  const rejection = rejectionLabel(node.rejection_code, node.rejection_other_reason);
   const confidenceLabel = node.confidence ? CONFIDENCE_META[node.confidence].label : "";
   const revenueLabel = node.claimed_revenue ?? "";
 
@@ -45,9 +45,9 @@ function IdeaRow({ node, depth }: { node: IdeaNode; depth: number }) {
       <StatusBadge status={node.status} />
       <span
         className="hidden truncate text-xs text-ink-dim sm:block"
-        title={rejectionLabel || undefined}
+        title={rejection || undefined}
       >
-        {rejectionLabel}
+        {rejection}
       </span>
       <span className="hidden truncate text-xs text-ink-dim md:block">{confidenceLabel}</span>
       <span

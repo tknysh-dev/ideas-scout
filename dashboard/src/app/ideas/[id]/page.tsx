@@ -21,6 +21,7 @@ import {
   CONFIDENCE_META,
   OWNER_DECIDABLE_STATUSES,
   REJECTION_META,
+  rejectionLabel,
   SIGNAL_TYPE_META,
   trackLabel,
 } from "@/lib/status";
@@ -201,7 +202,7 @@ export default async function IdeaPage({
           {record.rejection_code && (
             <Field label="Код відмови">
               <span className="text-[color:var(--status-rejected-fg)]">
-                {REJECTION_META[record.rejection_code]}
+                {rejectionLabel(record.rejection_code, record.rejection_other_reason)}
               </span>
             </Field>
           )}

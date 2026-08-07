@@ -219,6 +219,7 @@ test("decideIdea: перегляд ухваленого рішення (rejected
     status: "accepted",
     rejection_code: null,
     rejection_detail: null,
+    rejection_other_reason: null,
     rejection_codes_extra: [],
   });
 });

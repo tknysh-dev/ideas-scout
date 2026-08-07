@@ -20,6 +20,7 @@ function makeNode(overrides: Partial<IdeaNode> & { id: string }): IdeaNode {
     status: "new",
     rejection_code: null,
     rejection_detail: null,
+    rejection_other_reason: null,
     rejection_codes_extra: [],
     missing_capabilities: [],
     ceiling_estimate: null,
@@ -88,5 +89,20 @@ describe("IdeaTree", () => {
     ];
     render(<IdeaTree nodes={nodes} />);
     expect(screen.getByTitle("Юридична заборона")).toBeDefined();
+  });
+
+  // Сам код «Інше» в таблиці нічого не пояснює — вписана причина має стояти
+  // поряд, інакше рядок не відрізнити від будь-якого іншого «Іншого».
+  test("код «Інше» показується разом із вписаною причиною", () => {
+    const nodes = [
+      makeNode({
+        id: "o-1",
+        title: "З «Іншим»",
+        rejection_code: "OTHER",
+        rejection_other_reason: "надто вузька ніша",
+      }),
+    ];
+    render(<IdeaTree nodes={nodes} />);
+    expect(screen.getByText("Інше (надто вузька ніша)")).toBeDefined();
   });
 });
