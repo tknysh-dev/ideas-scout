@@ -24,6 +24,28 @@ import { register } from "node:module";
 
 register("./proxy.hooks.mjs", import.meta.url);
 
+// Next захоплює globalThis.AsyncLocalStorage РІВНО ОДИН раз — на етапі
+// обчислення свого модуля server/app-render/async-local-storage:
+//
+//   const maybeGlobalAsyncLocalStorage = ... && globalThis.AsyncLocalStorage;
+//
+// Якщо в ту мить глобала немає, Next назавжди підставляє FakeAsyncLocalStorage,
+// чиї run()/enterWith() кидають «Invariant: AsyncLocalStorage accessed in
+// runtime where it is not available». У справжньому Next-рантаймі глобал є, у
+// plain Node — ні, тому ставимо його самі.
+//
+// Робити це треба ДО першого імпорту будь-чого з next — тому рядок стоїть тут,
+// вище за `await import("next/server")`. Раніше присвоєння жило всередині
+// тестів config.matcher, тобто вже після цього імпорту, і не встигало: знімок
+// був зроблений з Fake-реалізацією. Проявлялось це підступно — усі перевірки
+// проходили, а інваріант кидався з асинхронної активності Next уже ПІСЛЯ
+// завершення тесту, тож node --test зараховував провал не тесту, а всього
+// файлу, з повідомленням «resource generated asynchronous activity after the
+// test ended» і без жодної вказівки на справжню причину.
+(globalThis as { AsyncLocalStorage?: unknown }).AsyncLocalStorage ??= (
+  await import("node:async_hooks")
+).AsyncLocalStorage;
+
 const { mockAuthState, resetMockAuth } = await import("./proxy.mock-auth.mts");
 const { NextRequest } = await import("next/server");
 
@@ -190,12 +212,8 @@ test("unconfigured: бракує лише ALLOWED_GITHUB_LOGIN (решта за�
 // задокументовано в node_modules/next/dist/docs/.../proxy.md).
 
 test("config.matcher: покриває сторінки й API, які мають бути захищені", async () => {
-  // next/experimental/testing/server підтягує server/web/exports, який
-  // потребує globalThis.AsyncLocalStorage — у справжньому Next-рантаймі це
-  // завжди є, у plain Node — ні.
-  (globalThis as { AsyncLocalStorage?: unknown }).AsyncLocalStorage ??= (
-    await import("node:async_hooks")
-  ).AsyncLocalStorage;
+  // globalThis.AsyncLocalStorage підставлено на початку файлу — саме заради
+  // цього імпорту (next/experimental/testing/server тягне server/web/exports).
   const { unstable_doesMiddlewareMatch } = await import("next/experimental/testing/server");
   const { config } = await import(`../proxy.ts?t=matcher-${cacheBust++}`);
 
@@ -210,9 +228,6 @@ test("config.matcher: покриває сторінки й API, які мают�
 });
 
 test("config.matcher: виключає лише статику (_next/static, _next/image, favicon.ico)", async () => {
-  (globalThis as { AsyncLocalStorage?: unknown }).AsyncLocalStorage ??= (
-    await import("node:async_hooks")
-  ).AsyncLocalStorage;
   const { unstable_doesMiddlewareMatch } = await import("next/experimental/testing/server");
   const { config } = await import(`../proxy.ts?t=matcher-${cacheBust++}`);
 
